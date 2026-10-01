@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A service-desk request raised from Wire, identified by its tracker key.
+/// The problem description lives in the tracker only; the summary is the kept extract.
+model SupportRequest {
+  key                     String    @id
+  conversationId          String    @map("conversation_id")
+  conversationDom         String    @map("conversation_dom")
+  requesterId             String    @map("requester_id")
+  requesterDom            String    @map("requester_dom")
+  requesterName           String    @map("requester_name")
+  summary                 String
+  statusCategory          String    @map("status_category") // todo | in_progress | done
+  kind                    String    @default("fault") // question | part | fault
+  createdAt               DateTime  @map("created_at")
+  updatedAt               DateTime  @map("updated_at")
+  deleted                 Boolean   @default(false)
+  version                 Int       @default(1)
+  lastSeenReplyAt         DateTime? @map("last_seen_reply_at")
+  lastMessageId           String?   @map("last_message_id")
+  lastMessageSha256       String?   @map("last_message_sha256")
+  lastMessageAt           DateTime? @map("last_message_at")
+  assigneeAccountId       String?   @map("assignee_account_id")
+  assigneeSeenAt          DateTime? @map("assignee_seen_at")
+  agentConversationAt     DateTime? @map("agent_conversation_at")
+  /// The direct conversation the bot created for this request, and when the bot confirmed leaving it.
+  agentConversationId     String?   @map("agent_conversation_id")
+  agentConversationDom    String?   @map("agent_conversation_dom")
+  agentConversationLeftAt DateTime? @map("agent_conversation_left_at")
+
+  @@index([conversationId, conversationDom])
+  @@map("support_requests")
+}
+
+/// Audit trail of record and configuration changes: who, where, what, and the changed fields.
+model AuditLog {
+  id              String   @id @default(cuid())
+  timestamp       DateTime
+  actorId         String   @map("actor_id")
+  actorDom        String   @map("actor_dom")
+  conversationId  String?  @map("conversation_id")
+  conversationDom String?  @map("conversation_dom")
+  action          String
+  entityType      String?  @map("entity_type")
+  entityId        String?  @map("entity_id")
+  details         Json?
+
+  @@map("audit_log")
+}
+
+/// Per-conversation settings: the timezone for reply times.
+model ChannelConfig {
+  channelId      String   @id @map("channel_id") // "{conversationId}@{conversationDomain}"
+  organisationId String   @map("organisation_id")
+  timezone       String   @default("UTC")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("channel_config")
+}

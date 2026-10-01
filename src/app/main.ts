@@ -1,0 +1,41 @@
+import dotenv from "dotenv";
+import { loadConfig } from "./config";
+import { initLogging, getLogger } from "./logging";
+import { createContainer } from "./container";
+
+dotenv.config();
+
+async function main(): Promise<void> {
+  const config = loadConfig();
+  const logger = initLogging(config.app.logLevel);
+  logger.info("Wire Support Bot starting", { logLevel: config.app.logLevel });
+
+  const container = createContainer(config, logger);
+  let sdk: Awaited<ReturnType<typeof container.getWireClient>> | null = null;
+
+  const shutdown = async (signal: string): Promise<void> => {
+    logger.info("Shutdown requested", { signal });
+    await container.shutdown();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("unhandledRejection", () => {
+    getLogger().error("Unhandled rejection");
+  });
+
+  try {
+    sdk = await container.getWireClient();
+    logger.info("Wire client connected, listening for events");
+    await sdk.startListening();
+  } catch {
+    getLogger().error("Failed to start; verify configuration and service availability");
+    process.exit(1);
+  }
+}
+
+void main().catch(() => {
+  getLogger().error("Startup failed; verify configuration and service availability");
+  process.exit(1);
+});

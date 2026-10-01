@@ -1,0 +1,23 @@
+# Node / TypeScript build artifacts
+node_modules/
+dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment / secrets (everything except the committed template)
+.env
+.env.*
+!.env.example
+*.env
+
+# Local SQLite storage used by the SDK
+storage/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+

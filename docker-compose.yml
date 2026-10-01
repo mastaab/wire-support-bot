@@ -1,0 +1,64 @@
+services:
+  wire-support-bot:
+    # Built from this repository's Dockerfile; rebuild after changes with `docker compose build`.
+    build: .
+    container_name: wire-support-bot
+    restart: unless-stopped
+    env_file:
+      # Copy .env.example to .env on the server and fill in real values.
+      # This file is never committed to the repo.
+      - .env
+    environment:
+      # Override DATABASE_URL to point at the compose postgres service.
+      DATABASE_URL: postgres://wirebot:wirebot@postgres:5432/wire_support_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Wire SDK store (SQLite + CoreCrypto keystore): must persist across restarts.
+      # Losing it means the bot loses all end-to-end encryption session state.
+      - wire-support-bot-crypto:/app/storage
+
+  postgres:
+    image: postgres:16
+    container_name: wire-support-bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wirebot
+      POSTGRES_PASSWORD: wirebot
+      POSTGRES_DB: wire_support_bot
+    volumes:
+      - wire-support-bot-db:/var/lib/postgresql/data
+    # Bind to localhost only: not reachable from outside the host.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wirebot -d wire_support_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional: local Ollama for on-premises inference.
+  # Uncomment this service and set WIRE_SUPPORT_BOT_LLM_BASE_URL=http://ollama:11434/v1
+  # in your .env if you want all model calls to stay on the host.
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: wire-support-bot-ollama
+  #   restart: unless-stopped
+  #   volumes:
+  #     - wire-support-bot-ollama:/root/.ollama
+  #   ports:
+  #     - "127.0.0.1:11434:11434"
+  #   # NVIDIA GPU support, uncomment if available:
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - capabilities: [gpu]
+  #   #           count: all
+
+volumes:
+  wire-support-bot-db:
+  wire-support-bot-crypto:
+  # wire-support-bot-ollama:

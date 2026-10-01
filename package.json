@@ -1,0 +1,38 @@
+{
+  "name": "wire-support-bot",
+  "version": "1.0.0",
+  "license": "GPL-3.0-only",
+  "private": true,
+  "main": "dist/app/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/app/main.js",
+    "dev": "ts-node src/app/main.ts",
+    "cli": "node dist/app/cli.js",
+    "lint": "eslint src tests --ext .ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "register-app": "node scripts/register-app.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0",
+    "@wireapp/wire-apps-js-sdk": "^0.1.0",
+    "dotenv": "^16.4.5",
+    "prisma": "^6.0.0",
+    "reflect-metadata": "^0.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "eslint": "^9.39.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}

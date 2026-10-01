@@ -1,0 +1,60 @@
+# Contributing
+
+A short guide for developers changing this code. The README explains what the bot does, how it is set up and how it is built.
+
+## Layering
+
+The code follows a hexagonal (ports and adapters) layout. Keep the dependency direction:
+
+- `src/domain/` depends only on the domain: entities, identifiers, repository contracts and pure domain services.
+- `src/application/` depends on the domain and on its own ports. Use cases never call Wire, Prisma, Jira or the model endpoint directly; they go through a port or a repository contract.
+- `src/infrastructure/` implements ports and repositories (Wire, Jira, the model endpoint, Postgres, in-memory stores, the passive-help pipeline).
+- `src/app/` is the composition root: configuration, logging, the entry point, the CLI and `src/app/container.ts`.
+
+`eslint.config.mjs` reports an error, and `npm run lint` fails, when the domain or application layer imports from an outer layer, the Wire SDK or Prisma.
+
+## Where things go
+
+- Entities and repository contracts: `src/domain/`.
+- Ports: `src/application/ports/`.
+- Use cases: `src/application/usecases/`, one use case per file; shared application logic in `src/application/services/`.
+- Adapters: `src/infrastructure/`, grouped by the system they talk to.
+- Wiring: `src/app/container.ts`, and `src/app/cli.ts` when the CLI should have the feature too.
+- Settings: read only in `src/app/config.ts`, validated at start-up, and listed in `.env.example` with a comment. Secrets come from the environment and are never committed.
+- Schema changes: `prisma/schema.prisma` plus a migration in `prisma/migrations/`.
+
+Keep one concern per module, use explicit types, and match the existing style. Add a dependency only when it is clearly needed.
+
+## Rules that protect users
+
+- The model proposes, code validates, a person confirms. Never let model output reach the service desk without validation and an explicit yes, and never let the bot claim a write it has not done.
+- Scope every read and write to the qualified conversation (ID and domain), also when a record is looked up by its key.
+- Validate bounds, identities and state transitions before a write, and audit domain creates, updates and deletes through `AuditLogRepository`.
+- Do not store or log message text, ticket content or file contents. Log error names and keys, not bodies.
+
+## Tests
+
+- New use cases and non-trivial logic need tests. Unit tests use mocked ports and need no database, network or Wire connection; follow `tests/usecases/` and `tests/pipeline/`.
+- Changes to Wire event routing or outbound mapping need contract tests in `tests/contract/`.
+- Repository changes need integration tests in `tests/integration/`, run with `INTEGRATION_TESTS=1` against a throwaway database. Never point tests at a shared or production database.
+- For behaviour that depends on the model, try it with the CLI (see the README) against a test project before you rely on it.
+
+## Gates
+
+Run these before you commit:
+
+```bash
+npm test
+npm run typecheck        # src and tests
+npm run lint
+npm run build
+```
+
+`npm run typecheck` checks `src` with `tsconfig.json` and the tests with `tsconfig.test.json`. Type the mocks in tests properly rather than loosening an assertion to make them compile.
+
+## Writing conventions
+
+- British English in code comments, bot texts and documentation.
+- Plain, direct sentences. No em-dashes.
+- In Markdown, write each paragraph and list item on one line; do not hard-wrap.
+- Use placeholders in examples, such as `SD-42` for a ticket key and `https://your-site.atlassian.net` for a Jira site. Never commit real names, handles, IDs, tokens or conversation content, also not in tests or fixtures.
