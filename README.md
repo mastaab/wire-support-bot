@@ -72,7 +72,14 @@ Every offer follows the same rules as above. With passive help off, the bot only
 
 ### Part orders
 
-A request is a question, a part order or a fault, and each kind can have its own Jira request type. A part order needs four essentials: the item the part is for (the asset, with a configurable label and question), the part, the quantity and the delivery location. When some are missing, the bot asks for them ("To order it I need ..."). The requester's next message is read for the missing values and merged into the draft in code; the bot then asks for what is still missing or shows the complete order for a yes. Only values the requester actually stated count: a quantity must be a number written in the message, so "a new filter" does not become a quantity of one.
+A request is a question, a part order or a fault, and each kind can have its own Jira request type. A part order needs four essentials: the item the part is for (the asset, with a configurable label and question), the part, the quantity and the delivery location. When some are missing, the bot asks for them one step at a time:
+
+1. The asset and the part, which need free text, first and together, in text ("To order it I need the vehicle (fleet or chassis number) and the part (name or number). What are they?").
+2. The quantity, with buttons: "How many shall I order?" [1] [2] [5] [Other].
+3. The delivery location, with the configured locations as buttons (`WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS`): "Where shall I deliver it?" [Depot north] [Depot south] [Other]. Without that setting the location is asked in text.
+4. The complete order, with [Yes] [No].
+
+A click fills the value as chosen; [Other] asks for the value in text. Text answers work at every step: a number for the quantity ("3"), a location's name, or any free text. A typed answer that is not an option is read for the missing values and merged into the draft in code, which also takes a correction ("actually three") at any step; the bot then asks the next question, quoting the values so far after a change. Only values the requester actually stated count: a quantity must be a number written in the message, so "a new filter" does not become a quantity of one. Values chosen by a click come from the bot's own options and count as stated.
 
 ### Photos and documents
 
@@ -104,7 +111,7 @@ The explicit commands (`support:`, `reply to`, `resolve`) are themselves the mem
 
 ### Buttons
 
-Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], or the candidate requests of a choice (the conversation's own requests, filtered by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach".
+Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other".
 
 The click rules:
 
@@ -178,6 +185,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/application/usecases/general/AnswerQuestion.ts` | The answer path: builds the model's context, parses and validates an offer, sends the answer or the question. |
 | `src/application/services/offers.ts` | Offer marker parsing, bounds and the code-written questions. |
 | `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
+| `src/application/services/partOrderSteps.ts` | A part order's questions, one step at a time: free-text essentials, quantity and delivery location buttons, the complete order. |
 | `src/application/usecases/jira/ConfirmOffer.ts` | Classifies a yes, no or choice, by text or button, and runs the confirmed use case. |
 | `src/application/usecases/jira/RaiseSupportRequest.ts`, `ReplyToServiceDesk.ts`, `ResolveSupportRequest.ts`, `GetIssueStatus.ts`, `ListSupportRequests.ts` | The support request use cases, scoped to the conversation; writes are audited. |
 | `src/application/usecases/jira/OfferSupportFromConversation.ts` | Passive help: raise, add, resolve or status from an unaddressed message. |
@@ -275,7 +283,7 @@ The container's entry point applies the migrations (`prisma migrate deploy`) and
 
 ### The CLI for local testing
 
-The CLI drives the real router and use cases from the terminal, without Wire. It simulates one conversation with four members, Alice (the default), Bob, Carol and Dave; prefix a line with `Bob: ` to send it as Bob. Start a line with `@Wire Support Bot` to mention the bot. Bot replies go to stdout and logs to stderr (level `warn` unless `LOG_LEVEL` is set). A question with buttons is printed with its options numbered under it; a line with only an option's number (`2`, or `Bob: 2`) clicks that option of the latest question, and any other line is a text answer. The CLI shows no confirmation. End with `exit`, `quit` or Ctrl-D.
+The CLI drives the real router and use cases from the terminal, without Wire. It simulates one conversation with four members, Alice (the default), Bob, Carol and Dave; prefix a line with `Bob: ` to send it as Bob. Start a line with `@Wire Support Bot` to mention the bot. Bot replies go to stdout and logs to stderr (level `warn` unless `LOG_LEVEL` is set). A question with buttons is printed with its options numbered under it; a line with only an option's number (`2`, or `Bob: 2`) clicks that option of the latest question, and any other line is a text answer. When the buttons are numbers themselves (the quantities [1] [2] [5]), a number clicks only the button with that label and any other number (`3`) is a typed quantity. The CLI shows no confirmation. End with `exit`, `quit` or Ctrl-D.
 
 ```bash
 npm run build
@@ -344,6 +352,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 |---|---|---|---|
 | `WIRE_SUPPORT_BOT_PART_ASSET_LABEL` | no | `Asset` | Label of the item a part is for, shown in confirmations and tickets; one line, at most 40 characters. |
 | `WIRE_SUPPORT_BOT_PART_ASSET_QUESTION` | no | `the item the part is for (for example a serial number)` | How the bot asks for it, completing "To order it I need ..."; one line, at most 200 characters. |
+| `WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS` | no | unset (asked in text) | Delivery locations offered as buttons, with [Other] added: up to 5, separated by `;`, each one line of at most 40 characters; empty entries, repeats and "Other" fail at start-up. |
 
 ### Passive help and watch
 
@@ -369,9 +378,10 @@ WIRE_SUPPORT_BOT_JIRA_SERVICE_SCOPE=faults, breakdowns, damage, maintenance and 
 WIRE_SUPPORT_BOT_JIRA_REQUEST_TYPES=question=10001,part=10002,fault=10003
 WIRE_SUPPORT_BOT_PART_ASSET_LABEL=Vehicle
 WIRE_SUPPORT_BOT_PART_ASSET_QUESTION=the vehicle (fleet or chassis number)
+WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS=Depot north; Depot south
 ```
 
-The service scope tells the classifier and the answer model what counts as a service-desk matter. The request types map questions, part orders and faults to the project's own request types (replace the IDs with yours). The asset label and question make a part order ask for the vehicle ("To order it I need the vehicle (fleet or chassis number) ...") and show "Vehicle: ..." in the confirmation and the ticket. With passive help, the watch and the agent mapping turned on as well, drivers can report a breakdown in their own words, send a photo of the damage and talk to the assigned agent directly.
+The service scope tells the classifier and the answer model what counts as a service-desk matter. The request types map questions, part orders and faults to the project's own request types (replace the IDs with yours). The asset label and question make a part order ask for the vehicle ("To order it I need the vehicle (fleet or chassis number) ...") and show "Vehicle: ..." in the confirmation and the ticket; the delivery locations become buttons ([Depot north] [Depot south] [Other]). With passive help, the watch and the agent mapping turned on as well, drivers can report a breakdown in their own words, send a photo of the damage and talk to the assigned agent directly.
 
 ## Development
 

@@ -3,11 +3,11 @@ import { DEFAULT_PART_ASSET, PART_DETAIL_MAX } from "../../../domain/entities/Su
 import type { PartAssetWording, PartDetails } from "../../../domain/entities/SupportRequest";
 import type { OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
 import type { SupportTriagePort } from "../../ports/SupportTriagePort";
-import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
+import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
-import { OFFER_TTL_MS, PART_DETAIL_KEYS, formatMissingPartsQuestion, formatSupportQuestion, missingPartDetails, partDetailFields } from "../../services/offers";
+import { PART_DETAIL_KEYS, missingPartDetails } from "../../services/offers";
 import { statedPartDetails } from "../../services/partDetails";
-import { newOfferId, sendOfferPrompt } from "../../services/offerButtons";
+import { askPartOrderStep } from "../../services/partOrderSteps";
 
 /** Input of `CompletePartOrder`. */
 export interface CompletePartOrderInput {
@@ -24,7 +24,7 @@ export interface CompletePartOrderInput {
  * Fills a part order that still lacks essentials from the requester's next message, without
  * depending on the answer model returning a revised offer. The triage model only reports which
  * essentials this message states; code merges them into the draft (a value in this message
- * replaces an earlier one), then asks for what is still missing or shows the full offer. The
+ * replaces an earlier one), then asks the order's next question (see `partOrderStep`). The
  * message text and the part values are never logged.
  */
 export class CompletePartOrder {
@@ -36,6 +36,8 @@ export class CompletePartOrder {
     private readonly now: () => Date = () => new Date(),
     /** How the asset essential is named and asked for. */
     private readonly partAsset: PartAssetWording = DEFAULT_PART_ASSET,
+    /** Delivery locations offered as buttons; empty asks for the location in text. */
+    private readonly deliveryLocations: readonly string[] = [],
   ) {}
 
   /** True when it replied (a question for what is still missing, or the complete offer) and stored the updated draft. */
@@ -62,36 +64,22 @@ export class CompletePartOrder {
     };
     // A message that restates what the draft already holds is not an answer; leave it to normal routing.
     if (PART_DETAIL_KEYS.every((key) => (command.part?.[key] ?? "") === (pending.part?.[key] ?? ""))) return false;
-    const missing = missingPartDetails(command);
     // A changed earlier value is shown with the question, so no overwrite goes unseen.
     const changed = PART_DETAIL_KEYS.some((key) => pending.part?.[key] && command.part?.[key] !== pending.part[key]);
-    const question = missing.length > 0
-      ? (changed
-        ? `${formatMissingPartsQuestion(missing, this.partAsset)}\n${formatPartSoFar(command.part, this.partAsset)}`
-        : formatMissingPartsQuestion(missing, this.partAsset))
-      : formatSupportQuestion(command.summary, command.description, "part", command.part, this.partAsset);
-    // The complete order asks for a yes, with buttons; a question for missing details does not.
-    const offerId = missing.length === 0 ? newOfferId() : undefined;
-    let sent: SentMessageRef | undefined;
     try {
-      sent = offerId
-        ? await sendOfferPrompt(this.wireOutbound, input.conversationId, question, offerId, undefined, input.replyToMessageId)
-        : await this.wireOutbound.sendPlainText(input.conversationId, question, { replyToMessageId: input.replyToMessageId });
+      // The next question: free-text essentials, then the quantity and the delivery location
+      // with buttons, then the complete order with [Yes] [No].
+      await askPartOrderStep(
+        { wireOutbound: this.wireOutbound, offers: this.offers, now: this.now, asset: this.partAsset, deliveryLocations: this.deliveryLocations },
+        { conversationId: input.conversationId, requesterId: input.requesterId, replyToMessageId: input.replyToMessageId },
+        command,
+        { soFar: changed },
+      );
     } catch (err) {
       this.logger?.warn("CompletePartOrder: sending the reply failed", { err: errorName(err) });
       return false;
     }
-    const now = this.now();
-    this.offers.put({
-      command,
-      conversationId: input.conversationId,
-      requesterId: input.requesterId,
-      createdAt: now,
-      expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
-      ...(offerId ? { id: offerId } : {}),
-      ...(offerId && sent ? { messageId: sent.messageId } : {}),
-    });
-    this.logger?.debug("CompletePartOrder: part order updated", { missing: missing.length });
+    this.logger?.debug("CompletePartOrder: part order updated", { missing: missingPartDetails(command).length });
     return true;
   }
 }
@@ -115,12 +103,6 @@ function boundedDetails(details: PartDetails | null | undefined): PartDetails {
   return bounded;
 }
 
-
-/** The essentials known so far, one quoted line each, for a question that follows a change. */
-function formatPartSoFar(part: PartDetails | undefined, asset: PartAssetWording): string {
-  const lines = partDetailFields(asset).filter(({ key }) => part?.[key]).map(({ key, label }) => `> ${label}: ${part![key]}`);
-  return ["So far:", ...lines].join("\n");
-}
 
 function errorName(err: unknown): string {
   return err instanceof Error ? err.name : "UnknownError";

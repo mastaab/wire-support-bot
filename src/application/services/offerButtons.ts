@@ -53,14 +53,13 @@ export function decisionAt(offer: Pick<PendingOffer, "command" | "choices">, ind
 /**
  * The option a text answer picks: its number ("2"), one of its answers ("SD-41", "new",
  * "cancel") or its label, optionally with trailing punctuation, emphasis or a trailing "thanks"
- * or "please". Null when the text picks no option.
+ * or "please". Null when the text picks no option. With `byNumber` false a number is not taken
+ * as an option's position, so a quantity of 3 never picks the third button.
  */
-export function matchChoice(choices: readonly OfferChoice[], text: string): number | null {
-  const normalised = normaliseAnswer(text);
-  if (!normalised) return null;
-  const candidates = [normalised, normaliseAnswer(normalised.replace(/[\s,]+(thanks|thank you|please)$/, ""))];
-  for (const candidate of candidates) {
-    if (/^\d{1,2}$/.test(candidate)) {
+export function matchChoice(choices: readonly OfferChoice[], text: string, options: { byNumber?: boolean } = {}): number | null {
+  const byNumber = options.byNumber ?? true;
+  for (const candidate of answerForms(text)) {
+    if (byNumber && /^\d{1,2}$/.test(candidate)) {
       const index = Number(candidate) - 1;
       if (index >= 0 && index < choices.length) return index;
       continue;
@@ -70,6 +69,16 @@ export function matchChoice(choices: readonly OfferChoice[], text: string): numb
     if (index >= 0) return index;
   }
   return null;
+}
+
+/**
+ * A short answer as it is compared with options: lower case, without surrounding punctuation or
+ * emphasis, and once more without a trailing "thanks" or "please". Empty for an empty answer.
+ */
+export function answerForms(text: string): string[] {
+  const normalised = normaliseAnswer(text);
+  if (!normalised) return [];
+  return [normalised, normaliseAnswer(normalised.replace(/[\s,]+(thanks|thank you|please)$/, ""))];
 }
 
 function normaliseAnswer(text: string): string {

@@ -77,7 +77,7 @@ export function createContainer(config: Config, logger: Logger): Container {
   const getIssueStatus = new GetIssueStatus(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger);
   // Triage for passive help and for completing part orders.
   const supportTriage = new OpenAISupportTriageAdapter(llmFactory, logger, { serviceScope: jira.serviceScope, partAsset: config.partAsset });
-  const completePartOrder = new CompletePartOrder(supportTriage, pendingOffers, wireOutbound, logger, undefined, config.partAsset);
+  const completePartOrder = new CompletePartOrder(supportTriage, pendingOffers, wireOutbound, logger, undefined, config.partAsset, config.partDeliveryLocations);
 
   // Passive help: unaddressed messages are classified and, for a service-desk matter, offered
   // help, one channel at a time in message order. Absent when passive help is off.
@@ -85,7 +85,7 @@ export function createContainer(config: Config, logger: Logger): Container {
   let pipeline: ProcessingPipeline | undefined;
   if (passiveOn) {
     const supportHelp = new OfferSupportFromConversation(
-      supportRequestsRepo, supportTriage, getIssueStatus, pendingOffers, wireOutbound, logger, undefined, config.partAsset,
+      supportRequestsRepo, supportTriage, getIssueStatus, pendingOffers, wireOutbound, logger, undefined, config.partAsset, config.partDeliveryLocations,
     );
     const classifier = new OpenAIClassifierAdapter(llmFactory, logger, { serviceScope: jira.serviceScope });
     const passivePipeline = new ProcessingPipeline({
@@ -101,7 +101,7 @@ export function createContainer(config: Config, logger: Logger): Container {
   const answerQuestion = new AnswerQuestion(
     generalAnswerAdapter,
     wireOutbound,
-    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset },
+    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations },
     undefined,
     logger,
   );
@@ -138,7 +138,7 @@ export function createContainer(config: Config, logger: Logger): Container {
   const attachFileToRequest = new AttachFileToRequest(supportRequestsRepo, issueTracker, createWireAssetAdapter(handlerRef), wireOutbound, auditLogRepo, logger);
   const offerAttachment = passiveOn ? new OfferAttachment(supportRequestsRepo, pendingOffers, wireOutbound, logger) : undefined;
   const confirmOffer = new ConfirmOffer(
-    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest, attachFileToRequest }, wireOutbound, undefined, config.partAsset,
+    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest, attachFileToRequest }, wireOutbound, undefined, config.partAsset, config.partDeliveryLocations,
   );
 
   const router = new WireEventRouter({

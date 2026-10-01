@@ -2,12 +2,12 @@ import type { QualifiedId } from "../../../domain/ids/QualifiedId";
 import { DEFAULT_PART_ASSET } from "../../../domain/entities/SupportRequest";
 import type { PartAssetWording } from "../../../domain/entities/SupportRequest";
 import {
-  NOTHING_TO_CONFIRM_REPLY, OFFER_TTL_MS, formatChooseAgain, formatMissingPartsQuestion, formatStillMissingReply, missingPartDetails,
-  offerCommandLine,
+  NOTHING_TO_CONFIRM_REPLY, formatChooseAgain, formatStillMissingReply, missingPartDetails, offerCommandLine,
 } from "../../services/offers";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
 import type { OfferChoice } from "../../ports/PendingOfferPort";
-import { choiceHint, decisionAt, matchChoice } from "../../services/offerButtons";
+import { answerForms, choiceHint, decisionAt, matchChoice } from "../../services/offerButtons";
+import { askPartOrderStep, partOrderTextQuestion } from "../../services/partOrderSteps";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { RaiseSupportRequest } from "./RaiseSupportRequest";
 import type { ReplyToServiceDesk } from "./ReplyToServiceDesk";
@@ -121,6 +121,8 @@ export class ConfirmOffer {
     private readonly now: () => Date = () => new Date(),
     /** How the asset essential of a part order is named and asked for. */
     private readonly partAsset: PartAssetWording = DEFAULT_PART_ASSET,
+    /** Delivery locations of part orders offered as buttons; empty asks for the location in text. */
+    private readonly deliveryLocations: readonly string[] = [],
   ) {}
 
   /**
@@ -131,6 +133,7 @@ export class ConfirmOffer {
   async execute(input: ConfirmOfferInput): Promise<boolean> {
     const now = this.now();
     const live = this.offers.find(input.conversationId, input.requesterId, now);
+    if (live?.fillsPart && live.choices) return this.answerFill(live, live.choices, input, now);
     if (live?.choices) return this.answerChoice(live, live.choices, input, now);
 
     const answer = classifyConfirmation(input.text);
@@ -181,6 +184,33 @@ export class ConfirmOffer {
   }
 
   /**
+   * A text answer to a button question for one part-order essential. An option's label ("2",
+   * "Depot north", "other") picks it like a click; for the quantity, a bare number ("3") fills it
+   * directly. A "no" declines the order; a "yes" or an acknowledgement says what is still missing
+   * and keeps the question open. Anything else is not handled here: the router hands it to
+   * `CompletePartOrder`, so a free-text value or a correction ("actually three") still works.
+   */
+  private async answerFill(live: PendingOffer, choices: readonly OfferChoice[], input: ConfirmOfferInput, now: Date): Promise<boolean> {
+    const index = matchChoice(choices, input.text, { byNumber: false });
+    const quantity = live.fillsPart === "quantity" ? answerForms(input.text).find((form) => /^\d{1,4}$/.test(form) && Number(form) > 0) : undefined;
+    const decision = classifyConfirmation(input.text);
+    if (index === null && !quantity && decision !== "no") {
+      if (decision !== "yes" && !isAcknowledgement(input.text)) return false;
+      await this.wireOutbound.sendPlainText(input.conversationId, formatStillMissingReply(missingPartDetails(live.command), this.partAsset), {
+        replyToMessageId: input.replyToMessageId,
+      });
+      return true;
+    }
+    const offer = this.offers.take(input.conversationId, input.requesterId, now);
+    if (!offer) return false;
+    let command: OfferCommand | null = null;
+    if (index !== null) command = choices[index]!.command;
+    else if (quantity && offer.command.kind === "support") command = { ...offer.command, part: { ...offer.command.part, quantity: String(Number(quantity)) } };
+    await this.decide(offer, command, input, false);
+    return true;
+  }
+
+  /**
    * Runs `command` for the taken offer, or declines it when null, and records the offer's
    * message as answered. `confirmed` is true for a yes to a yes-or-no offer, whose incomplete
    * part order is kept for amending; a chosen incomplete order is asked about afresh.
@@ -194,16 +224,23 @@ export class ConfirmOffer {
     }
 
     const missing = missingPartDetails(command);
-    if (missing.length > 0) {
+    if (confirmed && missing.length > 0) {
       // An incomplete part order can only be amended: keep it so the next answer can fill it.
-      if (confirmed) {
-        this.offers.put(offer);
-        await this.wireOutbound.sendPlainText(conversationId, formatStillMissingReply(missing, this.partAsset), { replyToMessageId });
-        return;
-      }
-      const now = this.now();
-      await this.wireOutbound.sendPlainText(conversationId, formatMissingPartsQuestion(missing, this.partAsset), { replyToMessageId });
-      this.offers.put({ command, conversationId, requesterId: actorId, createdAt: now, expiresAt: new Date(now.getTime() + OFFER_TTL_MS) });
+      this.offers.put(offer);
+      await this.wireOutbound.sendPlainText(conversationId, formatStillMissingReply(missing, this.partAsset), { replyToMessageId });
+      return;
+    }
+    // A chosen essential never runs the order, and a chosen incomplete order is asked about
+    // afresh: the order continues with its next question. [Other] keeps the draft without the
+    // essential, which is then asked for in text.
+    if (command.kind === "support" && command.requestKind === "part" && (offer.fillsPart || missing.length > 0)) {
+      const inText = offer.fillsPart && missing.includes(offer.fillsPart) ? offer.fillsPart : undefined;
+      await askPartOrderStep(
+        { wireOutbound: this.wireOutbound, offers: this.offers, now: this.now, asset: this.partAsset, deliveryLocations: this.deliveryLocations },
+        { conversationId, requesterId: actorId, replyToMessageId },
+        command,
+        inText ? { inText } : {},
+      );
       return;
     }
     switch (command.kind) {
@@ -256,8 +293,8 @@ export class ConfirmOffer {
 
 /** The code-written re-ask after an acknowledgement; it ends with a question like the offer itself. */
 function askAgain(command: OfferCommand, asset: PartAssetWording): string {
-  const missing = missingPartDetails(command);
-  if (missing.length > 0) return formatMissingPartsQuestion(missing, asset);
+  const partQuestion = partOrderTextQuestion(command, asset);
+  if (partQuestion) return partQuestion;
   switch (command.kind) {
     case "support":
       return "I need a clear yes or no, so I haven't raised anything with the service desk yet. Shall I raise it (yes or no)?";

@@ -56,6 +56,7 @@ interface SetupOptions {
   modelAnswer?: string;
   shareWithModel?: boolean;
   passive?: boolean;
+  partDeliveryLocations?: string[];
   tracker?: Partial<IssueTrackerPort>;
   repo?: Partial<SupportRequestRepository>;
   sendFails?: boolean;
@@ -139,7 +140,8 @@ function setup(options: SetupOptions = {}) {
   };
   const retrieval = { retrieve: vi.fn().mockResolvedValue(options.results ?? []) };
   const logger = { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn() };
-  const jira = { tracker, requests: repo, auditLog, offers, shareWithModel: options.shareWithModel ?? false, passive: options.passive, now: () => NOW };
+  const jira = { tracker, requests: repo, auditLog, offers, shareWithModel: options.shareWithModel ?? false, passive: options.passive, now: () => NOW,
+    ...(options.partDeliveryLocations ? { partDeliveryLocations: options.partDeliveryLocations } : {}) };
   const useCase = new AnswerQuestion(general, wire as never, jira, retrieval, logger);
   const run = (question: string, overrides: Partial<AnswerQuestionInput> = {}) => useCase.execute({
     question, conversationContext: [], conversationId: convId, replyToMessageId: "q", requester,
@@ -1070,21 +1072,55 @@ describe("AnswerQuestion with Jira: request kinds and part orders", () => {
     }]);
   });
 
-  it("asks for the missing details of an incomplete part order and stores it as an amendable draft", async () => {
+  it("asks for the missing free-text details of an incomplete part order first and stores it as an amendable draft", async () => {
     const { stored, sent, run } = setup({ modelAnswer: `Happy to.\n${offer({ requestKind: "part", part: { part: "Toner cartridges, black", quantity: "2" } })}` });
     const answer = await run("Can you order two black toner cartridges?");
-    const question = "To order it I need the item the part is for (for example a serial number) and the delivery location. What are they?";
+    const question = "To order it I need the item the part is for (for example a serial number). What is it?";
     expect(sent).toEqual([question]);
     expect(answer).toBe(question);
     expect(stored.map((o) => o.command)).toEqual([incomplete]);
+    expect(stored[0]!.choices).toBeUndefined();
   });
 
-  it("asks for every essential when a part order has none", async () => {
+  it("asks for the asset and the part together when a part order has none, before the quantity and location", async () => {
     const { sent, run } = setup({ modelAnswer: offer({ requestKind: "part" }) });
     await run("Please order a replacement tray");
     expect(sent).toEqual([
-      "To order it I need the item the part is for (for example a serial number), the part (name or number), the quantity and the delivery location. What are they?",
+      "To order it I need the item the part is for (for example a serial number) and the part (name or number). What are they?",
     ]);
+  });
+
+  it("asks for the quantity with [1] [2] [5] [Other] once only the quantity and location are missing", async () => {
+    const part = { asset: "Printer 17", part: "Toner cartridges, black" };
+    const { wire, stored, sent, run } = setup({ modelAnswer: offer({ requestKind: "part", part }), partDeliveryLocations: ["Depot North", "Depot South"] });
+    await run("Can you order black toner cartridges for printer 17?");
+    expect(sent).toEqual(["How many shall I order?"]);
+    const offerId = stored[0]!.id!;
+    expect(wire.sendCompositePrompt.mock.calls[0]![2]).toEqual([
+      { id: `${offerId}:0`, label: "1" }, { id: `${offerId}:1`, label: "2" }, { id: `${offerId}:2`, label: "5" }, { id: `${offerId}:3`, label: "Other" },
+    ]);
+    expect(stored[0]).toMatchObject({ fillsPart: "quantity", messageId: sentRefFor(1).messageId });
+    expect(stored[0]!.choices!.map((c) => c.command)).toEqual([
+      { kind: "support", requestKind: "part", summary: "Toner cartridges for printer 17", description: "The black toner is nearly empty.", part: { ...part, quantity: "1" } },
+      { kind: "support", requestKind: "part", summary: "Toner cartridges for printer 17", description: "The black toner is nearly empty.", part: { ...part, quantity: "2" } },
+      { kind: "support", requestKind: "part", summary: "Toner cartridges for printer 17", description: "The black toner is nearly empty.", part: { ...part, quantity: "5" } },
+      stored[0]!.command,
+    ]);
+  });
+
+  it("asks for the delivery location with the configured locations and [Other], or in text without them", async () => {
+    const part = { asset: "Printer 17", part: "Toner cartridges, black", quantity: "2" };
+    const withList = setup({ modelAnswer: offer({ requestKind: "part", part }), partDeliveryLocations: ["Depot North", "Depot South"] });
+    await withList.run("Can you order two black toner cartridges for printer 17?");
+    expect(withList.sent).toEqual(["Where shall I deliver it?"]);
+    expect(withList.wire.sendCompositePrompt.mock.calls[0]![2].map((b: CompositeButton) => b.label)).toEqual(["Depot North", "Depot South", "Other"]);
+    expect(withList.stored[0]!.fillsPart).toBe("deliverTo");
+
+    const without = setup({ modelAnswer: offer({ requestKind: "part", part }) });
+    await without.run("Can you order two black toner cartridges for printer 17?");
+    expect(without.sent).toEqual(["To order it I need the delivery location. What is it?"]);
+    expect(without.wire.sendCompositePrompt).not.toHaveBeenCalled();
+    expect(without.stored[0]!.fillsPart).toBeUndefined();
   });
 
   it("treats the requester's answer that fills the details as a revision, even unaddressed, and then offers the order", async () => {
@@ -1330,7 +1366,7 @@ describe("AnswerQuestion with Jira: offer buttons", () => {
     expect(stored[0]!.choices).toBeUndefined();
   });
 
-  it("asks for missing part details as plain text, without buttons", async () => {
+  it("asks for missing free-text part details as plain text, without buttons", async () => {
     const part = 'OFFER: {"kind":"support","requestKind":"part","summary":"Order filters","description":"Order filters for printer 7."}';
     const { wire, stored, run } = setup({ modelAnswer: part });
     await run("Order filters for printer 7");

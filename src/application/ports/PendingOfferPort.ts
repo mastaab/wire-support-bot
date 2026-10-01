@@ -51,6 +51,9 @@ export interface OfferChoice {
   command: OfferCommand | null;
 }
 
+/** The part-order essentials asked for with buttons: a quick quantity or a configured delivery location. */
+export type ChoosablePartDetail = "quantity" | "deliverTo";
+
 export interface PendingOffer {
   /**
    * For a yes-or-no offer, what a yes runs. For a choice offer, the option the bot would
@@ -68,6 +71,12 @@ export interface PendingOffer {
   messageId?: string;
   /** A choice between options (targets, new, cancel); absent for a yes-or-no offer. */
   choices?: OfferChoice[];
+  /**
+   * Set when the choices fill one essential of the part-order draft in `command` ([1] [2] [5]
+   * [Other], or the configured delivery locations and [Other]). A chosen option never runs: the
+   * order continues with its next question, and [Other] asks for the value in text.
+   */
+  fillsPart?: ChoosablePartDetail;
 }
 
 /** What is remembered about an offer's button message, also after the offer itself has gone. */

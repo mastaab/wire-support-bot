@@ -60,6 +60,11 @@ export interface Config {
   jira: JiraConfig;
   /** How the asset essential of a part order is named and asked for. */
   partAsset: PartAssetWording;
+  /**
+   * Delivery locations of part orders, offered as buttons with [Other]
+   * (WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS). Empty: the location is asked in text.
+   */
+  partDeliveryLocations: string[];
 }
 
 export interface JiraConfig {
@@ -221,6 +226,37 @@ export function resolvePartAsset(env: Record<string, string | undefined>): PartA
   };
 }
 
+/** Most delivery locations offered as buttons; [Other] is added to them. */
+export const PART_DELIVERY_LOCATIONS_MAX = 5;
+/** Longest delivery location, so it fits a button. */
+export const PART_DELIVERY_LOCATION_MAX = 40;
+
+/**
+ * WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS: the delivery locations offered as buttons, separated
+ * by ";", each trimmed. Unset or blank: none, so the location is asked in text. An empty entry, a
+ * repeated one (ignoring case), "Other", a value over `PART_DELIVERY_LOCATION_MAX` characters or
+ * spanning lines, or more than `PART_DELIVERY_LOCATIONS_MAX` locations fail at startup.
+ */
+export function resolvePartDeliveryLocations(env: Record<string, string | undefined>): string[] {
+  const name = "WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS";
+  const raw = env[name]?.trim();
+  if (!raw) return [];
+  const locations = raw.split(";").map((entry) => entry.trim());
+  const malformed = () => new Error(
+    `${name} must list up to ${PART_DELIVERY_LOCATIONS_MAX} different locations separated by ";", each one line of at most ${PART_DELIVERY_LOCATION_MAX} characters and not "Other"`,
+  );
+  if (locations.length > PART_DELIVERY_LOCATIONS_MAX) throw malformed();
+  const seen = new Set<string>();
+  for (const location of locations) {
+    const folded = location.toLowerCase();
+    if (!location || /[\r\n\t]/.test(location) || location.length > PART_DELIVERY_LOCATION_MAX || folded === "other" || seen.has(folded)) {
+      throw malformed();
+    }
+    seen.add(folded);
+  }
+  return locations;
+}
+
 /** WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE as a canonical IANA name; UTC when unset; an unknown name fails at startup. */
 export function resolveDefaultTimezone(env: Record<string, string | undefined>): string {
   const raw = env.WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE?.trim();
@@ -316,6 +352,7 @@ export function loadConfig(): Config {
   const llm = loadLLMConfig();
   const jira = resolveJiraConfig(process.env);
   const partAsset = resolvePartAsset(process.env);
+  const partDeliveryLocations = resolvePartDeliveryLocations(process.env);
 
   return {
     wire,
@@ -323,5 +360,6 @@ export function loadConfig(): Config {
     llm,
     jira,
     partAsset,
+    partDeliveryLocations,
   };
 }

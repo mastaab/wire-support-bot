@@ -6,8 +6,9 @@ import { RECENT_DROP_MS } from "../../src/application/services/offers";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../src/application/services/offers";
 import type { InboundFile, OfferChoice } from "../../src/application/ports/PendingOfferPort";
 import { addToChoice, cancelChoice, keyChoice, raiseNewChoice } from "../../src/application/services/offerButtons";
+import { partOrderStep } from "../../src/application/services/partOrderSteps";
 import type { QualifiedId } from "../../src/domain/ids/QualifiedId";
-import type { SentMessageRef } from "../../src/application/ports/WireOutboundPort";
+import type { CompositeButton, SentMessageRef } from "../../src/application/ports/WireOutboundPort";
 
 const convId: QualifiedId = { id: "conv-1", domain: "example.com" };
 const alice: QualifiedId = { id: "user-1", domain: "example.com" };
@@ -57,7 +58,7 @@ const nothingWaiting = {
   resolve: `${NOTHING}\nTo resolve it, use \`@Wire Support Bot resolve SD-6\`.`,
 } as const;
 
-function setup(options: { store?: PendingOfferStore; clock?: () => Date } = {}) {
+function setup(options: { store?: PendingOfferStore; clock?: () => Date; deliveryLocations?: string[] } = {}) {
   const store = options.store ?? new InMemoryPendingOfferStore();
   const handlers = {
     raiseSupportRequest: { execute: vi.fn().mockResolvedValue(null) },
@@ -68,13 +69,16 @@ function setup(options: { store?: PendingOfferStore; clock?: () => Date } = {}) 
   const wire = {
     sendPlainText: vi.fn(async (_c: QualifiedId, text: string): Promise<SentMessageRef | undefined> => { sent.push(text); return undefined; }),
     getUserProfile: vi.fn(),
-    sendCompositePrompt: vi.fn(),
+    sendCompositePrompt: vi.fn(async (_c: QualifiedId, text: string, _b: CompositeButton[]): Promise<SentMessageRef | undefined> => {
+      sent.push(text);
+      return { messageId: `bot-msg-${sent.length}`, sha256: "" };
+    }),
     sendButtonConfirmation: vi.fn(),
     sendReaction: vi.fn(),
     sendFile: vi.fn(),
     withTyping: <T>(_c: QualifiedId, work: () => Promise<T>): Promise<T> => work(),
   };
-  const useCase = new ConfirmOffer(store, handlers as unknown as ConfirmOfferHandlers, wire, options.clock ?? (() => now));
+  const useCase = new ConfirmOffer(store, handlers as unknown as ConfirmOfferHandlers, wire, options.clock ?? (() => now), undefined, options.deliveryLocations ?? []);
   const offer = (command: OfferCommand, requesterId: QualifiedId = alice, expiresAt = new Date(now.getTime() + 10 * 60 * 1000)): void =>
     store.put({ command, conversationId: convId, requesterId, createdAt: now, expiresAt });
   return { store, handlers, wire, sent, useCase, offer };
@@ -400,14 +404,14 @@ describe("ConfirmOffer", () => {
       ]);
     });
 
-    it("asks for the missing details again after an acknowledgement", async () => {
+    it("asks for the missing free-text details again after an acknowledgement", async () => {
       const { handlers, sent, store, useCase, offer } = setup();
       offer(INCOMPLETE);
 
       expect(await useCase.execute({ ...input, text: "ok" })).toBe(true);
 
       expectNothingDispatched(handlers);
-      expect(sent).toEqual(["To order it I need the item the part is for (for example a serial number) and the delivery location. What are they?"]);
+      expect(sent).toEqual(["To order it I need the item the part is for (for example a serial number). What is it?"]);
       expect(store.has(convId, alice, now)).toBe(true);
     });
 
@@ -611,12 +615,12 @@ describe("ConfirmOffer: buttons and choices", () => {
     expect(sent).toEqual(["Understood, I won't."]);
   });
 
-  it("asks for the missing essentials when a chosen new part order is incomplete, and keeps it for amending", async () => {
+  it("asks for the missing free-text essentials when a chosen new part order is incomplete, and keeps it for amending", async () => {
     const choices = [addToChoice("SD-38", replyTo("SD-38")), raiseNewChoice(PART_MISSING), cancelChoice()];
     const { handlers, sent, store, useCase } = withOffer(PART_MISSING, { choices });
     expect(await useCase.choose(click(1))).toBe(true);
     expectNothingDispatched(handlers);
-    expect(sent).toEqual(["To order it I need the item the part is for (for example a serial number), the quantity and the delivery location. What are they?"]);
+    expect(sent).toEqual(["To order it I need the item the part is for (for example a serial number). What is it?"]);
     const kept = store.find(convId, alice, now);
     expect(kept?.command).toEqual(PART_MISSING);
     expect(kept?.choices).toBeUndefined();
@@ -674,5 +678,130 @@ describe("ConfirmOffer: buttons and choices", () => {
       expect(await useCase.execute({ ...input, text })).toBe(true);
       expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
     }
+  });
+});
+
+describe("ConfirmOffer: part-order essentials with buttons", () => {
+  type PartOrder = Extract<OfferCommand, { kind: "support" }>;
+  const LOCATIONS = ["Depot north", "Depot south"];
+  const order = (part: Record<string, string>): PartOrder => ({ kind: "support", requestKind: "part", summary: "Air filter", description: "Truck 12 needs an air filter.", part });
+  const NEEDS_QUANTITY = order({ asset: "truck 12", part: "air filter" });
+  const NEEDS_LOCATION = order({ asset: "truck 12", part: "air filter", quantity: "2" });
+
+  /** Alice's button question for the draft's next essential, as the use cases store it. */
+  function asked(draft: PartOrder, locations: string[] = LOCATIONS) {
+    const ctx = setup({ deliveryLocations: locations });
+    const step = partOrderStep(draft, undefined, locations);
+    ctx.store.put({
+      command: draft, conversationId: convId, requesterId: alice, createdAt: now, expiresAt: new Date(now.getTime() + 10 * 60 * 1000),
+      id: "offer-1234", messageId: "msg-q", choices: step.choices!, fillsPart: step.fillsPart!,
+    });
+    return ctx;
+  }
+  const click = (index: number) => ({ conversationId: convId, requesterId: alice, requesterName: "Alice", offerId: "offer-1234", index });
+
+  it("fills the quantity from a click, never runs the order, and asks for the location with buttons", async () => {
+    const { handlers, sent, store, wire, useCase } = asked(NEEDS_QUANTITY);
+    expect(await useCase.choose(click(1))).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent).toEqual(["Where shall I deliver it?"]);
+    expect(wire.sendCompositePrompt.mock.calls[0]![2].map((b) => b.label)).toEqual(["Depot north", "Depot south", "Other"]);
+    expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
+    expect(store.find(convId, alice, now)).toMatchObject({ command: { part: { quantity: "2" } }, fillsPart: "deliverTo", messageId: "bot-msg-1" });
+  });
+
+  it("offers the complete order with [Yes] [No] after the last essential is clicked, without raising it", async () => {
+    const { handlers, sent, store, wire, useCase } = asked(NEEDS_LOCATION);
+    expect(await useCase.choose(click(0))).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent[0]).toContain("Shall I order this part?");
+    expect(sent[0]).toContain("> Deliver to: Depot north");
+    expect(sent[0]).not.toContain("(yes or no)");
+    expect(wire.sendCompositePrompt.mock.calls[0]![2].map((b) => b.label)).toEqual(["Yes", "No"]);
+    const offer = store.find(convId, alice, now)!;
+    expect(offer.command).toEqual({ ...NEEDS_LOCATION, part: { ...NEEDS_LOCATION.part, deliverTo: "Depot north" } });
+    expect(offer.choices).toBeUndefined();
+    expect(offer.fillsPart).toBeUndefined();
+
+    expect(await useCase.execute({ ...input, text: "yes" })).toBe(true);
+    expect(handlers.raiseSupportRequest.execute).toHaveBeenCalledWith(expect.objectContaining({
+      requestKind: "part", part: { asset: "truck 12", part: "air filter", quantity: "2", deliverTo: "Depot north" },
+    }));
+  });
+
+  it.each<[string, number]>([["the quantity", 3], ["the delivery location", 2]])("asks for %s in text after [Other]", async (_label, index) => {
+    const draft = index === 3 ? NEEDS_QUANTITY : NEEDS_LOCATION;
+    const { handlers, sent, store, wire, useCase } = asked(draft);
+    expect(await useCase.choose(click(index))).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent).toEqual([index === 3 ? "To order it I need the quantity. What is it?" : "To order it I need the delivery location. What is it?"]);
+    expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
+    const kept = store.find(convId, alice, now)!;
+    expect(kept.command).toEqual(draft);
+    expect(kept.id).toBeUndefined();
+    expect(kept.fillsPart).toBeUndefined();
+  });
+
+  it.each<[string, string]>([["1", "1"], ["2", "2"], ["5", "5"], ["3", "3"], ["12", "12"], ["3 please", "3"], ["007", "7"]])(
+    "fills the quantity %j typed as text", async (text, quantity) => {
+      const { handlers, store, useCase } = asked(NEEDS_QUANTITY);
+      expect(await useCase.execute({ ...input, text })).toBe(true);
+      expectNothingDispatched(handlers);
+      expect(store.find(convId, alice, now)?.command).toEqual({ ...NEEDS_QUANTITY, part: { ...NEEDS_QUANTITY.part, quantity } });
+      expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
+    },
+  );
+
+  it.each(["Depot south", "depot south.", "DEPOT SOUTH please"])("takes the typed location %j like a click", async (text) => {
+    const { store, useCase } = asked(NEEDS_LOCATION);
+    expect(await useCase.execute({ ...input, text })).toBe(true);
+    expect(store.find(convId, alice, now)?.command).toMatchObject({ part: { deliverTo: "Depot south" } });
+  });
+
+  it("asks for the value in text for a typed other", async () => {
+    const { sent, useCase } = asked(NEEDS_LOCATION);
+    expect(await useCase.execute({ ...input, text: "other" })).toBe(true);
+    expect(sent).toEqual(["To order it I need the delivery location. What is it?"]);
+  });
+
+  it.each(["0", "2", "actually three", "to workshop 3", "lunch at noon?"])(
+    "leaves %j at the location question to the part-order completion, keeping the question", async (text) => {
+      const { handlers, sent, store, useCase } = asked(NEEDS_LOCATION);
+      expect(await useCase.execute({ ...input, text })).toBe(false);
+      expectNothingDispatched(handlers);
+      expect(sent).toEqual([]);
+      expect(store.find(convId, alice, now)?.id).toBe("offer-1234");
+    },
+  );
+
+  it("does not take a zero as a quantity", async () => {
+    const { sent, useCase } = asked(NEEDS_QUANTITY);
+    expect(await useCase.execute({ ...input, text: "0" })).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it.each(["yes", "ok"])("says what is still missing for %j and keeps the question open", async (text) => {
+    const { handlers, sent, store, useCase } = asked(NEEDS_QUANTITY);
+    expect(await useCase.execute({ ...input, text })).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent).toEqual(["I haven't ordered anything yet: I still need the quantity and the delivery location."]);
+    expect(store.find(convId, alice, now)?.id).toBe("offer-1234");
+    expect(store.prompt(convId, "msg-q")?.answered).toBe(false);
+  });
+
+  it("declines the order for a typed no", async () => {
+    const { handlers, sent, store, useCase } = asked(NEEDS_QUANTITY);
+    expect(await useCase.execute({ ...input, text: "no" })).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent).toEqual(["Understood, I won't."]);
+    expect(store.has(convId, alice, now)).toBe(false);
+    expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
+  });
+
+  it("asks for the delivery location in text after a quantity click when no locations are configured", async () => {
+    const { sent, wire, useCase } = asked(NEEDS_QUANTITY, []);
+    expect(await useCase.choose(click(2))).toBe(true);
+    expect(sent).toEqual(["To order it I need the delivery location. What is it?"]);
+    expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
   });
 });

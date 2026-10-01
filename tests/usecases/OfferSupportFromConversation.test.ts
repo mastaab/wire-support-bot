@@ -42,7 +42,10 @@ function input(overrides: Partial<OfferSupportInput> = {}): OfferSupportInput {
 /** An hour and a bit after `created`, so the default record is not recent for the speaker. */
 const LATER = new Date(created.getTime() + 61 * 60 * 1000);
 
-function setup(records: SupportRequest[] = [makeRequest()], draft: SupportDraft | null = DRAFT, statusKey: string | null = null, now: Date = LATER) {
+function setup(
+  records: SupportRequest[] = [makeRequest()], draft: SupportDraft | null = DRAFT, statusKey: string | null = null, now: Date = LATER,
+  deliveryLocations: string[] = [],
+) {
   const requests = makeRequests(records);
   const triage = {
     draftRequest: vi.fn().mockResolvedValue(draft),
@@ -56,7 +59,7 @@ function setup(records: SupportRequest[] = [makeRequest()], draft: SupportDraft 
   };
   const { wire, sent } = makeWire();
   const logger = makeLogger();
-  const useCase = new OfferSupportFromConversation(requests, triage, getIssueStatus as unknown as GetIssueStatus, offers, wire, logger, () => now);
+  const useCase = new OfferSupportFromConversation(requests, triage, getIssueStatus as unknown as GetIssueStatus, offers, wire, logger, () => now, undefined, deliveryLocations);
   return { requests, triage, getIssueStatus, offers, wire, sent, logger, useCase };
 }
 
@@ -436,13 +439,34 @@ describe("OfferSupportFromConversation", () => {
         });
       });
 
-      it("asks for the quantity when the model filled one in that the requester did not state", async () => {
-        const { offers, sent, useCase } = setup(undefined, { ...PART_DRAFT, part: { asset: "printer 7", part: "paper tray", quantity: "1" } });
+      it("asks for the quantity with buttons when the model filled one in that the requester did not state", async () => {
+        const { offers, wire, sent, useCase } = setup(undefined, { ...PART_DRAFT, part: { asset: "printer 7", part: "paper tray", quantity: "1" } });
 
         await useCase.execute(input({ text: "we need a new paper tray for printer 7" }));
 
-        expect(sent).toEqual(["To order it I need the quantity and the delivery location. What are they?"]);
-        expect(offers.put.mock.calls[0]![0].command.part).toEqual({ asset: "printer 7", part: "paper tray" });
+        const offer = offers.put.mock.calls[0]![0];
+        expect(sent).toEqual(["How many shall I order?"]);
+        expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, "How many shall I order?", [
+          { id: `${offer.id}:0`, label: "1" }, { id: `${offer.id}:1`, label: "2" }, { id: `${offer.id}:2`, label: "5" }, { id: `${offer.id}:3`, label: "Other" },
+        ], { replyToMessageId: "msg-9" });
+        expect(offer.command.part).toEqual({ asset: "printer 7", part: "paper tray" });
+        expect(offer.fillsPart).toBe("quantity");
+        expect(offer.choices?.[1]?.command).toEqual({ ...offer.command, part: { asset: "printer 7", part: "paper tray", quantity: "2" } });
+      });
+
+      it("asks for the delivery location with the configured locations once only it is missing", async () => {
+        const part = { asset: "printer 17", part: "paper tray roller", quantity: "2" };
+        const { offers, wire, sent, useCase } = setup(undefined, { ...PART_DRAFT, part }, null, LATER, ["Depot north", "Depot south"]);
+
+        await useCase.execute(input({ text: "I need two paper tray rollers for printer 17" }));
+
+        const offer = offers.put.mock.calls[0]![0];
+        expect(sent).toEqual(["Where shall I deliver it?"]);
+        expect(wire.sendCompositePrompt.mock.calls[0]![2]).toEqual([
+          { id: `${offer.id}:0`, label: "Depot north" }, { id: `${offer.id}:1`, label: "Depot south" }, { id: `${offer.id}:2`, label: "Other" },
+        ]);
+        expect(offer).toMatchObject({ fillsPart: "deliverTo", messageId: sentRefFor(1).messageId });
+        expect(offer.choices?.[0]?.command.part).toEqual({ ...part, deliverTo: "Depot north" });
       });
 
       it("collapses whitespace in the part details", async () => {
@@ -458,8 +482,8 @@ describe("OfferSupportFromConversation", () => {
 
         await useCase.execute(input({ text: PART_DRAFT.description }));
 
-        expect(sent).toEqual([formatMissingPartsQuestion(["asset", "deliverTo"])]);
-        expect(sent[0]).toBe("To order it I need the item the part is for (for example a serial number) and the delivery location. What are they?");
+        expect(sent).toEqual([formatMissingPartsQuestion(["asset"])]);
+        expect(sent[0]).toBe("To order it I need the item the part is for (for example a serial number). What is it?");
         expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "msg-9" });
         expect(offers.put).toHaveBeenCalledTimes(1);
         const offer = offers.put.mock.calls[0]![0];
@@ -473,12 +497,12 @@ describe("OfferSupportFromConversation", () => {
         expect(wire.sendPlainText.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
       });
 
-      it("asks for every detail when the part order states none", async () => {
+      it("asks for the asset and the part together first when the part order states none", async () => {
         const { offers, sent, useCase } = setup(undefined, { ...PART_DRAFT, part: undefined });
 
         await useCase.execute(input());
 
-        expect(sent).toEqual([formatMissingPartsQuestion(["asset", "part", "quantity", "deliverTo"])]);
+        expect(sent).toEqual([formatMissingPartsQuestion(["asset", "part"])]);
         expect(offers.put.mock.calls[0]![0].command).toEqual({
           kind: "support", requestKind: "part", summary: PART_DRAFT.summary, description: PART_DRAFT.description, part: {},
         });
@@ -489,7 +513,7 @@ describe("OfferSupportFromConversation", () => {
 
         await useCase.execute(input({ text: PART_DRAFT.description }));
 
-        expect(sent).toEqual([formatMissingPartsQuestion(["asset", "quantity"])]);
+        expect(sent).toEqual([formatMissingPartsQuestion(["asset"])]);
         expect(offers.put.mock.calls[0]![0].command.part).toEqual({ part: "paper tray roller", deliverTo: "Depot North" });
       });
 

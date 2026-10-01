@@ -62,14 +62,18 @@ export function createCliOutbound(members: readonly CliMember[], write: (text: s
 /**
  * A bare option number ("2") typed after a button question is a click on that option of the
  * latest question, sent by `sender`; null for any other line, which the CLI sends as text (so
- * "yes", "SD-41" or "new" answer as they do in Wire).
+ * "yes", "SD-41" or "new" answer as they do in Wire). When the question has buttons labelled with
+ * numbers (the quick quantities [1] [2] [5]), a bare number clicks only the button with that label
+ * and any other number is sent as text, so typing "3" answers a quantity of 3 instead of
+ * clicking the third button.
  */
 export function cliButtonClick(
   text: string, sender: QualifiedId, conversationId: QualifiedId, prompt: CliPrompt | undefined,
 ): CompositeButtonAction | null {
   const match = /^(\d{1,2})$/.exec(text.trim());
   if (!match || !prompt) return null;
-  const button = prompt.buttons[Number(match[1]) - 1];
+  const numbered = prompt.buttons.some((b) => /^\d+$/.test(b.label));
+  const button = numbered ? prompt.buttons.find((b) => b.label === String(Number(match[1]))) : prompt.buttons[Number(match[1]) - 1];
   if (!button) return null;
   return {
     type: "composite_button_action",

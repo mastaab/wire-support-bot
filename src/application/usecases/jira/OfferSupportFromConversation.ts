@@ -5,13 +5,13 @@ import { DEFAULT_PART_ASSET, PART_DETAIL_MAX, SUPPORT_REQUEST_KINDS, SUPPORT_SUM
 import type { PartAssetWording, PartDetails, SupportRequest, SupportRequestKind } from "../../../domain/entities/SupportRequest";
 import type { SupportRequestRepository } from "../../../domain/repositories/SupportRequestRepository";
 import type { MessageCategory } from "../../ports/ClassifierPort";
-import type { OfferChoice, OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
+import type { ChoosablePartDetail, OfferChoice, OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
 import type { OpenRequestRef, SupportDraft, SupportTriagePort } from "../../ports/SupportTriagePort";
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
 import {
   OFFER_DESCRIPTION_MAX, OFFER_TTL_MS, PART_DETAIL_KEYS, REPLY_BODY_MAX,
-  formatMissingPartsQuestion, formatNewOrExistingQuestion, formatReplyQuestion, formatReplyTargetQuestion, formatResolveQuestion,
+  formatNewOrExistingQuestion, formatReplyQuestion, formatReplyTargetQuestion, formatResolveQuestion,
   formatResolveTargetQuestion, formatSupportQuestion, missingPartDetails,
 } from "../../services/offers";
 import type { CandidateRequest } from "../../services/offers";
@@ -21,6 +21,7 @@ import {
 import type { GetIssueStatus } from "./GetIssueStatus";
 import { rememberLastMessage } from "./supportRequestMarkers";
 import { statedPartDetails } from "../../services/partDetails";
+import { partOrderStep } from "../../services/partOrderSteps";
 
 /** Classifier confidence required before passive help acts on a message. */
 export const PASSIVE_CONFIDENCE_MIN = 0.8;
@@ -82,6 +83,8 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
     private readonly now: () => Date = () => new Date(),
     /** How the asset essential of a part order is named and asked for. */
     private readonly partAsset: PartAssetWording = DEFAULT_PART_ASSET,
+    /** Delivery locations of part orders offered as buttons; empty asks for the location in text. */
+    private readonly deliveryLocations: readonly string[] = [],
   ) {}
 
   async execute(input: OfferSupportInput): Promise<boolean> {
@@ -247,11 +250,14 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
       this.logger?.debug("OfferSupportFromConversation: draft outside the offer bounds");
       return false;
     }
-    // A part order without all its essentials asks for what is missing instead. The incomplete
-    // order is stored like any offer: the speaker's answer amends it, and it cannot be confirmed
-    // until it is complete. That question asks for details, not for a yes, so it has no buttons.
-    const missing = missingPartDetails(command);
-    if (missing.length > 0) return this.offer(input, formatMissingPartsQuestion(missing, this.partAsset), command, undefined, false);
+    // A part order without all its essentials asks its next question instead: the free-text
+    // essentials in text, then the quantity and the delivery location with buttons. The
+    // incomplete order is stored like any offer: the speaker's answer, typed or clicked, amends
+    // it, and it cannot be confirmed until it is complete.
+    if (command.requestKind === "part" && missingPartDetails(command).length > 0) {
+      const step = partOrderStep(command, this.partAsset, this.deliveryLocations);
+      return this.offer(input, step.question, command, step.choices, step.buttons, step.fillsPart);
+    }
     return this.offer(input, formatSupportQuestion(command.summary, command.description, command.requestKind, command.part, this.partAsset), command);
   }
 
@@ -296,7 +302,8 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
   /**
    * Sends the code-written question as a native reply to the source message, then stores the
    * offer for the speaker. An offer question goes with buttons ([Yes] [No], or one per option of
-   * a choice); `withButtons` is false for a question that asks for details instead. True when the
+   * a choice, or the options for a part order's essential named by `fillsPart`); `withButtons`
+   * is false for a question that asks for free-text details instead. True when the
    * question was sent, even if the work was cancelled during the send and the offer is not stored.
    * A yes-or-no reply or resolve offer names an open request of this conversation, so it becomes
    * that request's last message, quoted by the next watch update; a choice names several and is
@@ -304,6 +311,7 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
    */
   private async offer(
     input: OfferSupportInput, question: string, command: OfferCommand, choices?: OfferChoice[], withButtons = true,
+    fillsPart?: ChoosablePartDetail,
   ): Promise<boolean> {
     if (input.signal?.aborted || this.offers.has(input.conversationId, input.senderId)) return false;
     const offerId = withButtons ? newOfferId() : undefined;
@@ -329,6 +337,7 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
         ...(offerId ? { id: offerId } : {}),
         ...(offerId && sent ? { messageId: sent.messageId } : {}),
         ...(choices ? { choices } : {}),
+        ...(fillsPart ? { fillsPart } : {}),
       });
     }
     // The question is in the channel either way; only its ID and hash are kept.

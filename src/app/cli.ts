@@ -14,7 +14,8 @@
  *   <message>                    sent as the default user (Alice)
  *   <Name>: <message>            sent as a named member (must be in the seeded roster)
  *   <number>                     after a question with buttons: clicks that option (the options
- *                                are printed numbered under the question)
+ *                                are printed numbered under the question); when the buttons are
+ *                                numbers themselves (quantities), clicks the button with that label
  *
  * Bot replies are printed prefixed with "[Wire Support Bot]". All other log output goes to
  * stderr so stdout stays clean for scripted use.
@@ -141,14 +142,14 @@ async function main() {
   const passiveOn = jira.passive;
   // Triage for passive help and for completing part orders.
   const supportTriage = new OpenAISupportTriageAdapter(llmFactory, logger, { serviceScope: jira.serviceScope, partAsset: config.partAsset });
-  const completePartOrder = new CompletePartOrder(supportTriage, pendingOffers, wireOutbound, logger, undefined, config.partAsset);
+  const completePartOrder = new CompletePartOrder(supportTriage, pendingOffers, wireOutbound, logger, undefined, config.partAsset, config.partDeliveryLocations);
 
   // Passive help
   let processingQueue: InMemoryProcessingQueue<MessageJob> | undefined;
   let pipeline: ProcessingPipeline | undefined;
   if (passiveOn) {
     const supportHelp = new OfferSupportFromConversation(
-      supportRequestsRepo, supportTriage, getIssueStatus, pendingOffers, wireOutbound, logger, undefined, config.partAsset,
+      supportRequestsRepo, supportTriage, getIssueStatus, pendingOffers, wireOutbound, logger, undefined, config.partAsset, config.partDeliveryLocations,
     );
     const classifier = new OpenAIClassifierAdapter(llmFactory, logger, { serviceScope: jira.serviceScope });
     const passivePipeline = new ProcessingPipeline({
@@ -164,7 +165,7 @@ async function main() {
       jiraProjectKey: jira.projectKey, jiraShareWithModel: jira.shareWithModel, jiraServiceScope: jira.serviceScope, partAsset: config.partAsset,
     }),
     wireOutbound,
-    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset },
+    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations },
     undefined,
     logger,
   );
@@ -176,7 +177,7 @@ async function main() {
   const replyToServiceDesk = new ReplyToServiceDesk(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger);
   // The CLI has no file transport, so no attachments.
   const confirmOffer = new ConfirmOffer(
-    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest }, wireOutbound, undefined, config.partAsset,
+    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest }, wireOutbound, undefined, config.partAsset, config.partDeliveryLocations,
   );
   const router = new WireEventRouter({
     logger,

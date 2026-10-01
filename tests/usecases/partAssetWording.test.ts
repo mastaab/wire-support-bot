@@ -75,7 +75,7 @@ describe("part asset wording: use cases", () => {
     const pending: OfferCommand = { kind: "support", requestKind: "part", summary: "Toner cartridges", description: "Need toner cartridges.", part: { part: "toner cartridges" } };
 
     expect(await useCase.execute({ text: "2 please", conversationId: convId, requesterId: alice, pending })).toBe(true);
-    expect(sent).toEqual(["To order it I need the device (asset tag or room number) and the delivery location. What are they?"]);
+    expect(sent).toEqual(["To order it I need the device (asset tag or room number). What is it?"]);
   });
 
   it("OfferSupportFromConversation asks for the asset with the configured question", async () => {

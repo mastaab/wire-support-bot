@@ -249,8 +249,10 @@ export class WireEventRouter extends WireEventsHandler {
         return;
       }
       droppedOffer = pendingOffers.drop(convId, sender) ?? undefined;
-      // A dropped choice is not a draft to amend or complete: the requester has moved on.
-      if (live?.choices) droppedOffer = undefined;
+      // A dropped choice is not a draft to amend or complete: the requester has moved on. A
+      // button question for a part-order essential is the exception: its draft stays, so a typed
+      // value or a correction completes it below.
+      if (live?.choices && !live.fillsPart) droppedOffer = undefined;
       // With no live offer, only a recently dropped one brought us here and the requester has
       // moved on, so a later yes (perhaps to a colleague) is not answered about it.
       if (!droppedOffer) pendingOffers.forgetDropped(convId, sender);
@@ -264,6 +266,8 @@ export class WireEventRouter extends WireEventsHandler {
           text: commandText, conversationId: convId, requesterId: sender, pending: draft, replyToMessageId: wireMessage.id,
         }));
         if (completed) {
+          // The typed answer decided the question, so a later click on its buttons is told so.
+          if (live?.id) pendingOffers.markAnswered(convId, live.id);
           this.recordHandled(convId, wireMessage.id, sender, senderDisplayName, text, "(Updated the part order draft.)");
           return;
         }

@@ -49,6 +49,15 @@ describe("CLI fallback for buttons", () => {
     for (const line of ["yes", "SD-41", "0", "3", "1 please", "12a"]) expect(cliButtonClick(line, alice, convId, cli.latestPrompt())).toBeNull();
   });
 
+  it("clicks only the button labelled with the number when the buttons are quantities, and sends other numbers as text", async () => {
+    const { cli } = setup();
+    const buttons = ["1", "2", "5", "Other"].map((label, index) => ({ id: `offer-1234:${index}`, label }));
+    await cli.wireOutbound.sendCompositePrompt(convId, "How many shall I order?", buttons);
+    expect(cliButtonClick("1", alice, convId, cli.latestPrompt())?.buttonId).toBe("offer-1234:0");
+    expect(cliButtonClick("5", alice, convId, cli.latestPrompt())?.buttonId).toBe("offer-1234:2");
+    for (const line of ["3", "4", "0", "other"]) expect(cliButtonClick(line, alice, convId, cli.latestPrompt())).toBeNull();
+  });
+
   it("looks up the simulated members' names", async () => {
     const { cli } = setup();
     expect(await cli.wireOutbound.getUserProfile(bob)).toEqual({ id: bob, name: "Bob" });

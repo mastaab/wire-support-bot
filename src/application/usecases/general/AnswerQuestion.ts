@@ -12,8 +12,8 @@ import type { Logger } from "../../ports/Logger";
 import { trackerErrorFields } from "../../ports/IssueTrackerPort";
 import type { IssueReply, IssueSnapshot, IssueTrackerPort } from "../../ports/IssueTrackerPort";
 import {
-  GENERIC_COMMAND_LINE, NO_CHANGE_REPLY, OFFER_TTL_MS, formatMissingPartsQuestion, formatReplyQuestion, formatResolveQuestion,
-  formatSupportQuestion, missingPartDetails, offerCommandLine, parseOfferMarker,
+  GENERIC_COMMAND_LINE, NO_CHANGE_REPLY, OFFER_TTL_MS, formatReplyQuestion, formatResolveQuestion,
+  formatSupportQuestion, offerCommandLine, parseOfferMarker,
 } from "../../services/offers";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
 import { botActor, refreshStatusCategory } from "../jira/supportRequestStatus";
@@ -23,6 +23,8 @@ import { markRepliesSeen, rememberLastMessage } from "../jira/supportRequestMark
 import { formatTimeInZone } from "../../services/formatTimeInZone";
 import { statedPartDetails } from "../../services/partDetails";
 import { newOfferId, sendOfferPrompt } from "../../services/offerButtons";
+import { partOrderStep } from "../../services/partOrderSteps";
+import type { PartOrderStep } from "../../services/partOrderSteps";
 
 /**
  * Scans `text` for `@Name` tokens and returns Wire mention objects with UTF-16 offsets.
@@ -88,6 +90,8 @@ export interface AnswerQuestionJira {
   passive?: boolean;
   /** How the asset essential of a part order is named and asked for; the default wording when absent. */
   partAsset?: PartAssetWording;
+  /** Delivery locations of part orders offered as buttons; the location is asked in text when absent or empty. */
+  partDeliveryLocations?: readonly string[];
   now?: () => Date;
 }
 
@@ -150,6 +154,8 @@ const REPLY_TARGET = /\b(?:service\s+desk|support|jira|tickets?)\b/i;
 /** A validated offer and the code-written question that asks the requester to confirm it. */
 interface PreparedOffer {
   question: string;
+  /** Sent with buttons: [Yes] [No], or the options in `offer.choices`. */
+  buttons: boolean;
   offer: PendingOffer;
   /** The request of this conversation the question names (reply and resolve offers). */
   requestKey?: string;
@@ -249,10 +255,11 @@ export class AnswerQuestion {
     // already happened ("I'll send that ..."), which is wrong until the requester confirms.
     // No mentions: a quoted summary or reply body may contain @names that must not ping members.
     // The offer is stored only after the question was sent, so it is never confirmable unseen.
-    // A yes-or-no question goes with [Yes] [No]; a question for missing part details has no buttons.
-    const offerId = missingPartDetails(prepared.offer.command).length === 0 ? newOfferId() : undefined;
+    // A yes-or-no question goes with [Yes] [No] and a part order's quantity or delivery location
+    // with its options; a question for free-text part details has no buttons.
+    const offerId = prepared.buttons ? newOfferId() : undefined;
     const sent = offerId
-      ? await sendOfferPrompt(this.wireOutbound, input.conversationId, prepared.question, offerId, undefined, input.replyToMessageId)
+      ? await sendOfferPrompt(this.wireOutbound, input.conversationId, prepared.question, offerId, prepared.offer.choices, input.replyToMessageId)
       : await this.send(input, prepared.question, false);
     this.jira.offers.put({
       ...prepared.offer,
@@ -401,11 +408,13 @@ export class AnswerQuestion {
     const requester = input.requester;
     let question: string | null = null;
     let requestKey: string | undefined;
+    let step: Pick<PartOrderStep, "buttons" | "choices" | "fillsPart"> = { buttons: true };
     if (requester?.domain) {
       try {
         const validated = await this.offerQuestion(jira, command, input.conversationId);
         question = validated?.question ?? null;
         requestKey = validated?.requestKey;
+        if (validated?.step) step = validated.step;
       } catch (err) {
         this.logger?.warn("AnswerQuestion: offer validation failed", { kind: command.kind, err: err instanceof Error ? err.name : "UnknownError" });
         return null;
@@ -419,6 +428,7 @@ export class AnswerQuestion {
     const now = (jira.now ?? (() => new Date()))();
     return {
       question,
+      buttons: step.buttons,
       ...(requestKey ? { requestKey } : {}),
       offer: {
         command,
@@ -426,6 +436,8 @@ export class AnswerQuestion {
         requesterId: { id: requester.id, domain: requester.domain },
         createdAt: now,
         expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
+        ...(step.choices ? { choices: step.choices } : {}),
+        ...(step.fillsPart ? { fillsPart: step.fillsPart } : {}),
       },
     };
   }
@@ -437,16 +449,16 @@ export class AnswerQuestion {
    */
   private async offerQuestion(
     jira: AnswerQuestionJira, command: OfferCommand, conversationId: QualifiedId,
-  ): Promise<{ question: string; requestKey?: string } | null> {
+  ): Promise<{ question: string; requestKey?: string; step?: PartOrderStep } | null> {
     if (command.kind === "support") {
-      // An incomplete part order is stored as an amendable draft: the requester's answer fills it.
-      const missing = missingPartDetails(command);
       const asset = jira.partAsset ?? DEFAULT_PART_ASSET;
-      return {
-        question: missing.length > 0
-          ? formatMissingPartsQuestion(missing, asset)
-          : formatSupportQuestion(command.summary, command.description, command.requestKind, command.part, asset),
-      };
+      if (command.requestKind !== "part") {
+        return { question: formatSupportQuestion(command.summary, command.description, command.requestKind, command.part, asset) };
+      }
+      // An incomplete part order is stored as an amendable draft that asks its next question:
+      // the requester's answer, typed or clicked, fills it.
+      const step = partOrderStep(command, asset, jira.partDeliveryLocations ?? []);
+      return { question: step.question, step };
     }
 
     const request = await findSupportRequestInConversation(jira.requests, command.issueKey, conversationId, jira.tracker.projectKey);

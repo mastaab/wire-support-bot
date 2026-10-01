@@ -269,6 +269,12 @@ export function formatMissingPartsQuestion(missing: ReadonlyArray<keyof PartDeta
   return `To order it I need ${list}. What ${asks.length === 1 ? "is it" : "are they"}?`;
 }
 
+/** The essentials known so far, one quoted line each, for a question that follows a change. */
+export function formatPartSoFar(part: PartDetails | undefined, asset: PartAssetWording = DEFAULT_PART_ASSET): string {
+  const lines = partDetailFields(asset).filter(({ key }) => part?.[key]).map(({ key, label }) => `> ${label}: ${part![key]}`);
+  return ["So far:", ...lines].join("\n");
+}
+
 /** The reply to a yes while a part order still lacks essentials. */
 export function formatStillMissingReply(missing: ReadonlyArray<keyof PartDetails>, asset: PartAssetWording = DEFAULT_PART_ASSET): string {
   const asks = partDetailFields(asset).filter(({ key }) => missing.includes(key)).map(({ ask }) => ask);
