@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { CompletePartOrder } from "../../src/application/usecases/jira/CompletePartOrder";
 import type { CompletePartOrderInput } from "../../src/application/usecases/jira/CompletePartOrder";
 import { OFFER_TTL_MS, formatMissingPartsQuestion, formatSupportQuestion } from "../../src/application/services/offers";
+import { withoutAnswerHint } from "../../src/application/services/offerButtons";
 import type { OfferCommand } from "../../src/application/services/offers";
 import { PART_DETAIL_MAX } from "../../src/domain/entities/SupportRequest";
 import type { PartDetails } from "../../src/domain/entities/SupportRequest";
@@ -156,7 +157,8 @@ describe("CompletePartOrder", () => {
     await expect(useCase.execute(input())).resolves.toBe(true);
 
     const part = { ...DRAFT.part, deliverTo: "depot north" };
-    expect(sent).toEqual([formatSupportQuestion(DRAFT.summary, DRAFT.description, "part", part)]);
+    expect(sent).toEqual([withoutAnswerHint(formatSupportQuestion(DRAFT.summary, DRAFT.description, "part", part))]);
+    expect(sent[0]).not.toContain("(yes or no)");
     expect(sent[0]).toContain("Shall I order this part?");
     for (const line of ["> Asset: printer 7", "> Part: PRIVATE_PART_MARKER paper tray", "> Quantity: 1", "> Deliver to: depot north"]) {
       expect(sent[0]).toContain(line);

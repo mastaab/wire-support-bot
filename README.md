@@ -37,7 +37,7 @@ Status, reply and resolve only work for requests raised in the same conversation
 
 ### Natural language and offers
 
-A member can also mention the bot and write in their own words: "the printer on the second floor is broken again, can you raise it?", "tell the desk that it works after a restart", "we can close SD-42". The model drafts a proposal, code checks it, and the bot asks a code-written question that ends in "(yes or no)?", with the buttons [Yes] and [No] under it. Nothing is sent to the service desk until the member answers, by clicking a button or by writing "yes" or "no".
+A member can also mention the bot and write in their own words: "the printer on the second floor is broken again, can you raise it?", "tell the desk that it works after a restart", "we can close SD-42". The model drafts a proposal, code checks it, and the bot asks a code-written question with the buttons [Yes] and [No] under it. The buttons show the choices, so the question carries no text answer hint. Nothing is sent to the service desk until the member answers, by clicking a button or by writing "yes" or "no".
 
 The rules for an offer:
 
@@ -56,7 +56,7 @@ Where the bot would otherwise have to guess which request is meant, it asks, wit
 
 Every choice can also be answered by text: with the request key ("SD-41"), "new", "cancel" or "no", or the option's number. "yes" or "ok" pick nothing; the bot asks again. The options come from the conversation's own stored requests and are checked by code; the model never adds one.
 
-Clients that do not show buttons show the question's text, which names the text answers ("(yes or no)?", "(SD-38, new or cancel)?"), so members answer in text there.
+A question with buttons shows the choices as buttons and leaves out the text answer hint (such as "(yes or no)?" or "(SD-38, new or cancel)?"). The text answers (yes, no, the request key, new, cancel, the option's number) still work. Clients without composite-message support show the question without the hint, and members can still answer there in text. When the bot asks again in text after an unclear answer, that question names the text answers.
 Questions that ask for no change ("what was the VPN request called?") get an answer from the recent conversation and the conversation's support requests. When the bot's latest message among the last three ended with a question, the next message is treated as a follow-up even without a mention.
 
 ### Passive help

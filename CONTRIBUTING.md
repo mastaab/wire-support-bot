@@ -28,7 +28,7 @@ Keep one concern per module, use explicit types, and match the existing style. A
 ## Rules that protect users
 
 - The model proposes, code validates, a person confirms. Never let model output reach the service desk without validation and an explicit yes, and never let the bot claim a write it has not done.
-- Buttons follow the same rule. Build every option in code from validated data (never from model output alone), keep button IDs opaque (offer ID and option index, checked against the stored offer), accept only the first click of the member who was asked, confirm only that click, and always post the result as text. Every button question must stay answerable in text.
+- Buttons follow the same rule. Build every option in code from validated data (never from model output alone), keep button IDs opaque (offer ID and option index, checked against the stored offer), accept only the first click of the member who was asked, confirm only that click, and always post the result as text. Every button question must stay answerable in text, but is sent without a text answer hint such as "(yes or no)?": the buttons show the choices (`withoutAnswerHint` in `offerButtons.ts`).
 - Scope every read and write to the qualified conversation (ID and domain), also when a record is looked up by its key.
 - Validate bounds, identities and state transitions before a write, and audit domain creates, updates and deletes through `AuditLogRepository`.
 - Do not store or log message text, ticket content or file contents. Log error names and keys, not bodies.

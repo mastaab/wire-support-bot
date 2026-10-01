@@ -51,7 +51,7 @@ describe("OfferAttachment", () => {
 
     expect(await useCase.execute(input)).toBe(true);
 
-    expect(sent).toEqual(['Shall I add this photo to **SD-16** "Error light on printer 12"?\n\n(yes or no)?']);
+    expect(sent).toEqual(['Shall I add this photo to **SD-16** "Error light on printer 12"?']);
     const offerId = offers.find(convId, alice, now)!.id!;
     expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], [
       { id: `${offerId}:0`, label: "Yes" }, { id: `${offerId}:1`, label: "No" },
@@ -76,7 +76,7 @@ describe("OfferAttachment", () => {
 
     expect(await useCase.execute({ ...input, file: DOCUMENT })).toBe(true);
 
-    expect(sent).toEqual(['Shall I add this file (service-log.pdf) to **SD-16** "Error light on printer 12"?\n\n(yes or no)?']);
+    expect(sent).toEqual(['Shall I add this file (service-log.pdf) to **SD-16** "Error light on printer 12"?']);
   });
 
   it("stores the offer for the sender only", async () => {
@@ -326,7 +326,7 @@ describe("OfferAttachment: choosing the request", () => {
 
     expect(labels(wire)).toEqual(["SD-42", "SD-41", "SD-40", "Do not attach"]);
     expect(sent).toEqual([
-      'Which request shall I add this photo to?\n\n- **SD-42** "Badge reader"\n- **SD-41** "Scanner offline"\n- **SD-40** "Printer 12 error light"\n\n(SD-42, SD-41, SD-40 or no)?',
+      'Which request shall I add this photo to?\n\n- **SD-42** "Badge reader"\n- **SD-41** "Scanner offline"\n- **SD-40** "Printer 12 error light"',
     ]);
     expect(wire.sendCompositePrompt.mock.calls[0]![3]).toEqual({ replyToMessageId: "file-msg-1" });
     const offer = offers.find(convId, alice, now)!;

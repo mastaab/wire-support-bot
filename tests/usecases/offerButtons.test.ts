@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   addToChoice, cancelChoice, choiceHint, decisionAt, doNotAttachChoice, keyChoice, matchChoice, newOfferId, offerButtons,
   parseOfferButtonId, raiseNewChoice,
+  withoutAnswerHint,
 } from "../../src/application/services/offerButtons";
 import type { OfferChoice, OfferCommand } from "../../src/application/ports/PendingOfferPort";
 
@@ -77,5 +78,24 @@ describe("choiceHint", () => {
   it("names the text answers with keys in upper case", () => {
     expect(choiceHint(NEW_OR_EXISTING)).toBe("SD-38, SD-40, new or cancel");
     expect(choiceHint([keyChoice("SD-40", reply("SD-40")), doNotAttachChoice()])).toBe("SD-40 or no");
+  });
+});
+
+describe("withoutAnswerHint", () => {
+  it("drops a final answer-hint paragraph", () => {
+    expect(withoutAnswerHint("Shall I report this to the service desk?\n> **Printer jams**\n\n(yes or no)?"))
+      .toBe("Shall I report this to the service desk?\n> **Printer jams**");
+    expect(withoutAnswerHint("Which request shall I resolve?\n\n- **SD-40** \"A\"\n- **SD-41** \"B\"\n\n(SD-40, SD-41 or cancel)?\n"))
+      .toBe("Which request shall I resolve?\n\n- **SD-40** \"A\"\n- **SD-41** \"B\"");
+  });
+
+  it("ends a one-line question with a plain question mark", () => {
+    expect(withoutAnswerHint("Shall I resolve **SD-40** \"A\" with the service desk (yes or no)?"))
+      .toBe("Shall I resolve **SD-40** \"A\" with the service desk?");
+  });
+
+  it("leaves a question without a hint unchanged", () => {
+    expect(withoutAnswerHint("Shall I order this part?\n> **Mouse**")).toBe("Shall I order this part?\n> **Mouse**");
+    expect(withoutAnswerHint("Is it (still) broken?")).toBe("Is it (still) broken?");
   });
 });

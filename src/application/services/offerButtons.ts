@@ -134,7 +134,20 @@ export function isChoiceOffer(offer: Pick<PendingOffer, "choices">): boolean {
 }
 
 /**
+ * The question without its text answer hint, for sending with buttons: a final paragraph such as
+ * "(yes or no)?" or "(SD-40, SD-41, new or cancel)?" is dropped, and a question line ending in
+ * " (yes or no)?" ends in "?" instead. The buttons show the choices; text answers still work.
+ */
+export function withoutAnswerHint(question: string): string {
+  const paragraphs = question.trimEnd().split(/\n\s*\n/);
+  const last = paragraphs[paragraphs.length - 1]!.trim();
+  if (paragraphs.length > 1 && /^\([^()\n]+\)\?$/.test(last)) return paragraphs.slice(0, -1).join("\n\n").trimEnd();
+  return question.trimEnd().replace(/ \([^()\n]+\)\?$/, "?");
+}
+
+/**
  * Sends an offer question with the offer's buttons, as a native reply to `replyToMessageId`.
+ * The text answer hint is left out, since the buttons show the choices.
  * Returns the sent message's reference, which the stored offer keeps so a click can be matched.
  */
 export function sendOfferPrompt(
@@ -145,5 +158,5 @@ export function sendOfferPrompt(
   choices?: readonly OfferChoice[],
   replyToMessageId?: string,
 ): Promise<SentMessageRef | undefined> {
-  return wireOutbound.sendCompositePrompt(conversationId, question, offerButtons(offerId, choices), { replyToMessageId });
+  return wireOutbound.sendCompositePrompt(conversationId, withoutAnswerHint(question), offerButtons(offerId, choices), { replyToMessageId });
 }

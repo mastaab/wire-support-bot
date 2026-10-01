@@ -6,6 +6,7 @@ import { formatIssueStatus } from "../../src/application/usecases/jira/formatIss
 import {
   OFFER_DESCRIPTION_MAX, OFFER_TTL_MS, REPLY_BODY_MAX, formatMissingPartsQuestion, formatReplyQuestion, formatResolveQuestion, formatSupportQuestion,
 } from "../../src/application/services/offers";
+import { withoutAnswerHint } from "../../src/application/services/offerButtons";
 import { PART_DETAIL_MAX, SUPPORT_SUMMARY_MAX } from "../../src/domain/entities/SupportRequest";
 import type { SupportRequest } from "../../src/domain/entities/SupportRequest";
 import type { SupportDraft } from "../../src/application/ports/SupportTriagePort";
@@ -155,8 +156,8 @@ describe("OfferSupportFromConversation", () => {
       await useCase.execute(input());
 
       expect(triage.draftRequest).toHaveBeenCalledWith(MESSAGE, [{ key: "SD-6", summary: "VPN drops every ten minutes", raisedBySpeakerRecently: false }]);
-      expect(sent).toEqual([formatSupportQuestion(DRAFT.summary, DRAFT.description)]);
-      expect(sent[0]).toBe("Shall I report this to the service desk?\n> **Printer on floor 3 jams on every job**\n> The printer on floor 3 jams on every job.\n\n(yes or no)?");
+      expect(sent).toEqual([withoutAnswerHint(formatSupportQuestion(DRAFT.summary, DRAFT.description))]);
+      expect(sent[0]).toBe("Shall I report this to the service desk?\n> **Printer on floor 3 jams on every job**\n> The printer on floor 3 jams on every job.");
       expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
       expect(offers.put).toHaveBeenCalledTimes(1);
       const offer = offers.put.mock.calls[0]![0];
@@ -184,7 +185,7 @@ describe("OfferSupportFromConversation", () => {
 
       await useCase.execute(input());
 
-      expect(sent).toEqual(["Shall I report this to the service desk?\n> **Printer jams**\n\n(yes or no)?"]);
+      expect(sent).toEqual(["Shall I report this to the service desk?\n> **Printer jams**"]);
     });
 
     it("passes only open requests of this conversation in the tracker's project, at most 20", async () => {
@@ -268,8 +269,8 @@ describe("OfferSupportFromConversation", () => {
 
       await useCase.execute(input({ categories: ["update"] }));
 
-      expect(sent).toEqual([formatReplyQuestion("SD-6", "VPN drops every ten minutes", "It only happens on the 3rd floor.")]);
-      expect(sent[0]).toBe("Shall I add this to **SD-6** \"VPN drops every ten minutes\"?\n> It only happens on the 3rd floor.\n\n(yes or no)?");
+      expect(sent).toEqual([withoutAnswerHint(formatReplyQuestion("SD-6", "VPN drops every ten minutes", "It only happens on the 3rd floor."))]);
+      expect(sent[0]).toBe("Shall I add this to **SD-6** \"VPN drops every ten minutes\"?\n> It only happens on the 3rd floor.");
       expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
       expect(offers.put).toHaveBeenCalledTimes(1);
       const offer = offers.put.mock.calls[0]![0];
@@ -350,7 +351,7 @@ describe("OfferSupportFromConversation", () => {
 
       await useCase.execute(input());
 
-      expect(sent).toEqual([formatSupportQuestion(DRAFT.summary, DRAFT.description)]);
+      expect(sent).toEqual([withoutAnswerHint(formatSupportQuestion(DRAFT.summary, DRAFT.description))]);
       expect(offers.put.mock.calls[0]![0].command.kind).toBe("support");
     });
 
@@ -398,7 +399,7 @@ describe("OfferSupportFromConversation", () => {
 
         await useCase.execute(input());
 
-        expect(sent).toEqual([`${lead}\n> **${DRAFT.summary}**\n> ${DRAFT.description}\n\n(yes or no)?`]);
+        expect(sent).toEqual([`${lead}\n> **${DRAFT.summary}**\n> ${DRAFT.description}`]);
         expect(offers.put.mock.calls[0]![0].command).toEqual({ kind: "support", requestKind, summary: DRAFT.summary, description: DRAFT.description });
       });
 
@@ -427,7 +428,7 @@ describe("OfferSupportFromConversation", () => {
         await useCase.execute(input({ text: PART_DRAFT.description }));
 
         expect(sent).toEqual([
-          "Shall I order this part?\n> **Paper tray roller for printer 17**\n> Asset: printer 17\n> Part: paper tray roller\n> Quantity: 2\n> Deliver to: Depot North\n> I need two paper tray rollers for printer 17, delivered to Depot North.\n\n(yes or no)?",
+          "Shall I order this part?\n> **Paper tray roller for printer 17**\n> Asset: printer 17\n> Part: paper tray roller\n> Quantity: 2\n> Deliver to: Depot North\n> I need two paper tray rollers for printer 17, delivered to Depot North.",
         ]);
         expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
         expect(offers.put.mock.calls[0]![0].command).toEqual({
@@ -632,8 +633,8 @@ describe("OfferSupportFromConversation", () => {
 
       await useCase.execute(input());
 
-      expect(sent).toEqual([formatResolveQuestion("SD-6", "VPN drops every ten minutes", COMMENT)]);
-      expect(sent[0]).toBe(`Shall I resolve **SD-6** "VPN drops every ten minutes" with the service desk and add this comment?\n> ${COMMENT}\n\n(yes or no)?`);
+      expect(sent).toEqual([withoutAnswerHint(formatResolveQuestion("SD-6", "VPN drops every ten minutes", COMMENT))]);
+      expect(sent[0]).toBe(`Shall I resolve **SD-6** "VPN drops every ten minutes" with the service desk and add this comment?\n> ${COMMENT}`);
       expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
       expect(offers.put).toHaveBeenCalledTimes(1);
       const offer = offers.put.mock.calls[0]![0];
@@ -647,7 +648,7 @@ describe("OfferSupportFromConversation", () => {
 
       await useCase.execute(input());
 
-      expect(sent).toEqual([`Shall I resolve **SD-6** "VPN drops every ten minutes" with the service desk (yes or no)?`]);
+      expect(sent).toEqual([`Shall I resolve **SD-6** "VPN drops every ten minutes" with the service desk?`]);
       expect(offers.put.mock.calls[0]![0].command).toEqual({ kind: "resolve", issueKey: "SD-6" });
     });
 
@@ -695,7 +696,7 @@ describe("OfferSupportFromConversation", () => {
 
       await useCase.execute(input());
 
-      expect(sent).toEqual([formatResolveQuestion("SD-6", "VPN drops every ten minutes")]);
+      expect(sent).toEqual([withoutAnswerHint(formatResolveQuestion("SD-6", "VPN drops every ten minutes"))]);
       expect(offers.put.mock.calls[0]![0].command).toEqual({ kind: "resolve", issueKey: "SD-6" });
     });
 
@@ -1079,7 +1080,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
       expect(sent).toEqual([
         "This may be the same problem as an existing request. Shall I add it there, or raise a new request?\n"
         + "> **Printer on floor 3 jams on every job**\n> The printer on floor 3 jams on every job.\n\n"
-        + '- **SD-38** "Printer on floor 38 is broken"\n\n(SD-38, new or cancel)?',
+        + '- **SD-38** "Printer on floor 38 is broken"',
       ]);
       expect(buttonLabels(wire)).toEqual(["Add to SD-38", "Raise new request", "Cancel"]);
       const offer = offers.put.mock.calls[0]![0];
@@ -1115,7 +1116,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
 
       const elsewhere = setup([makeRequest({ key: "SD-6", conversationId: { id: "conv-2", domain: "example.com" } })], { ...DRAFT, duplicateOf: "SD-6" });
       await elsewhere.useCase.execute(input());
-      expect(elsewhere.wire.sendCompositePrompt.mock.calls[0]![1]).toBe(formatSupportQuestion(DRAFT.summary, DRAFT.description));
+      expect(elsewhere.wire.sendCompositePrompt.mock.calls[0]![1]).toBe(withoutAnswerHint(formatSupportQuestion(DRAFT.summary, DRAFT.description)));
       expect(buttonLabels(elsewhere.wire)).toEqual(["Yes", "No"]);
     });
 
@@ -1140,7 +1141,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
     it("keeps the yes-or-no offer to raise when no request may be the same problem", async () => {
       const { offers, wire, useCase } = setup([makeRequest({ key: "SD-6", summary: "VPN drops every ten minutes" })]);
       await useCase.execute(input());
-      expect(wire.sendCompositePrompt.mock.calls[0]![1]).toBe(formatSupportQuestion(DRAFT.summary, DRAFT.description));
+      expect(wire.sendCompositePrompt.mock.calls[0]![1]).toBe(withoutAnswerHint(formatSupportQuestion(DRAFT.summary, DRAFT.description)));
       expect(buttonLabels(wire)).toEqual(["Yes", "No"]);
       expect(offers.put.mock.calls[0]![0].choices).toBeUndefined();
     });
@@ -1178,8 +1179,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
       expect(buttonLabels(wire)).toEqual(["SD-38", "SD-39", "SD-50", "Cancel"]);
       expect(sent[0]).toBe(
         "Which request shall I resolve with the service desk, adding this comment?\n> Works after the reset.\n\n"
-        + '- **SD-38** "VPN drops every ten minutes"\n- **SD-39** "VPN drops every ten minutes"\n- **SD-50** "VPN drops every ten minutes"\n\n'
-        + "(SD-38, SD-39, SD-50 or cancel)?",
+        + '- **SD-38** "VPN drops every ten minutes"\n- **SD-39** "VPN drops every ten minutes"\n- **SD-50** "VPN drops every ten minutes"',
       );
       const offer = offers.put.mock.calls[0]![0];
       expect(offer.command).toEqual({ kind: "resolve", issueKey: "SD-38", comment: "Works after the reset." });
@@ -1195,7 +1195,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
       const named = setup([makeRequest({ key: "SD-38" }), makeRequest({ key: "SD-39" })], RESOLVE_38);
       await named.useCase.execute(input({ text: "SD-38 works again after the reset" }));
       expect(buttonLabels(named.wire)).toEqual(["Yes", "No"]);
-      expect(named.sent[0]).toBe(formatResolveQuestion("SD-38", "VPN drops every ten minutes", "Works after the reset."));
+      expect(named.sent[0]).toBe(withoutAnswerHint(formatResolveQuestion("SD-38", "VPN drops every ten minutes", "Works after the reset.")));
 
       const single = setup([makeRequest({ key: "SD-38" })], RESOLVE_38);
       await single.useCase.execute(input({ text: "it works again after the reset" }));
@@ -1207,7 +1207,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
       const { offers, wire, sent, useCase } = setup([makeRequest({ key: "SD-40" }), makeRequest({ key: "SD-39" })], draft);
       await useCase.execute(input({ categories: ["update"], text: "it also happens on floor 2" }));
       expect(buttonLabels(wire)).toEqual(["SD-39", "SD-40", "Cancel"]);
-      expect(sent[0]).toBe('Which request shall I add this to?\n> It also happens on floor 2.\n\n- **SD-39** "VPN drops every ten minutes"\n- **SD-40** "VPN drops every ten minutes"\n\n(SD-39, SD-40 or cancel)?');
+      expect(sent[0]).toBe('Which request shall I add this to?\n> It also happens on floor 2.\n\n- **SD-39** "VPN drops every ten minutes"\n- **SD-40** "VPN drops every ten minutes"');
       expect(offers.put.mock.calls[0]![0].choices[1].command).toEqual({ kind: "reply", issueKey: "SD-40", body: "It also happens on floor 2." });
     });
   });

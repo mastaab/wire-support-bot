@@ -5,6 +5,7 @@ import { IssueTrackerError } from "../../src/application/ports/IssueTrackerPort"
 import type { IssueReply, IssueSnapshot, IssueStatusCategory, IssueTrackerPort } from "../../src/application/ports/IssueTrackerPort";
 import type { RetrievalResult } from "../../src/application/ports/RetrievalPort";
 import { OFFER_TTL_MS, formatReplyQuestion } from "../../src/application/services/offers";
+import { withoutAnswerHint } from "../../src/application/services/offerButtons";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../src/application/services/offers";
 import type { SupportRequestListOptions, SupportRequestRepository } from "../../src/domain/repositories/SupportRequestRepository";
 import type { AuditLogEntry, AuditLogRepository } from "../../src/domain/repositories/AuditLogRepository";
@@ -497,7 +498,8 @@ describe("AnswerQuestion with Jira: offers", () => {
       id: expect.any(String),
       messageId: sentRefFor(1).messageId,
     }]);
-    expect(sent).toEqual([supportQuestion]);
+    expect(sent).toEqual([withoutAnswerHint(supportQuestion)]);
+    expect(sent[0]).not.toContain("(yes or no)");
     expect(answer).toBe(supportQuestion);
     expect(repo.findByKey).not.toHaveBeenCalled();
   });
@@ -506,29 +508,29 @@ describe("AnswerQuestion with Jira: offers", () => {
     const marker = `OFFER: ${JSON.stringify({ kind: "support", summary: "Printer jammed", description: "The printer is jammed.\n\n  It shows error E4.  \n" })}`;
     const { sent, run } = setup({ modelAnswer: marker });
     await run("Please raise it with the service desk");
-    expect(sent).toEqual(["Shall I report this to the service desk?\n> **Printer jammed**\n> The printer is jammed.\n> It shows error E4.\n\n(yes or no)?"]);
+    expect(sent).toEqual([withoutAnswerHint("Shall I report this to the service desk?\n> **Printer jammed**\n> The printer is jammed.\n> It shows error E4.\n\n(yes or no)?")]);
   });
 
   it("leaves out a description that only repeats the summary", async () => {
     const marker = `OFFER: ${JSON.stringify({ kind: "support", summary: "Printer jammed", description: "printer  jammed" })}`;
     const { sent, run } = setup({ modelAnswer: marker });
     await run("Please raise it with the service desk");
-    expect(sent).toEqual(["Shall I report this to the service desk?\n> **Printer jammed**\n\n(yes or no)?"]);
+    expect(sent).toEqual([withoutAnswerHint("Shall I report this to the service desk?\n> **Printer jammed**\n\n(yes or no)?")]);
   });
 
   it("writes the reply question with the stored summary and the body quoted line by line, and keeps the requester's name (decision 1)", async () => {
     const { stored, sent, run } = setup({ requests: [vpn()], modelAnswer: `Here is the reply.\n${reply}` });
     await run("Tell the service desk on SD-6 that it still drops");
     expect(stored[0]!.command).toEqual({ kind: "reply", issueKey: "SD-6", body: "Alice here: it still drops.\nThanks" });
-    expect(sent).toEqual([replyQuestion]);
-    expect(sent[0]).toBe(formatReplyQuestion("SD-6", "VPN drops  every\nten minutes", "Alice here: it still drops.\nThanks"));
+    expect(sent).toEqual([withoutAnswerHint(replyQuestion)]);
+    expect(sent[0]).toBe(withoutAnswerHint(formatReplyQuestion("SD-6", "VPN drops  every\nten minutes", "Alice here: it still drops.\nThanks")));
   });
 
   it("writes the resolve question with the stored summary on one line", async () => {
     const { stored, sent, run } = setup({ requests: [vpn()], modelAnswer: resolve });
     await run("The VPN works again, please close my request");
     expect(stored[0]!.command).toEqual({ kind: "resolve", issueKey: "SD-6" });
-    expect(sent).toEqual([resolveQuestion]);
+    expect(sent).toEqual([withoutAnswerHint(resolveQuestion)]);
   });
 
   it("writes the resolve question with the closing comment quoted line by line", async () => {
@@ -537,7 +539,7 @@ describe("AnswerQuestion with Jira: offers", () => {
     await run("The VPN works again, please add a comment and close SD-6");
     expect(stored[0]!.command).toEqual({ kind: "resolve", issueKey: "SD-6", comment: "The VPN works again.\n\n  Thanks for the help." });
     const question = 'Shall I resolve **SD-6** "VPN drops every ten minutes" with the service desk and add this comment?\n> The VPN works again.\n> Thanks for the help.\n\n(yes or no)?';
-    expect(sent).toEqual([question]);
+    expect(sent).toEqual([withoutAnswerHint(question)]);
     expect(question.endsWith("?")).toBe(true);
   });
 
@@ -556,7 +558,7 @@ describe("AnswerQuestion with Jira: offers", () => {
   it("sends only the code-written question, dropping the model's own offer wording", async () => {
     const { sent, run } = setup({ modelAnswer: `I've raised it with the service desk for you. Shall I?\n${support}` });
     await run("Please raise my VPN problem with the service desk");
-    expect(sent).toEqual([supportQuestion]);
+    expect(sent).toEqual([withoutAnswerHint(supportQuestion)]);
     expect(sent[0]).not.toContain("I've raised");
   });
 
@@ -580,7 +582,7 @@ describe("AnswerQuestion with Jira: offers", () => {
     await run("Reply to SD-6 that Bob will test it", { members: [requester, bob] });
     expect(stored).toHaveLength(1);
     // A button question carries no mentions at all.
-    expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, 'Shall I add this to **SD-6** "VPN drops every ten minutes"?\n> @Bob will test it.\n\n(yes or no)?', [
+    expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, 'Shall I add this to **SD-6** "VPN drops every ten minutes"?\n> @Bob will test it.', [
       { id: `${stored[0]!.id}:0`, label: "Yes" }, { id: `${stored[0]!.id}:1`, label: "No" },
     ], { replyToMessageId: "q" });
     expect(wire.sendPlainText).not.toHaveBeenCalled();
@@ -731,7 +733,7 @@ describe("AnswerQuestion with Jira: offers", () => {
     const { stored, sent, run } = setup({ requests: [makeRequest("SD-6", { statusCategory: "done" })], modelAnswer: resolve });
     await run(resolveAsk);
     expect(stored).toHaveLength(1);
-    expect(sent).toEqual(['Shall I resolve **SD-6** "Problem SD-6" with the service desk (yes or no)?']);
+    expect(sent).toEqual([withoutAnswerHint('Shall I resolve **SD-6** "Problem SD-6" with the service desk (yes or no)?')]);
   });
 
   it("allows a reply to a done request", async () => {
@@ -821,7 +823,7 @@ describe("AnswerQuestion with Jira: offers", () => {
   it("sends only the question when the model wrote nothing but the marker", async () => {
     const { sent, run } = setup({ modelAnswer: support });
     await run("Raise my VPN problem with support");
-    expect(sent).toEqual([supportQuestion]);
+    expect(sent).toEqual([withoutAnswerHint(supportQuestion)]);
   });
 
   it("creates offers whether or not ticket sharing is on", async () => {
@@ -850,7 +852,7 @@ describe("AnswerQuestion with Jira: passive service-desk help on", () => {
   it("accepts a support offer for a plain problem statement, since the operator opted in", async () => {
     const { stored, sent, run } = setup({ passive: true, modelAnswer: support });
     await run("the printer on floor 2 is out of toner");
-    expect(sent).toEqual(["Shall I report this to the service desk?\n> **Printer on floor 2 is out of toner**\n> The printer on floor 2 is out of toner.\n\n(yes or no)?"]);
+    expect(sent).toEqual([withoutAnswerHint("Shall I report this to the service desk?\n> **Printer on floor 2 is out of toner**\n> The printer on floor 2 is out of toner.\n\n(yes or no)?")]);
     expect(stored).toHaveLength(1);
   });
 
@@ -906,7 +908,7 @@ describe("AnswerQuestion with Jira: amending a pending offer", () => {
     const { stored, sent, run } = setup({ modelAnswer: `Updated.\n${revisedSupport}` });
     await run("The description should mention it started on Monday", { pendingOffer: original });
     const question = "Shall I report this to the service desk?\n> **VPN drops**\n> My VPN drops every ten minutes since Monday.\n\n(yes or no)?";
-    expect(sent).toEqual([question]);
+    expect(sent).toEqual([withoutAnswerHint(question)]);
     expect(stored.map((o) => o.command)).toEqual([{ kind: "support", requestKind: "fault", summary: "VPN drops", description: "My VPN drops every ten minutes since Monday." }]);
   });
 
@@ -936,7 +938,7 @@ describe("AnswerQuestion with Jira: amending a pending offer", () => {
   it("accepts a revised reply on the same request without change intent", async () => {
     const { stored, sent, run } = setup({ requests: [vpn()], modelAnswer: revisedReply });
     await run("Also mention that I rebooted", { pendingOffer: pendingReply });
-    expect(sent).toEqual(['Shall I add this to **SD-6** "VPN drops"?\n> It still drops after a reboot.\n\n(yes or no)?']);
+    expect(sent).toEqual([withoutAnswerHint('Shall I add this to **SD-6** "VPN drops"?\n> It still drops after a reboot.\n\n(yes or no)?')]);
     expect(stored).toHaveLength(1);
   });
 
@@ -960,7 +962,7 @@ describe("AnswerQuestion with Jira: amending a pending offer", () => {
     const withComment = `OFFER: ${JSON.stringify({ kind: "resolve", issueKey: "SD-6", comment: "thanks" })}`;
     const { stored, sent, run } = setup({ requests: [vpn()], modelAnswer: withComment });
     await run("also add the comment 'thanks'", { pendingOffer: { kind: "resolve", issueKey: "SD-6" }, amendOnly: true });
-    expect(sent).toEqual(['Shall I resolve **SD-6** "VPN drops" with the service desk and add this comment?\n> thanks\n\n(yes or no)?']);
+    expect(sent).toEqual([withoutAnswerHint('Shall I resolve **SD-6** "VPN drops" with the service desk and add this comment?\n> thanks\n\n(yes or no)?')]);
     expect(stored.map((o) => o.command)).toEqual([{ kind: "resolve", issueKey: "SD-6", comment: "thanks" }]);
   });
 
@@ -987,14 +989,14 @@ describe("AnswerQuestion with Jira: amending a pending offer", () => {
     it("accepts a corrected comment on the same request without change intent", async () => {
       const { stored, sent, run } = setup({ requests: [vpn()], modelAnswer: `Updated.\n${revisedResolve}` });
       await run("mention the router swap", { pendingOffer: pendingResolve });
-      expect(sent).toEqual([revisedQuestion]);
+      expect(sent).toEqual([withoutAnswerHint(revisedQuestion)]);
       expect(stored.map((o) => o.command)).toEqual([{ kind: "resolve", issueKey: "SD-6", comment: "The VPN works again after the router swap." }]);
     });
 
     it("sends a corrected comment for an unaddressed correction, but not a repeat of the same offer", async () => {
       const corrected = setup({ requests: [vpn()], modelAnswer: revisedResolve });
       await corrected.run("mention the router swap", { pendingOffer: pendingResolve, amendOnly: true });
-      expect(corrected.sent).toEqual([revisedQuestion]);
+      expect(corrected.sent).toEqual([withoutAnswerHint(revisedQuestion)]);
       expect(corrected.stored).toHaveLength(1);
 
       const same = setup({ requests: [vpn()], modelAnswer: `OFFER: ${JSON.stringify(pendingResolve)}` });
@@ -1055,14 +1057,14 @@ describe("AnswerQuestion with Jira: request kinds and part orders", () => {
   ])("asks the %s question for that kind", async (requestKind, lead) => {
     const { stored, sent, run } = setup({ modelAnswer: offer({ requestKind }) });
     await run("Please raise it with the service desk");
-    expect(sent).toEqual([`${lead}\n> **Toner cartridges for printer 17**\n> The black toner is nearly empty.\n\n(yes or no)?`]);
+    expect(sent).toEqual([withoutAnswerHint(`${lead}\n> **Toner cartridges for printer 17**\n> The black toner is nearly empty.\n\n(yes or no)?`)]);
     expect(stored[0]!.command).toMatchObject({ kind: "support", requestKind });
   });
 
   it("shows a complete part order with its details above the description and stores it", async () => {
     const { stored, sent, run } = setup({ modelAnswer: offer({ requestKind: "part", part: PART }) });
     await run("Please order two black toner cartridges for printer 17, deliver to Depot North");
-    expect(sent).toEqual([partQuestion]);
+    expect(sent).toEqual([withoutAnswerHint(partQuestion)]);
     expect(stored.map((o) => o.command)).toEqual([{
       kind: "support", requestKind: "part", summary: "Toner cartridges for printer 17", description: "The black toner is nearly empty.", part: PART,
     }]);
@@ -1088,14 +1090,14 @@ describe("AnswerQuestion with Jira: request kinds and part orders", () => {
   it("treats the requester's answer that fills the details as a revision, even unaddressed, and then offers the order", async () => {
     const { stored, sent, run } = setup({ modelAnswer: offer({ requestKind: "part", part: PART }) });
     await run("printer 17, to Depot North", { pendingOffer: incomplete, amendOnly: true });
-    expect(sent).toEqual([partQuestion]);
+    expect(sent).toEqual([withoutAnswerHint(partQuestion)]);
     expect(stored[0]!.command).toMatchObject({ requestKind: "part", part: PART });
   });
 
   it("keeps the details already given when the model returns only the new ones", async () => {
     const { stored, sent, run } = setup({ modelAnswer: offer({ requestKind: "part", part: { asset: "Printer 17", deliverTo: "Depot North" } }) });
     await run("printer 17, to Depot North", { pendingOffer: incomplete, amendOnly: true });
-    expect(sent).toEqual([partQuestion]);
+    expect(sent).toEqual([withoutAnswerHint(partQuestion)]);
     expect(stored[0]!.command).toMatchObject({ part: { part: "Toner cartridges, black", quantity: "2", asset: "Printer 17", deliverTo: "Depot North" } });
   });
 
