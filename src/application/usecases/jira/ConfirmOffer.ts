@@ -2,9 +2,12 @@ import type { QualifiedId } from "../../../domain/ids/QualifiedId";
 import { DEFAULT_PART_ASSET } from "../../../domain/entities/SupportRequest";
 import type { PartAssetWording } from "../../../domain/entities/SupportRequest";
 import {
-  NOTHING_TO_CONFIRM_REPLY, formatMissingPartsQuestion, formatStillMissingReply, missingPartDetails, offerCommandLine,
+  NOTHING_TO_CONFIRM_REPLY, OFFER_TTL_MS, formatChooseAgain, formatMissingPartsQuestion, formatStillMissingReply, missingPartDetails,
+  offerCommandLine,
 } from "../../services/offers";
-import type { OfferCommand, PendingOfferStore } from "../../services/offers";
+import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
+import type { OfferChoice } from "../../ports/PendingOfferPort";
+import { choiceHint, decisionAt, matchChoice } from "../../services/offerButtons";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { RaiseSupportRequest } from "./RaiseSupportRequest";
 import type { ReplyToServiceDesk } from "./ReplyToServiceDesk";
@@ -83,12 +86,32 @@ function stripCourtesy(text: string): string {
   return text.replace(/[\s,]+(thanks|thank you|please)$/, "");
 }
 
+/** A click on one of an offer's buttons, already matched to the offer's message and its requester. */
+export interface ChooseOfferInput {
+  conversationId: QualifiedId;
+  requesterId: QualifiedId;
+  /** Wire display name of the requester, for the requester line of a `support` offer. */
+  requesterName?: string;
+  /** The offer ID and option index the clicked button carries. */
+  offerId: string;
+  index: number;
+}
+
+/** Who answered and where the result goes. */
+interface AnswerContext {
+  conversationId: QualifiedId;
+  requesterId: QualifiedId;
+  requesterName?: string;
+  replyToMessageId?: string;
+}
+
 /**
- * Runs a pending offer when its requester confirms it. The offer is consumed once, and the
- * dispatched use case re-validates scope and state at that moment.
+ * Runs a pending offer when its requester confirms it, by a text answer or a button. The offer
+ * is consumed once, and the dispatched use case re-validates scope and state at that moment.
  *
- * The router calls this when the requester has a live offer (`has`) or a recently dropped or
- * expired one (`recentlyDropped`), so a bare yes after a drop is answered instead of ignored.
+ * The router calls `execute` when the requester has a live offer (`has`) or a recently dropped
+ * or expired one (`recentlyDropped`), so a bare yes after a drop is answered instead of ignored.
+ * It calls `choose` for an accepted click.
  */
 export class ConfirmOffer {
   constructor(
@@ -101,14 +124,18 @@ export class ConfirmOffer {
   ) {}
 
   /**
-   * True when the message confirmed or declined this requester's pending offer, or was a yes
-   * answered with "nothing waiting" because the offer was recently dropped or expired.
+   * True when the message confirmed, declined or chose for this requester's pending offer, was
+   * asked again, or was a yes answered with "nothing waiting" because the offer was recently
+   * dropped or expired.
    */
   async execute(input: ConfirmOfferInput): Promise<boolean> {
-    const answer = classifyConfirmation(input.text);
     const now = this.now();
+    const live = this.offers.find(input.conversationId, input.requesterId, now);
+    if (live?.choices) return this.answerChoice(live, live.choices, input, now);
+
+    const answer = classifyConfirmation(input.text);
     if (!answer) {
-      if (!isAcknowledgement(input.text) || !this.offers.has(input.conversationId, input.requesterId, now)) return false;
+      if (!isAcknowledgement(input.text) || !live) return false;
       const pending = this.offers.take(input.conversationId, input.requesterId, now);
       if (!pending) return false;
       // Keep the offer and ask again: an acknowledgement is a response, but not a decision.
@@ -117,30 +144,73 @@ export class ConfirmOffer {
       return true;
     }
 
-    const offer = this.offers.has(input.conversationId, input.requesterId, now)
-      ? this.offers.take(input.conversationId, input.requesterId, now)
-      : null;
+    const offer = live ? this.offers.take(input.conversationId, input.requesterId, now) : null;
     if (!offer) return answer === "yes" ? this.nothingToConfirm(input, now) : false;
+    await this.decide(offer, answer === "yes" ? offer.command : null, input, true);
+    return true;
+  }
 
-    const { conversationId, requesterId: actorId, replyToMessageId } = input;
-    if (answer === "no") {
-      await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
+  /**
+   * An accepted click: runs the option the button stands for, when the requester's live offer is
+   * still the one the button belongs to and has that option. False (and nothing done) otherwise.
+   */
+  async choose(input: ChooseOfferInput): Promise<boolean> {
+    const now = this.now();
+    const live = this.offers.find(input.conversationId, input.requesterId, now);
+    if (!live?.id || live.id !== input.offerId) return false;
+    const decision = decisionAt(live, input.index);
+    if (!decision) return false;
+    const offer = this.offers.take(input.conversationId, input.requesterId, now);
+    if (!offer) return false;
+    await this.decide(offer, decision.command, input, !offer.choices);
+    return true;
+  }
+
+  /** A text answer to a choice offer: an option runs, a bare yes or acknowledgement asks again, anything else is not an answer. */
+  private async answerChoice(live: PendingOffer, choices: readonly OfferChoice[], input: ConfirmOfferInput, now: Date): Promise<boolean> {
+    const index = matchChoice(choices, input.text);
+    if (index === null) {
+      if (classifyConfirmation(input.text) !== "yes" && !isAcknowledgement(input.text)) return false;
+      await this.wireOutbound.sendPlainText(input.conversationId, formatChooseAgain(choiceHint(choices)), { replyToMessageId: input.replyToMessageId });
       return true;
     }
+    const offer = this.offers.take(input.conversationId, input.requesterId, now);
+    if (!offer) return false;
+    await this.decide(offer, choices[index]!.command, input, false);
+    return true;
+  }
 
-    const command = offer.command;
+  /**
+   * Runs `command` for the taken offer, or declines it when null, and records the offer's
+   * message as answered. `confirmed` is true for a yes to a yes-or-no offer, whose incomplete
+   * part order is kept for amending; a chosen incomplete order is asked about afresh.
+   */
+  private async decide(offer: PendingOffer, command: OfferCommand | null, context: AnswerContext, confirmed: boolean): Promise<void> {
+    if (offer.id) this.offers.markAnswered(offer.conversationId, offer.id);
+    const { conversationId, requesterId: actorId, replyToMessageId } = context;
+    if (!command) {
+      await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
+      return;
+    }
+
     const missing = missingPartDetails(command);
     if (missing.length > 0) {
       // An incomplete part order can only be amended: keep it so the next answer can fill it.
-      this.offers.put(offer);
-      await this.wireOutbound.sendPlainText(conversationId, formatStillMissingReply(missing, this.partAsset), { replyToMessageId });
-      return true;
+      if (confirmed) {
+        this.offers.put(offer);
+        await this.wireOutbound.sendPlainText(conversationId, formatStillMissingReply(missing, this.partAsset), { replyToMessageId });
+        return;
+      }
+      const now = this.now();
+      await this.wireOutbound.sendPlainText(conversationId, formatMissingPartsQuestion(missing, this.partAsset), { replyToMessageId });
+      this.offers.put({ command, conversationId, requesterId: actorId, createdAt: now, expiresAt: new Date(now.getTime() + OFFER_TTL_MS) });
+      return;
     }
     switch (command.kind) {
       case "support":
         await this.handlers.raiseSupportRequest.execute({
           summary: command.summary, description: command.description, conversationId, requesterId: actorId,
-          requesterName: input.requesterName, replyToMessageId, requestKind: command.requestKind,
+          requesterName: context.requesterName, replyToMessageId, requestKind: command.requestKind,
           ...(command.part ? { part: command.part } : {}),
         });
         break;
@@ -162,11 +232,10 @@ export class ConfirmOffer {
         }
         await this.handlers.attachFileToRequest.execute({
           issueKey: command.issueKey, file: command.file, conversationId, actorId,
-          senderName: input.requesterName, replyToMessageId,
+          senderName: context.requesterName, replyToMessageId,
         });
         break;
     }
-    return true;
   }
 
   /**

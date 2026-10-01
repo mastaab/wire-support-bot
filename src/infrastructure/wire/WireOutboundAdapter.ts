@@ -9,10 +9,17 @@ import type {
   UserProfile,
 } from "../../application/ports/WireOutboundPort";
 import type { Logger } from "../../application/ports/Logger";
+import { randomUUID } from "node:crypto";
 import { TextMessage, CompositeMessage, CompositeButton, Reaction, QualifiedId as SdkQualifiedId } from "@wireapp/wire-apps-js-sdk";
 import type { WireMessage, WireUser } from "@wireapp/wire-apps-js-sdk";
 import type { WireReplyContext } from "./WireReplyContext";
 import { renameBot, usableBotName } from "./renameBot";
+
+/**
+ * The SDK serialises and accepts this message type but does not export its factory from the
+ * package entrypoint, so it is built from the exported union instead.
+ */
+type ButtonActionConfirmation = Extract<WireMessage, { type: "composite_button_action_confirmation" }>;
 
 /** How long the bot's own display name is reused before it is looked up again. */
 const BOT_NAME_TTL_MS = 5 * 60 * 1000;
@@ -126,23 +133,37 @@ export function createWireOutboundAdapter(
       text: string,
       buttons: PromptButton[],
       options?: CompositePromptOptions,
-    ): Promise<void> {
+    ): Promise<SentMessageRef | undefined> {
       const h = handlerRef.current;
-      if (!h?.manager) return;
+      if (!h?.manager) return undefined;
       logger.debug("sendCompositePrompt", { conversationId: conversationId.id, textLength: text.length, buttons: buttons.map((b) => b.id) });
       const out = await renamed(h.manager, text);
-      await h.manager.sendMessage(
+      const textItem: TextMessage = {
+        ...TextMessage.create({ conversationId, text: out.text }),
+        ...replyContext?.get(conversationId, options?.replyToMessageId),
+      };
+      const messageId = await h.manager.sendMessage(
         CompositeMessage.create({
           conversationId,
-          itemList: [
-            {
-              ...TextMessage.create({ conversationId, text: out.text }),
-              ...replyContext?.get(conversationId, options?.replyToMessageId),
-            },
-            ...buttons.map((b) => CompositeButton.create({ id: b.id, text: b.label })),
-          ],
+          itemList: [textItem, ...buttons.map((b) => CompositeButton.create({ id: b.id, text: b.label }))],
         }),
       );
+      // The quote hash of a composite message is taken over its text, as for a text message.
+      return sentRef(textItem, messageId);
+    },
+
+    async sendButtonConfirmation(conversationId: QualifiedId, referenceMessageId: string, buttonId: string): Promise<void> {
+      const h = handlerRef.current;
+      if (!h?.manager) return;
+      logger.debug("sendButtonConfirmation", { conversationId: conversationId.id, referenceMessageId, buttonId });
+      const confirmation: ButtonActionConfirmation = {
+        type: "composite_button_action_confirmation",
+        id: randomUUID(),
+        conversationId,
+        referenceMessageId,
+        buttonId,
+      };
+      await h.manager.sendMessage(confirmation);
     },
 
     async withTyping<T>(conversationId: QualifiedId, work: () => Promise<T>): Promise<T> {

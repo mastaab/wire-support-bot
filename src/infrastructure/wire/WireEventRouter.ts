@@ -1,7 +1,6 @@
 import { sameQualifiedId } from "../../domain/ids/QualifiedId";
 import type { QualifiedId } from "../../domain/ids/QualifiedId";
-import { randomUUID } from "node:crypto";
-import type { AssetMessage, Conversation, ConversationMember, TextMessage, CompositeButtonAction, TextEditedMessage, WireMessage } from "@wireapp/wire-apps-js-sdk";
+import type { AssetMessage, Conversation, ConversationMember, TextMessage, CompositeButtonAction, TextEditedMessage } from "@wireapp/wire-apps-js-sdk";
 import { WireEventsHandler, ConversationRole } from "@wireapp/wire-apps-js-sdk";
 import type { AnswerQuestion } from "../../application/usecases/general/AnswerQuestion";
 import type { RaiseSupportRequest } from "../../application/usecases/jira/RaiseSupportRequest";
@@ -31,15 +30,15 @@ import type { CreatedConversations } from "./CreatedConversations";
 import { ATTACHMENT_MAX_BYTES, attachableKind } from "../../application/services/attachments";
 import type { WireReplyContext } from "./WireReplyContext";
 import { classifyConfirmation } from "../../application/usecases/jira/ConfirmOffer";
+import { YES_NO_LABELS, decisionAt, parseOfferButtonId } from "../../application/services/offerButtons";
 
 const CONTEXT_WINDOW = 10;
 const NAME_TTL_MS = 24 * 60 * 60 * 1000; // re-fetch display names after 24 h to catch renames
 
-/**
- * The SDK serialises and accepts this message type but does not export its factory
- * from the package entrypoint, so we build it from the exported union instead.
- */
-type ButtonActionConfirmation = Extract<WireMessage, { type: "composite_button_action_confirmation" }>;
+/** The text for a click on a question that was already answered, once per message. */
+export const ANSWERED_QUESTION = "This question has already been answered.";
+/** The text for a click on a question that expired, was replaced or is unknown (for example after a restart), once per message. */
+export const EXPIRED_QUESTION = "This question has expired; ask me again.";
 
 /** True for a support offer that orders a replacement part, complete or not. */
 function isPartOrder(command: OfferCommand): boolean {
@@ -111,12 +110,17 @@ export class WireEventRouter extends WireEventsHandler {
   private readonly handlers = new Map<string, Promise<void>>();
 
   async onTextMessageReceived(wireMessage: TextMessage): Promise<void> {
-    const channelId = toChannelId(wireMessage.conversationId);
-    const previous = this.handlers.get(channelId) ?? Promise.resolve();
-    const current = previous.catch(() => {}).then(() => {
+    await this.inOrder(wireMessage.conversationId as QualifiedId, () => {
       const process = () => this.processTextMessage(wireMessage);
       return this.deps.replyContext ? this.deps.replyContext.withMessage(wireMessage, process) : process();
     });
+  }
+
+  /** Runs `work` after the conversation's earlier messages, files and clicks, one at a time. */
+  private async inOrder(conversationId: QualifiedId, work: () => Promise<void>): Promise<void> {
+    const channelId = toChannelId(conversationId);
+    const previous = this.handlers.get(channelId) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(work);
     this.handlers.set(channelId, current);
     try { await current; } finally {
       if (this.handlers.get(channelId) === current) this.handlers.delete(channelId);
@@ -230,12 +234,13 @@ export class WireEventRouter extends WireEventsHandler {
     let droppedOffer: OfferCommand | undefined;
     const pendingOffers = this.deps.pendingOffers;
     if (pendingOffers.has(convId, sender) || pendingOffers.recentlyDropped(convId, sender)) {
+      const live = pendingOffers.find(convId, sender);
       const confirm = () => this.deps.confirmOffer.execute({
         text: commandText, conversationId: convId, requesterId: sender,
         requesterName: senderDisplayName, replyToMessageId: wireMessage.id,
       });
-      // A yes raises, replies to or resolves a ticket, which the requester waits for.
-      const handled = classifyConfirmation(commandText) === "yes" ? await this.typing(convId, confirm) : await confirm();
+      // A yes or a picked option raises, replies to or resolves a ticket, which the requester waits for.
+      const handled = classifyConfirmation(commandText) === "yes" || live?.choices ? await this.typing(convId, confirm) : await confirm();
       if (handled) {
         // Record the answer so the answer model sees the offer as closed, not pending, and a bot
         // entry after it, so the offer's "(yes or no)?" no longer counts as the bot's latest
@@ -244,6 +249,8 @@ export class WireEventRouter extends WireEventsHandler {
         return;
       }
       droppedOffer = pendingOffers.drop(convId, sender) ?? undefined;
+      // A dropped choice is not a draft to amend or complete: the requester has moved on.
+      if (live?.choices) droppedOffer = undefined;
       // With no live offer, only a recently dropped one brought us here and the requester has
       // moved on, so a later yes (perhaps to a colleague) is not answered about it.
       if (!droppedOffer) pendingOffers.forgetDropped(convId, sender);
@@ -496,16 +503,10 @@ export class WireEventRouter extends WireEventsHandler {
    */
   async onAssetMessageReceived(received: AssetMessage): Promise<void> {
     const wireMessage = this.withPreview(received);
-    const channelId = toChannelId(wireMessage.conversationId);
-    const previous = this.handlers.get(channelId) ?? Promise.resolve();
-    const current = previous.catch(() => {}).then(() => {
+    await this.inOrder(wireMessage.conversationId as QualifiedId, () => {
       const process = () => this.processAssetMessage(wireMessage);
       return this.deps.replyContext ? this.deps.replyContext.withMessage(wireMessage, process) : process();
     });
-    this.handlers.set(channelId, current);
-    try { await current; } finally {
-      if (this.handlers.get(channelId) === current) this.handlers.delete(channelId);
-    }
   }
 
   private async processAssetMessage(wireMessage: AssetMessage): Promise<void> {
@@ -600,28 +601,86 @@ export class WireEventRouter extends WireEventsHandler {
     // or answer for the same message.
   }
 
+  /**
+   * A click on a button of an offer question. The offer is found by the clicked message and the
+   * member who was asked; the button's ID must name that offer and one of its options. The first
+   * accepted click of the asked member decides: only that click is confirmed (the confirmation
+   * marks the answer for everyone) and runs the option through `ConfirmOffer`, which posts the
+   * result as text. A click by another member changes nothing and gets one text answer per
+   * message ("Only <requester> can answer this."); a click on an answered, expired or unknown
+   * message gets one short text answer per message. Repeats stay silent.
+   */
   async onButtonClicked(wireMessage: CompositeButtonAction): Promise<void> {
     const convId = wireMessage.conversationId as QualifiedId;
-    const senderId = wireMessage.sender as QualifiedId;
+    await this.inOrder(convId, () => this.processButtonClick(wireMessage));
+  }
+
+  private async processButtonClick(wireMessage: CompositeButtonAction): Promise<void> {
+    const convId = wireMessage.conversationId as QualifiedId;
+    const sender = wireMessage.sender as QualifiedId | undefined;
+    if (!sender || sameQualifiedId(sender, this.deps.botUserId) || this.deps.createdConversations?.has(convId)) return;
     const { buttonId, referenceMessageId } = wireMessage;
-    const log = this.deps.logger.child({ conversationId: convId.id, senderId: senderId.id, buttonId });
-
-    await this.deps.wireOutbound.sendPlainText(convId, "This button is no longer supported. Use a text command instead, for example: mention me with support requests.");
-
+    const log = this.deps.logger.child({ conversationId: convId.id, senderId: sender.id, messageId: referenceMessageId });
+    const offers = this.deps.pendingOffers;
     try {
-      const confirmation: ButtonActionConfirmation = {
-        type: "composite_button_action_confirmation",
-        id: randomUUID(),
-        conversationId: convId,
-        referenceMessageId,
-        buttonId,
-      };
-      await this.manager.sendMessage(confirmation);
-      log.debug("Button action confirmation sent", { referenceMessageId });
+      const prompt = offers.prompt(convId, referenceMessageId);
+      const live = prompt ? offers.find(convId, prompt.requesterId) : null;
+      const open = !!prompt && !prompt.answered && !!live && live.id === prompt.offerId && live.messageId === referenceMessageId;
+
+      if (prompt && open && !sameQualifiedId(sender, prompt.requesterId)) {
+        log.info("Button: click by a member who was not asked");
+        if (offers.claimNotice(convId, referenceMessageId, "others")) {
+          await this.deps.wireOutbound.sendPlainText(convId, `Only ${this.memberName(convId, prompt.requesterId) ?? "the person who was asked"} can answer this.`);
+        }
+        return;
+      }
+      if (!prompt || !open || !live) {
+        log.info("Button: click on a question that is no longer open", { known: !!prompt, answered: prompt?.answered ?? false });
+        if (offers.claimNotice(convId, referenceMessageId, "stale")) {
+          await this.deps.wireOutbound.sendPlainText(convId, prompt?.answered ? ANSWERED_QUESTION : EXPIRED_QUESTION);
+        }
+        return;
+      }
+
+      const parsed = parseOfferButtonId(buttonId);
+      if (!parsed || parsed.offerId !== live.id || !decisionAt(live, parsed.index)) {
+        log.warn("Button: the button does not belong to the offer");
+        return;
+      }
+
+      // Accepted: this click decides. It is marked first, so any later click finds it answered.
+      offers.markAnswered(convId, parsed.offerId);
+      try {
+        await this.deps.wireOutbound.sendButtonConfirmation(convId, referenceMessageId, buttonId);
+      } catch (err) {
+        log.warn("Failed to send button action confirmation", { err: err instanceof Error ? err.name : "UnknownError" });
+      }
+      const senderName = this.memberName(convId, sender);
+      const decision = decisionAt(live, parsed.index);
+      const run = () => this.deps.confirmOffer.choose({
+        conversationId: convId, requesterId: sender, requesterName: senderName, offerId: parsed.offerId, index: parsed.index,
+      });
+      // An option that writes is work the requester waits for; declining is not.
+      const chosen = decision?.command ? await this.typing(convId, run) : await run();
+      log.info("Button: click accepted", { chosen });
+      // Like a text answer: the requester's next interaction, which closes the offer for the
+      // answer model and ends the question as the bot's latest.
+      offers.forgetDropped(convId, sender);
+      const label = (live.choices?.[parsed.index]?.label ?? YES_NO_LABELS[parsed.index]) ?? "";
+      this.recordHandled(convId, `click-${wireMessage.id}`, sender, senderName, `(Chose "${label}".)`, "(Answered the offer above.)");
     } catch (err) {
-      // Also reached in unit tests where the SDK manager is not wired; harmless there.
-      log.warn("Failed to send button action confirmation", { err: (err instanceof Error ? err.name : "UnknownError") });
+      log.error("Button handler failed", { err: err instanceof Error ? err.name : "UnknownError" });
+      try {
+        await this.deps.wireOutbound.sendPlainText(convId, "Something went wrong. Please try again.");
+      } catch (sendErr) {
+        log.error("Failed to send error reply", { err: sendErr instanceof Error ? sendErr.name : "UnknownError" });
+      }
     }
+  }
+
+  /** The member's cached display name in the conversation, or undefined. */
+  private memberName(convId: QualifiedId, userId: QualifiedId): string | undefined {
+    return this.deps.memberCache.getMembers(convId).find((m) => sameQualifiedId(m.userId, userId))?.name || undefined;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

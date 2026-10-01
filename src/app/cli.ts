@@ -13,6 +13,8 @@
  * Message format:
  *   <message>                    sent as the default user (Alice)
  *   <Name>: <message>            sent as a named member (must be in the seeded roster)
+ *   <number>                     after a question with buttons: clicks that option (the options
+ *                                are printed numbered under the question)
  *
  * Bot replies are printed prefixed with "[Wire Support Bot]". All other log output goes to
  * stderr so stdout stays clean for scripted use.
@@ -28,7 +30,8 @@ import { loadConfig } from "./config";
 import { initLogging, getLogger } from "./logging";
 import { getPrismaClient } from "../infrastructure/persistence/postgres/PrismaClient";
 import { WireEventRouter } from "../infrastructure/wire/WireEventRouter";
-import type { WireOutboundPort, OutboundTextOptions } from "../application/ports/WireOutboundPort";
+import { cliButtonClick, createCliOutbound } from "./cliOutbound";
+import type { CliMember } from "./cliOutbound";
 import type { QualifiedId } from "../domain/ids/QualifiedId";
 import { toChannelId } from "../domain/ids/channelId";
 import { PrismaChannelConfigRepository } from "../infrastructure/persistence/postgres/PrismaChannelConfigRepository";
@@ -65,38 +68,12 @@ const CHANNEL_ID_RAW: QualifiedId = { id: "cli-channel", domain: DOMAIN };
 const BOT_ID: QualifiedId = { id: "wire-support-bot", domain: DOMAIN };
 
 /** Seeded roster: members available to send messages as. */
-const MEMBERS: Array<{ name: string; id: QualifiedId }> = [
+const MEMBERS: CliMember[] = [
   { name: "Alice", id: { id: "alice", domain: DOMAIN } },
   { name: "Bob",   id: { id: "bob",   domain: DOMAIN } },
   { name: "Carol", id: { id: "carol", domain: DOMAIN } },
   { name: "Dave",  id: { id: "dave",  domain: DOMAIN } },
 ];
-
-// ── Stub outbound port ────────────────────────────────────────────────────────
-
-function createCliOutbound(): WireOutboundPort {
-  return {
-    async sendPlainText(_convId: QualifiedId, text: string, _opts?: OutboundTextOptions) {
-      process.stdout.write(`[Wire Support Bot] ${text}\n`);
-      // Synthetic: the CLI has no message IDs, but use cases store and quote whatever they get.
-      return { messageId: `cli-${randomUUID()}`, sha256: "0".repeat(64) };
-    },
-    async sendCompositePrompt(_convId: QualifiedId, text: string) {
-      process.stdout.write(`[Wire Support Bot] ${text}\n`);
-    },
-    async sendReaction(_conversationId, _messageId, emoji) {
-      const emojis = typeof emoji === "string" ? [emoji] : [...emoji];
-      process.stdout.write(`[Wire Support Bot reaction] ${emojis.join(" ")}\n`);
-    },
-    async sendFile() {},
-    // The CLI has no typing indicator.
-    withTyping: (_conversationId, work) => work(),
-    async getUserProfile(userId: QualifiedId) {
-      const m = MEMBERS.find((mem) => mem.id.id === userId.id);
-      return m ? { id: userId, name: m.name } : null;
-    },
-  };
-}
 
 // ── Fake TextMessage builder ──────────────────────────────────────────────────
 
@@ -152,7 +129,8 @@ async function main() {
     });
   }
 
-  const wireOutbound = createCliOutbound();
+  const cliOutbound = createCliOutbound(MEMBERS, (text) => process.stdout.write(text));
+  const wireOutbound = cliOutbound.wireOutbound;
 
   // The service desk. Passive help also needs WIRE_SUPPORT_BOT_JIRA_PASSIVE.
   const jira = config.jira;
@@ -258,6 +236,12 @@ async function main() {
       process.stderr.write(`[${senderName}] ${text}\n`);
     }
 
+    // A bare number after a button question clicks that option, as a member would in Wire.
+    const click = cliButtonClick(text, sender, CHANNEL_ID_RAW, cliOutbound.latestPrompt());
+    if (click) {
+      await router.onButtonClicked(click);
+      continue;
+    }
     const msg = buildMessage(text, sender);
     await router.onTextMessageReceived(msg as Parameters<typeof router.onTextMessageReceived>[0]);
   }

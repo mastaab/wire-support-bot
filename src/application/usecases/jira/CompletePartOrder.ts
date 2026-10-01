@@ -3,10 +3,11 @@ import { DEFAULT_PART_ASSET, PART_DETAIL_MAX } from "../../../domain/entities/Su
 import type { PartAssetWording, PartDetails } from "../../../domain/entities/SupportRequest";
 import type { OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
 import type { SupportTriagePort } from "../../ports/SupportTriagePort";
-import type { WireOutboundPort } from "../../ports/WireOutboundPort";
+import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
 import { OFFER_TTL_MS, PART_DETAIL_KEYS, formatMissingPartsQuestion, formatSupportQuestion, missingPartDetails, partDetailFields } from "../../services/offers";
 import { statedPartDetails } from "../../services/partDetails";
+import { newOfferId, sendOfferPrompt } from "../../services/offerButtons";
 
 /** Input of `CompletePartOrder`. */
 export interface CompletePartOrderInput {
@@ -69,8 +70,13 @@ export class CompletePartOrder {
         ? `${formatMissingPartsQuestion(missing, this.partAsset)}\n${formatPartSoFar(command.part, this.partAsset)}`
         : formatMissingPartsQuestion(missing, this.partAsset))
       : formatSupportQuestion(command.summary, command.description, "part", command.part, this.partAsset);
+    // The complete order asks for a yes, with buttons; a question for missing details does not.
+    const offerId = missing.length === 0 ? newOfferId() : undefined;
+    let sent: SentMessageRef | undefined;
     try {
-      await this.wireOutbound.sendPlainText(input.conversationId, question, { replyToMessageId: input.replyToMessageId });
+      sent = offerId
+        ? await sendOfferPrompt(this.wireOutbound, input.conversationId, question, offerId, undefined, input.replyToMessageId)
+        : await this.wireOutbound.sendPlainText(input.conversationId, question, { replyToMessageId: input.replyToMessageId });
     } catch (err) {
       this.logger?.warn("CompletePartOrder: sending the reply failed", { err: errorName(err) });
       return false;
@@ -82,6 +88,8 @@ export class CompletePartOrder {
       requesterId: input.requesterId,
       createdAt: now,
       expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
+      ...(offerId ? { id: offerId } : {}),
+      ...(offerId && sent ? { messageId: sent.messageId } : {}),
     });
     this.logger?.debug("CompletePartOrder: part order updated", { missing: missing.length });
     return true;

@@ -146,6 +146,31 @@ describe("WireOutboundAdapter contract", () => {
     expect(arg.items?.[2]).toMatchObject({ type: "composite_button", id: "no", text: "No" });
   });
 
+  it("sendCompositePrompt returns the sent message's ID and the hash of its text, for a click and a later quote", async () => {
+    const sendMessage = vi.fn().mockResolvedValue("composite-1");
+    const adapter = createWireOutboundAdapter(makeRef(sendMessage), mockLogger);
+    const ref = await adapter.sendCompositePrompt(convId, "Shall I resolve **SD-6** (yes or no)?", [{ id: "offer-1234:0", label: "Yes" }]);
+    const textItem = (sendMessage.mock.calls[0]![0] as { items: TextMessage[] }).items[0]!;
+    const expected = TextMessage.createReply({ originalMessage: { ...textItem, id: "composite-1" }, text: "" }).quotedMessageSha256!;
+    expect(ref).toEqual({ messageId: "composite-1", sha256: Buffer.from(expected).toString("hex") });
+  });
+
+  it("sendCompositePrompt returns undefined without a connection", async () => {
+    const adapter = createWireOutboundAdapter({ current: null }, mockLogger);
+    expect(await adapter.sendCompositePrompt(convId, "Choose", [{ id: "offer-1234:0", label: "Yes" }])).toBeUndefined();
+  });
+
+  it("sendButtonConfirmation sends a confirmation naming the message and the button, for every member's client", async () => {
+    const sendMessage = vi.fn().mockResolvedValue("ok");
+    const adapter = createWireOutboundAdapter(makeRef(sendMessage), mockLogger);
+    await adapter.sendButtonConfirmation(convId, "composite-1", "offer-1234:1");
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(sendMessage.mock.calls[0]![0]).toMatchObject({
+      type: "composite_button_action_confirmation", conversationId: convId, referenceMessageId: "composite-1", buttonId: "offer-1234:1",
+      id: expect.any(String),
+    });
+  });
+
   it.each(["📝", "✅", ["📝", "✅"]])("sendReaction maps %j to the qualified source message", async emoji => {
     const sendMessage = vi.fn().mockResolvedValue("ok");
     const adapter = createWireOutboundAdapter(makeRef(sendMessage), mockLogger);

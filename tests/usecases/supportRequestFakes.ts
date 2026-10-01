@@ -3,7 +3,9 @@ import type { SupportRequest } from "../../src/domain/entities/SupportRequest";
 import type { QualifiedId } from "../../src/domain/ids/QualifiedId";
 import type { SupportRequestListOptions } from "../../src/domain/repositories/SupportRequestRepository";
 import type { IssueSnapshot } from "../../src/application/ports/IssueTrackerPort";
-import type { OutboundTextOptions, SentMessageRef } from "../../src/application/ports/WireOutboundPort";
+import type {
+  CompositeButton, CompositePromptOptions, OutboundTextOptions, SentMessageRef,
+} from "../../src/application/ports/WireOutboundPort";
 
 /** Shared mocked ports for the support-request use case tests. No DB, network or SDK. */
 
@@ -90,7 +92,12 @@ export function makeWire() {
       return sentRefFor(sent.length);
     }),
     getUserProfile: vi.fn(),
-    sendCompositePrompt: vi.fn(),
+    // An offer question goes with buttons; it is counted and numbered with the plain texts.
+    sendCompositePrompt: vi.fn(async (_c: QualifiedId, text: string, _b: CompositeButton[], _o?: CompositePromptOptions): Promise<SentMessageRef | undefined> => {
+      sent.push(text);
+      return sentRefFor(sent.length);
+    }),
+    sendButtonConfirmation: vi.fn().mockResolvedValue(undefined),
     sendReaction: vi.fn(),
     sendFile: vi.fn(),
     withTyping: <T>(_c: QualifiedId, work: () => Promise<T>): Promise<T> => work(),

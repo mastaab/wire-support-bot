@@ -30,7 +30,7 @@ function deps(overrides: Partial<WireEventRouterDeps> = {}) {
   const all = {
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() },
     botUserId: bot,
-    wireOutbound: { sendPlainText: vi.fn(), sendReaction: vi.fn(), getUserProfile: vi.fn().mockResolvedValue(null), sendCompositePrompt: vi.fn(), sendFile: vi.fn() },
+    wireOutbound: { sendPlainText: vi.fn(), sendReaction: vi.fn(), getUserProfile: vi.fn().mockResolvedValue(null), sendCompositePrompt: vi.fn(), sendButtonConfirmation: vi.fn(), sendFile: vi.fn() },
     memberCache: new InMemoryMemberCache(),
     messageBuffer: { push: vi.fn(), getRecent: vi.fn().mockReturnValue([]), clear: vi.fn() },
     channelConfig: {

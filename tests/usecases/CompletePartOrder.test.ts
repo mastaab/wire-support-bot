@@ -5,7 +5,7 @@ import { OFFER_TTL_MS, formatMissingPartsQuestion, formatSupportQuestion } from 
 import type { OfferCommand } from "../../src/application/services/offers";
 import { PART_DETAIL_MAX } from "../../src/domain/entities/SupportRequest";
 import type { PartDetails } from "../../src/domain/entities/SupportRequest";
-import { alice, convId, loggedText, makeLogger, makeWire } from "./supportRequestFakes";
+import { alice, convId, loggedText, makeLogger, makeWire, sentRefFor } from "./supportRequestFakes";
 
 const MESSAGE = "PRIVATE_MESSAGE_MARKER deliver to depot north";
 const NOW = new Date("2026-09-26T12:00:00Z");
@@ -30,7 +30,7 @@ function setup(extracted: PartDetails = { deliverTo: "depot north" }) {
   };
   const offers = {
     put: vi.fn(), take: vi.fn(), has: vi.fn().mockReturnValue(false), peek: vi.fn(), clearConversation: vi.fn(),
-    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(),
+    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
   };
   const { wire, sent } = makeWire();
   const logger = makeLogger();
@@ -192,12 +192,13 @@ describe("CompletePartOrder", () => {
 
     expect(offers.put).toHaveBeenCalledTimes(1);
     expect(offers.put.mock.calls[0]![0]).toMatchObject({ conversationId: convId, requesterId: alice, createdAt: NOW, expiresAt: new Date(NOW.getTime() + OFFER_TTL_MS) });
-    expect(wire.sendPlainText.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
+    // The complete order is asked with [Yes] [No].
+    expect(wire.sendCompositePrompt.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
   });
 
   it("stores nothing when the send fails", async () => {
     const { wire, offers, logger, useCase } = setup();
-    wire.sendPlainText.mockRejectedValue(new TypeError("socket closed"));
+    wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
 
     await expect(useCase.execute(input())).resolves.toBe(false);
 
@@ -208,12 +209,29 @@ describe("CompletePartOrder", () => {
   it("never logs the message or the part values", async () => {
     const { wire, logger, useCase } = setup({ deliverTo: "PRIVATE_DELIVERY_MARKER depot north" });
     await useCase.execute(input());
-    wire.sendPlainText.mockRejectedValue(new TypeError("PRIVATE_MESSAGE_MARKER"));
+    wire.sendCompositePrompt.mockRejectedValue(new TypeError("PRIVATE_MESSAGE_MARKER"));
     await useCase.execute(input());
 
     const logged = loggedText(logger);
     for (const marker of ["PRIVATE_MESSAGE_MARKER", "PRIVATE_PART_MARKER", "PRIVATE_DELIVERY_MARKER", "printer 7"]) {
       expect(logged).not.toContain(marker);
     }
+  });
+});
+
+describe("CompletePartOrder: buttons", () => {
+  it("asks the complete order with [Yes] [No] and stores the button message, but asks for missing details without buttons", async () => {
+    const complete = setup();
+    await complete.useCase.execute(input());
+    const offer = complete.offers.put.mock.calls[0]![0];
+    expect(complete.wire.sendCompositePrompt).toHaveBeenCalledWith(convId, expect.stringContaining("Shall I order this part?"), [
+      { id: `${offer.id}:0`, label: "Yes" }, { id: `${offer.id}:1`, label: "No" },
+    ], { replyToMessageId: "msg-9" });
+    expect(offer.messageId).toBe(sentRefFor(1).messageId);
+
+    const partial = setup({ asset: "printer 7" });
+    await partial.useCase.execute(input({ pending: { ...DRAFT, part: { part: "paper tray" } }, text: "it's for printer 7" }));
+    expect(partial.wire.sendCompositePrompt).not.toHaveBeenCalled();
+    expect(partial.offers.put.mock.calls[0]![0].id).toBeUndefined();
   });
 });

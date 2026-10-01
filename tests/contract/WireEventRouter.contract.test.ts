@@ -101,6 +101,7 @@ function makeDeps(overrides: Partial<WireEventRouterDeps> = {}): WireEventRouter
     wireOutbound: {
       sendPlainText: vi.fn().mockResolvedValue(undefined),
       sendCompositePrompt: vi.fn().mockResolvedValue(undefined),
+      sendButtonConfirmation: vi.fn().mockResolvedValue(undefined),
       sendReaction: vi.fn().mockResolvedValue(undefined),
       sendFile: vi.fn().mockResolvedValue(undefined),
       withTyping: vi.fn((_conversationId: unknown, work: () => Promise<unknown>) => work()),
@@ -119,10 +120,10 @@ function makeDeps(overrides: Partial<WireEventRouterDeps> = {}): WireEventRouter
     replyToServiceDesk: { execute: vi.fn().mockResolvedValue(undefined) },
     getIssueStatus: { execute: vi.fn().mockResolvedValue(null), projectKey: "SD" },
     pendingOffers: {
-      put: vi.fn(), take: vi.fn(() => null), has: vi.fn(() => false), clearConversation: vi.fn(),
+      put: vi.fn(), find: vi.fn(() => null), take: vi.fn(() => null), has: vi.fn(() => false), clearConversation: vi.fn(),
       drop: vi.fn(() => null), recentlyDropped: vi.fn(() => null), forgetDropped: vi.fn(),
     },
-    confirmOffer: { execute: vi.fn().mockResolvedValue(false) },
+    confirmOffer: { execute: vi.fn().mockResolvedValue(false), choose: vi.fn().mockResolvedValue(false) },
     supportWelcome: { projectKey: "SD", passive: false, watching: false },
     ...overrides,
   } as unknown as WireEventRouterDeps;
@@ -184,11 +185,15 @@ function makeButtonAction(buttonId: string, referenceMessageId = "msg-1", id = "
 }
 
 describe("WireEventRouter contract: button action handling", () => {
-  it("unknown button id → gives a supported text alternative", async () => {
+  it("a click on a message the bot does not know → one short text answer, no confirmation", async () => {
     const deps = makeDeps();
+    deps.pendingOffers.prompt = vi.fn(() => null);
+    deps.pendingOffers.claimNotice = vi.fn(() => true);
     const router = new WireEventRouter(deps);
     await router.onButtonClicked(makeButtonAction("unknown_button"));
-    expect(deps.wireOutbound.sendPlainText).toHaveBeenCalledWith(convId, expect.stringContaining("text command"));
+    expect(deps.wireOutbound.sendPlainText).toHaveBeenCalledWith(convId, "This question has expired; ask me again.");
+    expect(deps.wireOutbound.sendButtonConfirmation).not.toHaveBeenCalled();
+    expect(deps.confirmOffer.choose).not.toHaveBeenCalled();
   });
 });
 
@@ -571,7 +576,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
     getIssueStatus: { execute: vi.fn().mockResolvedValue(null), projectKey: "SD" },
     replyToServiceDesk: { execute: vi.fn().mockResolvedValue(undefined) },
     pendingOffers: {
-      has: vi.fn().mockReturnValue(pending), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(),
+      has: vi.fn().mockReturnValue(pending), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(),
       drop: vi.fn().mockReturnValue(pending ? { kind: "support", requestKind: "fault", summary: "VPN drops", description: "VPN drops" } : null),
       recentlyDropped: vi.fn().mockReturnValue(recent), forgetDropped: vi.fn(),
     },
@@ -675,7 +680,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
   it("sends an unmentioned correction of a resolve offer with a comment to the answer path", async () => {
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
         drop: vi.fn().mockReturnValue({ kind: "resolve", issueKey: "SD-8", comment: "Works again." }), recentlyDropped: vi.fn().mockReturnValue(null),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(false) },
@@ -692,7 +697,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
   it("sends an unmentioned message after a dropped plain resolve offer to the answer path as amend-only", async () => {
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(),
         drop: vi.fn().mockReturnValue({ kind: "resolve", issueKey: "SD-8" }), recentlyDropped: vi.fn().mockReturnValue(null), forgetDropped: vi.fn(),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(false) },
@@ -712,7 +717,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
     const pending = { kind: "support", requestKind: "part", summary: "Tray", description: "Need a tray.", part: { asset: "printer 7", part: "paper tray" } };
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
         drop: vi.fn().mockReturnValue(pending), recentlyDropped: vi.fn().mockReturnValue(null),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(false) },
@@ -727,7 +732,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
   it.each([["yes", true], ["no", false], ["actually three", false]])("shows typing for the confirmation %j only when it is a yes", async (text, typing) => {
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
         drop: vi.fn().mockReturnValue(null), recentlyDropped: vi.fn().mockReturnValue(null),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(true) },
@@ -741,7 +746,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
     const pending = { kind: "support", requestKind: "part", summary: "Tray", description: "Need a tray.", part: { asset: "printer 7", part: "paper tray" } };
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
         drop: vi.fn().mockReturnValue(pending), recentlyDropped: vi.fn().mockReturnValue(null),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(false) },
@@ -761,7 +766,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
     const pending = { kind: "support", requestKind: "part", summary: "Tray", description: "Need a tray.", part: { asset: "printer 7" } };
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
         drop: vi.fn().mockReturnValue(pending), recentlyDropped: vi.fn().mockReturnValue(null),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(false) },
@@ -779,7 +784,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
     const completePartOrder = { execute: vi.fn().mockResolvedValue(true) };
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
         drop: vi.fn().mockReturnValue(pending), recentlyDropped: vi.fn().mockReturnValue(null),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(false) },
@@ -793,7 +798,7 @@ describe("WireEventRouter contract: offers and service-desk replies", () => {
     const pending = { kind: "support", requestKind: "part", summary: "Tray", description: "Need a tray.", part: { asset: "printer 7" } };
     const deps = makeDeps({
       pendingOffers: {
-        has: vi.fn().mockReturnValue(true), put: vi.fn(), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
+        has: vi.fn().mockReturnValue(true), put: vi.fn(), find: vi.fn(() => null), take: vi.fn(), clearConversation: vi.fn(), forgetDropped: vi.fn(),
         drop: vi.fn().mockReturnValue(pending), recentlyDropped: vi.fn().mockReturnValue(null),
       },
       confirmOffer: { execute: vi.fn().mockResolvedValue(false) },

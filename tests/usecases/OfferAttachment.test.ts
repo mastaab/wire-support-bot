@@ -52,7 +52,10 @@ describe("OfferAttachment", () => {
     expect(await useCase.execute(input)).toBe(true);
 
     expect(sent).toEqual(['Shall I add this photo to **SD-16** "Error light on printer 12"?\n\n(yes or no)?']);
-    expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "file-msg-1" });
+    const offerId = offers.find(convId, alice, now)!.id!;
+    expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], [
+      { id: `${offerId}:0`, label: "Yes" }, { id: `${offerId}:1`, label: "No" },
+    ], { replyToMessageId: "file-msg-1" });
     expect(requests.listByConversation).toHaveBeenCalledWith(convId, { openOnly: true });
     const offer = offers.take(convId, alice, now);
     expect(offer).toEqual({
@@ -61,6 +64,8 @@ describe("OfferAttachment", () => {
       requesterId: alice,
       createdAt: now,
       expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
+      id: offerId,
+      messageId: sentRefFor(1).messageId,
     });
     expect(requests.setLastMessage).toHaveBeenCalledTimes(1);
     expect(requests.setLastMessage).toHaveBeenCalledWith("SD-16", sentRefFor(1));
@@ -172,6 +177,7 @@ describe("OfferAttachment", () => {
       expect(await useCase.execute(input)).toBe(false);
 
       expect(wire.sendPlainText).not.toHaveBeenCalled();
+      expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
       expect(offers.has(convId, alice, now)).toBe(false);
       expect(requests.setLastMessage).not.toHaveBeenCalled();
     });
@@ -205,8 +211,8 @@ describe("OfferAttachment", () => {
         command: { kind: "reply" as const, issueKey: "SD-6", body: "Fluid is low." },
         conversationId: convId, requesterId: alice, createdAt: now, expiresAt: new Date(now.getTime() + 60_000),
       };
-      const send = wire.sendPlainText.getMockImplementation()!;
-      wire.sendPlainText.mockImplementationOnce(async (...args) => { offers.put(passive); return send(...args); });
+      const send = wire.sendCompositePrompt.getMockImplementation()!;
+      wire.sendCompositePrompt.mockImplementationOnce(async (...args) => { offers.put(passive); return send(...args); });
 
       expect(await useCase.execute(input)).toBe(false);
 
@@ -228,7 +234,7 @@ describe("OfferAttachment", () => {
 
     it("stores no offer when the send fails, and logs the error name only", async () => {
       const { requests, offers, wire, logger, useCase } = setup([makeRequest({ summary: "Error light on printer 12" })]);
-      wire.sendPlainText.mockRejectedValueOnce(new TypeError("send failed for IMG_0042.jpg"));
+      wire.sendCompositePrompt.mockRejectedValueOnce(new TypeError("send failed for IMG_0042.jpg"));
 
       expect(await useCase.execute(input)).toBe(false);
 
@@ -248,6 +254,7 @@ describe("OfferAttachment", () => {
       expect(await useCase.execute(input)).toBe(false);
 
       expect(wire.sendPlainText).not.toHaveBeenCalled();
+      expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
       expect(offers.has(convId, alice, now)).toBe(false);
       expect(logger.warn).toHaveBeenCalledWith("OfferAttachment: listing open requests failed", { err: "Error" });
     });
@@ -255,7 +262,7 @@ describe("OfferAttachment", () => {
 
   it("stores the offer but no ref when the transport returns no reference", async () => {
     const { requests, offers, wire, useCase } = setup([makeRequest()]);
-    wire.sendPlainText.mockResolvedValueOnce(undefined);
+    wire.sendCompositePrompt.mockResolvedValueOnce(undefined);
 
     expect(await useCase.execute(input)).toBe(true);
 
@@ -298,5 +305,48 @@ describe("OfferAttachment", () => {
     // The earlier offer expired at `now`, so it no longer blocks a new one.
     expect(await useCase.execute(input)).toBe(true);
     expect(clock).toHaveBeenCalled();
+  });
+});
+
+describe("OfferAttachment: choosing the request", () => {
+  const labels = (wire: ReturnType<typeof setup>["wire"]) => (wire.sendCompositePrompt.mock.calls[0]![2] as Array<{ label: string }>).map((b) => b.label);
+
+  it("asks which of the sender's open requests the file belongs to, likeliest first, at most three, with [Do not attach]", async () => {
+    const records = [
+      makeRequest({ key: "SD-40", summary: "Printer 12 error light", createdAt: at("2026-09-27T09:00:00Z") }),
+      makeRequest({ key: "SD-41", summary: "Scanner offline", createdAt: at("2026-09-28T09:00:00Z") }),
+      makeRequest({ key: "SD-42", summary: "Badge reader", createdAt: at("2026-09-26T09:00:00Z"), lastMessageAt: at("2026-09-28T09:30:00Z") }),
+      makeRequest({ key: "SD-39", summary: "Old one", createdAt: at("2026-09-20T09:00:00Z") }),
+      makeRequest({ key: "SD-43", summary: "Bob's request", requesterId: bob, createdAt: at("2026-09-28T09:50:00Z") }),
+      makeRequest({ key: "SD-44", summary: "Done", statusCategory: "done", createdAt: at("2026-09-28T09:55:00Z") }),
+    ];
+    const { offers, wire, sent, requests, useCase } = setup(records);
+
+    expect(await useCase.execute(input)).toBe(true);
+
+    expect(labels(wire)).toEqual(["SD-42", "SD-41", "SD-40", "Do not attach"]);
+    expect(sent).toEqual([
+      'Which request shall I add this photo to?\n\n- **SD-42** "Badge reader"\n- **SD-41** "Scanner offline"\n- **SD-40** "Printer 12 error light"\n\n(SD-42, SD-41, SD-40 or no)?',
+    ]);
+    expect(wire.sendCompositePrompt.mock.calls[0]![3]).toEqual({ replyToMessageId: "file-msg-1" });
+    const offer = offers.find(convId, alice, now)!;
+    expect(offer.choices!.map((c) => c.command)).toEqual([
+      { kind: "attach", issueKey: "SD-42", file: PHOTO }, { kind: "attach", issueKey: "SD-41", file: PHOTO }, { kind: "attach", issueKey: "SD-40", file: PHOTO }, null,
+    ]);
+    expect(offer.messageId).toBe(sentRefFor(1).messageId);
+    // A choice names several requests, so it is no request's last message.
+    expect(requests.setLastMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the yes-or-no offer for the likeliest request when the sender has one open request or none of their own", async () => {
+    const one = setup([makeRequest({ key: "SD-40" }), makeRequest({ key: "SD-43", requesterId: bob, createdAt: at("2026-09-28T09:50:00Z") })]);
+    expect(await one.useCase.execute(input)).toBe(true);
+    expect(labels(one.wire)).toEqual(["Yes", "No"]);
+    expect(one.offers.find(convId, alice, now)!.choices).toBeUndefined();
+
+    const none = setup([makeRequest({ key: "SD-43", requesterId: bob })]);
+    expect(await none.useCase.execute(input)).toBe(true);
+    expect(labels(none.wire)).toEqual(["Yes", "No"]);
+    expect(none.offers.find(convId, alice, now)!.command).toMatchObject({ issueKey: "SD-43" });
   });
 });

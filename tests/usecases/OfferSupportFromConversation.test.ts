@@ -51,7 +51,7 @@ function setup(records: SupportRequest[] = [makeRequest()], draft: SupportDraft 
   const getIssueStatus = { projectKey: "SD", execute: vi.fn().mockResolvedValue(null) };
   const offers = {
     put: vi.fn(), take: vi.fn(), has: vi.fn().mockReturnValue(false), peek: vi.fn(), clearConversation: vi.fn(),
-    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(),
+    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
   };
   const { wire, sent } = makeWire();
   const logger = makeLogger();
@@ -157,7 +157,7 @@ describe("OfferSupportFromConversation", () => {
       expect(triage.draftRequest).toHaveBeenCalledWith(MESSAGE, [{ key: "SD-6", summary: "VPN drops every ten minutes", raisedBySpeakerRecently: false }]);
       expect(sent).toEqual([formatSupportQuestion(DRAFT.summary, DRAFT.description)]);
       expect(sent[0]).toBe("Shall I report this to the service desk?\n> **Printer on floor 3 jams on every job**\n> The printer on floor 3 jams on every job.\n\n(yes or no)?");
-      expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "msg-9" });
+      expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
       expect(offers.put).toHaveBeenCalledTimes(1);
       const offer = offers.put.mock.calls[0]![0];
       expect(offer).toMatchObject({
@@ -167,7 +167,7 @@ describe("OfferSupportFromConversation", () => {
       });
       expect(offer.createdAt).toEqual(LATER);
       expect(offer.expiresAt.getTime() - offer.createdAt.getTime()).toBe(OFFER_TTL_MS);
-      expect(wire.sendPlainText.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
+      expect(wire.sendCompositePrompt.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
     });
 
     it("collapses whitespace in the summary and trims the description", async () => {
@@ -252,25 +252,25 @@ describe("OfferSupportFromConversation", () => {
       expect(offers.put).not.toHaveBeenCalled();
     });
 
-    it("stays silent when an open request of this conversation already covers the problem and nothing is added", async () => {
+    it("stays silent for an update when an open request of this conversation already covers the problem and nothing is added", async () => {
       for (const addition of [null, "   "]) {
         const { offers, sent, useCase } = setup(undefined, { ...DRAFT, duplicateOf: "sd-6", addition });
 
-        await useCase.execute(input());
+        await useCase.execute(input({ categories: ["update"] }));
 
         expect(sent).toEqual([]);
         expect(offers.put).not.toHaveBeenCalled();
       }
     });
 
-    it("offers to add new information to the open request as a native reply, then stores a reply offer", async () => {
+    it("offers to add new information to the open request as a native reply for an update, then stores a reply offer", async () => {
       const { offers, wire, sent, useCase } = setup(undefined, { ...DRAFT, duplicateOf: "sd-6", addition: "  It only happens on the 3rd floor. " });
 
-      await useCase.execute(input());
+      await useCase.execute(input({ categories: ["update"] }));
 
       expect(sent).toEqual([formatReplyQuestion("SD-6", "VPN drops every ten minutes", "It only happens on the 3rd floor.")]);
       expect(sent[0]).toBe("Shall I add this to **SD-6** \"VPN drops every ten minutes\"?\n> It only happens on the 3rd floor.\n\n(yes or no)?");
-      expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "msg-9" });
+      expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
       expect(offers.put).toHaveBeenCalledTimes(1);
       const offer = offers.put.mock.calls[0]![0];
       expect(offer).toMatchObject({
@@ -279,13 +279,13 @@ describe("OfferSupportFromConversation", () => {
         requesterId: alice,
       });
       expect(offer.expiresAt.getTime() - offer.createdAt.getTime()).toBe(OFFER_TTL_MS);
-      expect(wire.sendPlainText.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
+      expect(wire.sendCompositePrompt.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
     });
 
     it("lets any member add to a request someone else raised", async () => {
       const { offers, sent, useCase } = setup(undefined, { ...DRAFT, duplicateOf: "SD-6", addition: "Now also on the 2nd floor." });
 
-      await useCase.execute(input({ senderId: bob, senderName: "Bob" }));
+      await useCase.execute(input({ senderId: bob, senderName: "Bob", categories: ["update"] }));
 
       expect(sent).toHaveLength(1);
       expect(offers.put.mock.calls[0]![0]).toMatchObject({ command: { kind: "reply", issueKey: "SD-6" }, requesterId: bob });
@@ -293,11 +293,11 @@ describe("OfferSupportFromConversation", () => {
 
     it("accepts an addition exactly at the reply limit and drops a longer one", async () => {
       const atLimit = setup(undefined, { ...DRAFT, duplicateOf: "SD-6", addition: "a".repeat(REPLY_BODY_MAX) });
-      await atLimit.useCase.execute(input());
+      await atLimit.useCase.execute(input({ categories: ["update"] }));
       expect(atLimit.offers.put).toHaveBeenCalledTimes(1);
 
       const over = setup(undefined, { ...DRAFT, duplicateOf: "SD-6", addition: "a".repeat(REPLY_BODY_MAX + 1) });
-      await over.useCase.execute(input());
+      await over.useCase.execute(input({ categories: ["update"] }));
       expect(over.sent).toEqual([]);
       expect(over.offers.put).not.toHaveBeenCalled();
     });
@@ -328,7 +328,7 @@ describe("OfferSupportFromConversation", () => {
     it("does not store the addition offer when the work is cancelled while the question is being sent", async () => {
       const controller = new AbortController();
       const { wire, offers, sent, useCase } = setup(undefined, { ...DRAFT, duplicateOf: "SD-6", addition: "It happened again." });
-      wire.sendPlainText.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
+      wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
 
       await useCase.execute(input({ signal: controller.signal }));
 
@@ -338,7 +338,7 @@ describe("OfferSupportFromConversation", () => {
 
     it("does not store the addition offer when sending the question failed", async () => {
       const { wire, offers, useCase } = setup(undefined, { ...DRAFT, duplicateOf: "SD-6", addition: "It happened again." });
-      wire.sendPlainText.mockRejectedValue(new TypeError("socket closed"));
+      wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
 
       await expect(useCase.execute(input())).resolves.toBe(false);
 
@@ -429,7 +429,7 @@ describe("OfferSupportFromConversation", () => {
         expect(sent).toEqual([
           "Shall I order this part?\n> **Paper tray roller for printer 17**\n> Asset: printer 17\n> Part: paper tray roller\n> Quantity: 2\n> Deliver to: Depot North\n> I need two paper tray rollers for printer 17, delivered to Depot North.\n\n(yes or no)?",
         ]);
-        expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "msg-9" });
+        expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
         expect(offers.put.mock.calls[0]![0].command).toEqual({
           kind: "support", requestKind: "part", summary: PART_DRAFT.summary, description: PART_DRAFT.description, part: PART_DRAFT.part,
         });
@@ -513,13 +513,16 @@ describe("OfferSupportFromConversation", () => {
         expect(offers.put).not.toHaveBeenCalled();
       });
 
-      it("still offers an addition for a part draft that names an open request", async () => {
+      it("still offers an addition for a part draft that names an open request, next to raising the order", async () => {
         const { offers, sent, useCase } = setup(undefined, { ...PART_DRAFT, part: {}, duplicateOf: "SD-6", addition: "It happened again." });
 
         await useCase.execute(input());
 
-        expect(sent).toEqual([formatReplyQuestion("SD-6", "VPN drops every ten minutes", "It happened again.")]);
-        expect(offers.put.mock.calls[0]![0].command).toEqual({ kind: "reply", issueKey: "SD-6", body: "It happened again." });
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toContain('- **SD-6** "VPN drops every ten minutes"');
+        const offer = offers.put.mock.calls[0]![0];
+        expect(offer.choices![0]!.command).toEqual({ kind: "reply", issueKey: "SD-6", body: "It happened again." });
+        expect(offer.choices![1]!.command).toMatchObject({ kind: "support", requestKind: "part" });
       });
     });
 
@@ -559,7 +562,7 @@ describe("OfferSupportFromConversation", () => {
     it("does not store the offer when the work is cancelled while the question is being sent", async () => {
       const controller = new AbortController();
       const { wire, offers, sent, useCase } = setup();
-      wire.sendPlainText.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
+      wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
 
       await useCase.execute(input({ signal: controller.signal }));
 
@@ -569,7 +572,7 @@ describe("OfferSupportFromConversation", () => {
 
     it("does not store the offer when sending the question failed", async () => {
       const { wire, offers, logger, useCase } = setup();
-      wire.sendPlainText.mockRejectedValue(new TypeError("socket closed"));
+      wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
 
       await expect(useCase.execute(input())).resolves.toBe(false);
 
@@ -631,12 +634,12 @@ describe("OfferSupportFromConversation", () => {
 
       expect(sent).toEqual([formatResolveQuestion("SD-6", "VPN drops every ten minutes", COMMENT)]);
       expect(sent[0]).toBe(`Shall I resolve **SD-6** "VPN drops every ten minutes" with the service desk and add this comment?\n> ${COMMENT}\n\n(yes or no)?`);
-      expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "msg-9" });
+      expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, sent[0], expect.any(Array), { replyToMessageId: "msg-9" });
       expect(offers.put).toHaveBeenCalledTimes(1);
       const offer = offers.put.mock.calls[0]![0];
       expect(offer).toMatchObject({ command: { kind: "resolve", issueKey: "SD-6", comment: COMMENT }, conversationId: convId, requesterId: alice });
       expect(offer.expiresAt.getTime() - offer.createdAt.getTime()).toBe(OFFER_TTL_MS);
-      expect(wire.sendPlainText.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
+      expect(wire.sendCompositePrompt.mock.invocationCallOrder[0]).toBeLessThan(offers.put.mock.invocationCallOrder[0]!);
     });
 
     it("offers a plain resolve without a comment", async () => {
@@ -756,7 +759,7 @@ describe("OfferSupportFromConversation", () => {
     it("does not store the offer when the work is cancelled while the question is being sent", async () => {
       const controller = new AbortController();
       const { wire, offers, sent, useCase } = setup(undefined, RESOLVE);
-      wire.sendPlainText.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
+      wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
 
       await useCase.execute(input({ signal: controller.signal }));
 
@@ -766,7 +769,7 @@ describe("OfferSupportFromConversation", () => {
 
     it("does not store the offer when sending the question failed", async () => {
       const { wire, offers, useCase } = setup(undefined, RESOLVE);
-      wire.sendPlainText.mockRejectedValue(new TypeError("socket closed"));
+      wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
 
       await expect(useCase.execute(input())).resolves.toBe(false);
 
@@ -780,7 +783,7 @@ describe("OfferSupportFromConversation", () => {
         await useCase.execute(input());
         expect(loggedText(logger)).not.toContain(marker);
 
-        wire.sendPlainText.mockRejectedValue(new TypeError("socket closed"));
+        wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
         await useCase.execute(input());
         expect(loggedText(logger)).not.toContain(marker);
       }
@@ -859,7 +862,7 @@ describe("OfferSupportFromConversation", () => {
       const triage = { draftRequest: vi.fn(), matchStatusQuestion: vi.fn().mockResolvedValue("SD-6"), extractPartDetails: vi.fn() };
       const offers = {
       put: vi.fn(), take: vi.fn(), has: vi.fn(), peek: vi.fn(), clearConversation: vi.fn(),
-      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(),
+      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
     };
       const useCase = new OfferSupportFromConversation(requests, triage, getIssueStatus, offers, wire, makeLogger());
 
@@ -924,7 +927,7 @@ describe("OfferSupportFromConversation", () => {
     it("is true when the question was sent but a cancellation during the send kept the offer from being stored", async () => {
       const controller = new AbortController();
       const { wire, offers, sent, useCase } = setup();
-      wire.sendPlainText.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
+      wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
       await expect(useCase.execute(input({ signal: controller.signal }))).resolves.toBe(true);
       expect(offers.put).not.toHaveBeenCalled();
     });
@@ -941,7 +944,7 @@ describe("OfferSupportFromConversation", () => {
       // No draft, a covered problem without an addition, an addition-only category without one,
       // a close request for a request that is not open here, a draft outside the bounds.
       cases.push([setup(undefined, null), input()]);
-      cases.push([setup(undefined, { ...DRAFT, duplicateOf: "SD-6" }), input()]);
+      cases.push([setup(undefined, { ...DRAFT, duplicateOf: "SD-6" }), input({ categories: ["update"] })]);
       cases.push([setup(undefined, DRAFT), input({ categories: ["update"] })]);
       cases.push([setup([], DRAFT), input({ categories: ["update"] })]);
       cases.push([setup(undefined, { ...DRAFT, resolves: "SD-99" }), input()]);
@@ -962,7 +965,7 @@ describe("OfferSupportFromConversation", () => {
       const statusCancelled = setup(undefined, DRAFT, "SD-6");
       cases.push([statusCancelled, input({ categories: ["request_status"], signal: controller.signal })]);
       const sendFails = setup();
-      sendFails.wire.sendPlainText.mockRejectedValue(new TypeError("socket closed"));
+      sendFails.wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
       cases.push([sendFails, input()]);
 
       for (const [ctx, message] of cases) {
@@ -984,7 +987,7 @@ describe("OfferSupportFromConversation: last message reference", () => {
   ])("stores the reference of %s, which names an open request of this conversation", async (_label, draft) => {
     const { requests, offers, useCase } = setup(undefined, draft);
 
-    await expect(useCase.execute(input())).resolves.toBe(true);
+    await expect(useCase.execute(input({ categories: ["update"] }))).resolves.toBe(true);
 
     expect(requests.setLastMessage).toHaveBeenCalledTimes(1);
     expect(requests.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
@@ -1007,13 +1010,13 @@ describe("OfferSupportFromConversation: last message reference", () => {
 
   it("stores no reference when the send failed or returned none", async () => {
     const failed = setup(undefined, ADDITION);
-    failed.wire.sendPlainText.mockRejectedValue(new TypeError("socket closed"));
-    await failed.useCase.execute(input());
+    failed.wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
+    await failed.useCase.execute(input({ categories: ["update"] }));
     expect(failed.requests.setLastMessage).not.toHaveBeenCalled();
 
     const none = setup(undefined, ADDITION);
-    none.wire.sendPlainText.mockResolvedValueOnce(undefined);
-    await expect(none.useCase.execute(input())).resolves.toBe(true);
+    none.wire.sendCompositePrompt.mockResolvedValueOnce(undefined);
+    await expect(none.useCase.execute(input({ categories: ["update"] }))).resolves.toBe(true);
     expect(none.requests.setLastMessage).not.toHaveBeenCalled();
     expect(none.offers.put).toHaveBeenCalledTimes(1);
   });
@@ -1021,13 +1024,13 @@ describe("OfferSupportFromConversation: last message reference", () => {
   it("stores the reference but not the offer when the work is cancelled while the question is being sent", async () => {
     const controller = new AbortController();
     const { requests, wire, offers, sent, useCase } = setup(undefined, ADDITION);
-    wire.sendPlainText.mockImplementation(async (_conv: QualifiedId, text: string) => {
+    wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => {
       sent.push(text);
       controller.abort();
       return sentRefFor(sent.length);
     });
 
-    await expect(useCase.execute(input({ signal: controller.signal }))).resolves.toBe(true);
+    await expect(useCase.execute(input({ signal: controller.signal, categories: ["update"] }))).resolves.toBe(true);
 
     expect(offers.put).not.toHaveBeenCalled();
     expect(requests.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
@@ -1037,7 +1040,7 @@ describe("OfferSupportFromConversation: last message reference", () => {
     const { requests, offers, sent, logger, useCase } = setup(undefined, ADDITION);
     requests.setLastMessage.mockRejectedValueOnce(new Error("SECRET-DB-DETAIL"));
 
-    await expect(useCase.execute(input())).resolves.toBe(true);
+    await expect(useCase.execute(input({ categories: ["update"] }))).resolves.toBe(true);
 
     expect(sent).toHaveLength(1);
     expect(offers.put).toHaveBeenCalledTimes(1);
@@ -1052,12 +1055,160 @@ describe("OfferSupportFromConversation: last message reference", () => {
     const triage = { draftRequest: vi.fn(), matchStatusQuestion: vi.fn().mockResolvedValue("SD-6"), extractPartDetails: vi.fn() };
     const offers = {
       put: vi.fn(), take: vi.fn(), has: vi.fn(), peek: vi.fn(), clearConversation: vi.fn(),
-      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(),
+      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
     };
     const useCase = new OfferSupportFromConversation(requests, triage, getIssueStatus, offers, wire, makeLogger());
 
     await useCase.execute(input({ categories: ["request_status"] }));
 
     expect(requests.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
+  });
+});
+
+describe("OfferSupportFromConversation: choosing the target", () => {
+  const printer = (key: string, overrides: Partial<SupportRequest> = {}): SupportRequest =>
+    makeRequest({ key, summary: `Printer on floor ${key.slice(3)} is broken`, ...overrides });
+  const buttonLabels = (wire: ReturnType<typeof setup>["wire"]) => (wire.sendCompositePrompt.mock.calls[0]![2] as Array<{ label: string }>).map((b) => b.label);
+
+  describe("new or existing request", () => {
+    it("offers [Add to SD-n] [Raise new request] [Cancel] when an open request shares a significant word", async () => {
+      const { offers, wire, sent, useCase } = setup([printer("SD-38")]);
+
+      await expect(useCase.execute(input())).resolves.toBe(true);
+
+      expect(sent).toEqual([
+        "This may be the same problem as an existing request. Shall I add it there, or raise a new request?\n"
+        + "> **Printer on floor 3 jams on every job**\n> The printer on floor 3 jams on every job.\n\n"
+        + '- **SD-38** "Printer on floor 38 is broken"\n\n(SD-38, new or cancel)?',
+      ]);
+      expect(buttonLabels(wire)).toEqual(["Add to SD-38", "Raise new request", "Cancel"]);
+      const offer = offers.put.mock.calls[0]![0];
+      expect(offer.choices!.map((c: { command: unknown }) => c.command)).toEqual([
+        { kind: "reply", issueKey: "SD-38", body: DRAFT.description },
+        { kind: "support", requestKind: "fault", summary: DRAFT.summary, description: DRAFT.description },
+        null,
+      ]);
+      // The button IDs carry the stored offer's ID and the index only.
+      expect(wire.sendCompositePrompt.mock.calls[0]![2]).toEqual([
+        { id: `${offer.id}:0`, label: "Add to SD-38" }, { id: `${offer.id}:1`, label: "Raise new request" }, { id: `${offer.id}:2`, label: "Cancel" },
+      ]);
+      expect(offer.messageId).toBe(sentRefFor(1).messageId);
+      expect(offer.command.kind).toBe("support");
+    });
+
+    it("adds the model's addition, quoted, when it differs from the description", async () => {
+      const { offers, sent, useCase } = setup([printer("SD-38")], { ...DRAFT, duplicateOf: "SD-38", addition: "It happened again on floor 3." });
+      await useCase.execute(input());
+      expect(sent[0]).toContain("Added to an existing request, it would say:\n> It happened again on floor 3.");
+      expect(offers.put.mock.calls[0]![0].choices[0].command).toEqual({ kind: "reply", issueKey: "SD-38", body: "It happened again on floor 3." });
+    });
+
+    it("accepts the model's suggestion only when it is one of the conversation's requests, and puts it first", async () => {
+      const records = [printer("SD-40"), makeRequest({ key: "SD-6" })];
+      const hinted = setup(records, { ...DRAFT, duplicateOf: "sd-6" });
+      await hinted.useCase.execute(input());
+      expect(buttonLabels(hinted.wire)).toEqual(["Add to SD-6", "Add to SD-40", "Raise new request", "Cancel"]);
+
+      const invented = setup(records, { ...DRAFT, duplicateOf: "SD-77" });
+      await invented.useCase.execute(input());
+      expect(buttonLabels(invented.wire)).toEqual(["Add to SD-40", "Raise new request", "Cancel"]);
+
+      const elsewhere = setup([makeRequest({ key: "SD-6", conversationId: { id: "conv-2", domain: "example.com" } })], { ...DRAFT, duplicateOf: "SD-6" });
+      await elsewhere.useCase.execute(input());
+      expect(elsewhere.wire.sendCompositePrompt.mock.calls[0]![1]).toBe(formatSupportQuestion(DRAFT.summary, DRAFT.description));
+      expect(buttonLabels(elsewhere.wire)).toEqual(["Yes", "No"]);
+    });
+
+    it("offers only the conversation's own requests of the project, open or done within seven days, at most three", async () => {
+      const day = 24 * 60 * 60 * 1000;
+      const records = [
+        printer("SD-41"),
+        printer("SD-42", { statusCategory: "done", updatedAt: new Date(LATER.getTime() - 6 * day) }),
+        printer("SD-43", { statusCategory: "done", updatedAt: new Date(LATER.getTime() - 8 * day) }),
+        printer("SD-44", { conversationId: { id: "conv-1", domain: "other.example" } }),
+        printer("SD-45", { deleted: true }),
+        printer("OPS-46"),
+        printer("SD-47"),
+        printer("SD-48"),
+      ];
+      const { wire, sent, useCase } = setup(records);
+      await useCase.execute(input());
+      expect(buttonLabels(wire)).toEqual(["Add to SD-41", "Add to SD-42", "Add to SD-47", "Raise new request", "Cancel"]);
+      expect(sent[0]).toContain('- **SD-42** "Printer on floor 42 is broken" (resolved)');
+    });
+
+    it("keeps the yes-or-no offer to raise when no request may be the same problem", async () => {
+      const { offers, wire, useCase } = setup([makeRequest({ key: "SD-6", summary: "VPN drops every ten minutes" })]);
+      await useCase.execute(input());
+      expect(wire.sendCompositePrompt.mock.calls[0]![1]).toBe(formatSupportQuestion(DRAFT.summary, DRAFT.description));
+      expect(buttonLabels(wire)).toEqual(["Yes", "No"]);
+      expect(offers.put.mock.calls[0]![0].choices).toBeUndefined();
+    });
+
+    it("stays silent when the requests cannot be read for the candidates", async () => {
+      const { requests, sent, offers, useCase } = setup([printer("SD-38")]);
+      requests.listByConversation.mockImplementation(async (_c: QualifiedId, options?: { openOnly?: boolean }) => {
+        if (options?.openOnly) return [printer("SD-38")];
+        throw new Error("db down");
+      });
+      await expect(useCase.execute(input())).resolves.toBe(false);
+      expect(sent).toEqual([]);
+      expect(offers.put).not.toHaveBeenCalled();
+    });
+
+    it("stores the choice as nobody's last message", async () => {
+      const { requests, useCase } = setup([printer("SD-38")]);
+      await useCase.execute(input());
+      expect(requests.setLastMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("which request to resolve or add to", () => {
+    const RESOLVE_38: SupportDraft = { ...DRAFT, resolves: "SD-38", closingComment: "Works after the reset." };
+
+    it("lists the model's pick first, then the speaker's, then the others, at most three, plus [Cancel], when the message names no key", async () => {
+      const records = [
+        makeRequest({ key: "SD-50", requesterId: bob }),
+        makeRequest({ key: "SD-49", requesterId: bob }),
+        makeRequest({ key: "SD-39" }),
+        makeRequest({ key: "SD-38", requesterId: bob }),
+      ];
+      const { offers, wire, sent, useCase } = setup(records, RESOLVE_38);
+      await useCase.execute(input({ text: "the printer works again after the reset" }));
+      expect(buttonLabels(wire)).toEqual(["SD-38", "SD-39", "SD-50", "Cancel"]);
+      expect(sent[0]).toBe(
+        "Which request shall I resolve with the service desk, adding this comment?\n> Works after the reset.\n\n"
+        + '- **SD-38** "VPN drops every ten minutes"\n- **SD-39** "VPN drops every ten minutes"\n- **SD-50** "VPN drops every ten minutes"\n\n'
+        + "(SD-38, SD-39, SD-50 or cancel)?",
+      );
+      const offer = offers.put.mock.calls[0]![0];
+      expect(offer.command).toEqual({ kind: "resolve", issueKey: "SD-38", comment: "Works after the reset." });
+      expect(offer.choices.map((c: { command: unknown }) => c.command)).toEqual([
+        { kind: "resolve", issueKey: "SD-38", comment: "Works after the reset." },
+        { kind: "resolve", issueKey: "SD-39", comment: "Works after the reset." },
+        { kind: "resolve", issueKey: "SD-50", comment: "Works after the reset." },
+        null,
+      ]);
+    });
+
+    it("keeps the yes-or-no resolve offer when the message names a key or only one request is open", async () => {
+      const named = setup([makeRequest({ key: "SD-38" }), makeRequest({ key: "SD-39" })], RESOLVE_38);
+      await named.useCase.execute(input({ text: "SD-38 works again after the reset" }));
+      expect(buttonLabels(named.wire)).toEqual(["Yes", "No"]);
+      expect(named.sent[0]).toBe(formatResolveQuestion("SD-38", "VPN drops every ten minutes", "Works after the reset."));
+
+      const single = setup([makeRequest({ key: "SD-38" })], RESOLVE_38);
+      await single.useCase.execute(input({ text: "it works again after the reset" }));
+      expect(buttonLabels(single.wire)).toEqual(["Yes", "No"]);
+    });
+
+    it("asks which request an update adds to when several are open and no key is named", async () => {
+      const draft = { ...DRAFT, duplicateOf: "SD-39", addition: "It also happens on floor 2." };
+      const { offers, wire, sent, useCase } = setup([makeRequest({ key: "SD-40" }), makeRequest({ key: "SD-39" })], draft);
+      await useCase.execute(input({ categories: ["update"], text: "it also happens on floor 2" }));
+      expect(buttonLabels(wire)).toEqual(["SD-39", "SD-40", "Cancel"]);
+      expect(sent[0]).toBe('Which request shall I add this to?\n> It also happens on floor 2.\n\n- **SD-39** "VPN drops every ten minutes"\n- **SD-40** "VPN drops every ten minutes"\n\n(SD-39, SD-40 or cancel)?');
+      expect(offers.put.mock.calls[0]![0].choices[1].command).toEqual({ kind: "reply", issueKey: "SD-40", body: "It also happens on floor 2." });
+    });
   });
 });

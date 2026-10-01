@@ -22,6 +22,7 @@ import { findSupportRequestInConversation } from "../jira/supportRequestScope";
 import { markRepliesSeen, rememberLastMessage } from "../jira/supportRequestMarkers";
 import { formatTimeInZone } from "../../services/formatTimeInZone";
 import { statedPartDetails } from "../../services/partDetails";
+import { newOfferId, sendOfferPrompt } from "../../services/offerButtons";
 
 /**
  * Scans `text` for `@Name` tokens and returns Wire mention objects with UTF-16 offsets.
@@ -248,8 +249,16 @@ export class AnswerQuestion {
     // already happened ("I'll send that ..."), which is wrong until the requester confirms.
     // No mentions: a quoted summary or reply body may contain @names that must not ping members.
     // The offer is stored only after the question was sent, so it is never confirmable unseen.
-    const sent = await this.send(input, prepared.question, false);
-    this.jira.offers.put(prepared.offer);
+    // A yes-or-no question goes with [Yes] [No]; a question for missing part details has no buttons.
+    const offerId = missingPartDetails(prepared.offer.command).length === 0 ? newOfferId() : undefined;
+    const sent = offerId
+      ? await sendOfferPrompt(this.wireOutbound, input.conversationId, prepared.question, offerId, undefined, input.replyToMessageId)
+      : await this.send(input, prepared.question, false);
+    this.jira.offers.put({
+      ...prepared.offer,
+      ...(offerId ? { id: offerId } : {}),
+      ...(offerId && sent ? { messageId: sent.messageId } : {}),
+    });
     // A reply or resolve question names a request of this conversation (checked by the scope
     // helper), so it becomes that request's last message, quoted by the next watch update.
     if (prepared.requestKey) {

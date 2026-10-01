@@ -55,12 +55,23 @@ export interface WireOutboundPort {
     options?: OutboundTextOptions,
   ): Promise<SentMessageRef | undefined>;
 
+  /**
+   * Sends a question with buttons. Clients that cannot show buttons show the text, so the text
+   * must say how to answer it. Returns a reference to the sent message (a click names it), or
+   * undefined like `sendPlainText`.
+   */
   sendCompositePrompt(
     conversationId: QualifiedId,
     text: string,
     buttons: CompositeButton[],
     options?: CompositePromptOptions,
-  ): Promise<void>;
+  ): Promise<SentMessageRef | undefined>;
+
+  /**
+   * Marks `buttonId` as the answer to the button message `referenceMessageId`. Clients apply it
+   * to the message for every member, so it is sent at most once per message.
+   */
+  sendButtonConfirmation(conversationId: QualifiedId, referenceMessageId: string, buttonId: string): Promise<void>;
 
   /**
    * Runs `work` while the conversation shows the app as typing, and returns its result. The

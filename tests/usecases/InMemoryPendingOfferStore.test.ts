@@ -286,3 +286,89 @@ describe("InMemoryPendingOfferStore: dropped offers", () => {
     expect(store.peek(convA, alice, new Date(expires.getTime() + 1))).toBeNull();
   });
 });
+
+describe("InMemoryPendingOfferStore: button messages", () => {
+  const live = new Date("2026-09-25T10:05:00Z");
+
+  it("finds the requester's live offer without removing it", () => {
+    const store = new InMemoryPendingOfferStore();
+    const o = offer({ id: "offer-1234", messageId: "msg-q" });
+    store.put(o);
+    expect(store.find(convA, alice, live)).toBe(o);
+    expect(store.find(convA, alice, live)).toBe(o);
+    expect(store.find(convA, bob, live)).toBeNull();
+    expect(store.find(convA, alice, expires)).toBeNull();
+  });
+
+  it("remembers who was asked by a button message, also after the offer was taken, dropped or expired", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1" }));
+    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-1", requesterId: alice, answered: false });
+    store.take(convA, alice, live);
+    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-1", requesterId: alice, answered: false });
+
+    store.put(offer({ id: "offer-2", messageId: "msg-2", requesterId: bob }));
+    store.drop(convA, bob, live);
+    expect(store.prompt(convA, "msg-2")?.requesterId).toEqual(bob);
+    expect(store.prompt(convB, "msg-2")).toBeNull();
+    expect(store.prompt(convA, "msg-3")).toBeNull();
+  });
+
+  it("does not record a message for an offer without an ID or a message", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ messageId: "msg-1" }));
+    store.put(offer({ id: "offer-2", requesterId: bob }));
+    expect(store.prompt(convA, "msg-1")).toBeNull();
+  });
+
+  it("marks the message of an answered offer", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1" }));
+    store.markAnswered(convA, "offer-other");
+    expect(store.prompt(convA, "msg-1")?.answered).toBe(false);
+    store.markAnswered(convA, "offer-1");
+    expect(store.prompt(convA, "msg-1")?.answered).toBe(true);
+  });
+
+  it("keeps the answered mark when the same offer is stored again, and resets it for a new offer on the message", () => {
+    const store = new InMemoryPendingOfferStore();
+    const o = offer({ id: "offer-1", messageId: "msg-1" });
+    store.put(o);
+    store.markAnswered(convA, "offer-1");
+    store.put(o);
+    expect(store.prompt(convA, "msg-1")?.answered).toBe(true);
+    store.put(offer({ id: "offer-2", messageId: "msg-1" }));
+    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-2", requesterId: alice, answered: false });
+  });
+
+  it("lets each notice be claimed once per message, also for an unknown message", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1" }));
+    expect(store.claimNotice(convA, "msg-1", "others")).toBe(true);
+    expect(store.claimNotice(convA, "msg-1", "others")).toBe(false);
+    expect(store.claimNotice(convA, "msg-1", "stale")).toBe(true);
+    expect(store.claimNotice(convA, "msg-1", "stale")).toBe(false);
+    expect(store.claimNotice(convA, "unknown", "stale")).toBe(true);
+    expect(store.claimNotice(convA, "unknown", "stale")).toBe(false);
+    expect(store.claimNotice(convB, "unknown", "stale")).toBe(true);
+    // Claiming a notice for an unknown message does not make it known.
+    expect(store.prompt(convA, "unknown")).toBeNull();
+  });
+
+  it("forgets the conversation's button messages when it is cleared", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1" }));
+    store.claimNotice(convA, "msg-1", "stale");
+    store.clearConversation(convA);
+    expect(store.prompt(convA, "msg-1")).toBeNull();
+    expect(store.claimNotice(convA, "msg-1", "stale")).toBe(true);
+  });
+
+  it("remembers a bounded number of button messages per conversation, forgetting the oldest", () => {
+    const store = new InMemoryPendingOfferStore();
+    for (let i = 0; i < 201; i++) store.put(offer({ id: `offer-${i}`, messageId: `msg-${i}` }));
+    expect(store.prompt(convA, "msg-0")).toBeNull();
+    expect(store.prompt(convA, "msg-1")?.offerId).toBe("offer-1");
+    expect(store.prompt(convA, "msg-200")?.offerId).toBe("offer-200");
+  });
+});

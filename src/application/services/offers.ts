@@ -181,6 +181,13 @@ export function formatSupportQuestion(
   summary: string, description: string, requestKind: SupportRequestKind = "fault", part?: PartDetails,
   asset: PartAssetWording = DEFAULT_PART_ASSET,
 ): string {
+  return `${SUPPORT_QUESTION_LEAD[requestKind]}\n${supportQuote(summary, description, requestKind, part, asset).join("\n")}\n\n(yes or no)?`;
+}
+
+/** The quoted request: the summary in bold, a part order's details, and the description unless it repeats the summary. */
+function supportQuote(
+  summary: string, description: string, requestKind: SupportRequestKind, part: PartDetails | undefined, asset: PartAssetWording,
+): string[] {
   const lines = [`> **${summary}**`];
   if (requestKind === "part") {
     for (const { key, label } of partDetailFields(asset)) {
@@ -189,7 +196,60 @@ export function formatSupportQuestion(
     }
   }
   if (collapseLine(description).toLowerCase() !== summary.toLowerCase()) lines.push(...quoteLines(description));
-  return `${SUPPORT_QUESTION_LEAD[requestKind]}\n${lines.join("\n")}\n\n(yes or no)?`;
+  return lines;
+}
+
+/** A request offered as a candidate in a choice: key, summary, and whether it was last known as done. */
+export interface CandidateRequest {
+  key: string;
+  summary: string;
+  done?: boolean;
+}
+
+/** One line per candidate, in the order of the buttons. */
+function candidateLines(candidates: readonly CandidateRequest[]): string[] {
+  return candidates.map(({ key, summary, done }) => `- **${key}** "${collapseLine(summary)}"${done ? " (resolved)" : ""}`);
+}
+
+/**
+ * The choice for a problem that may be one of the conversation's requests: it quotes the request
+ * that "new" would raise, lists the candidates, and quotes what would be added to one of them
+ * when that differs from the description. `hint` names the text answers ("SD-38, new or cancel").
+ */
+export function formatNewOrExistingQuestion(
+  command: Extract<OfferCommand, { kind: "support" }>, addition: string, candidates: readonly CandidateRequest[], hint: string,
+  asset: PartAssetWording = DEFAULT_PART_ASSET,
+): string {
+  const lead = candidates.length === 1
+    ? "This may be the same problem as an existing request. Shall I add it there, or raise a new request?"
+    : "This may be the same problem as one of these requests. Shall I add it to one of them, or raise a new request?";
+  const lines = [lead, ...supportQuote(command.summary, command.description, command.requestKind, command.part, asset), "", ...candidateLines(candidates)];
+  if (collapseLine(addition) !== collapseLine(command.description)) lines.push("", "Added to an existing request, it would say:", ...quoteLines(addition));
+  return `${lines.join("\n")}\n\n(${hint})?`;
+}
+
+/** The choice of the request to resolve, with the closing comment quoted when there is one. */
+export function formatResolveTargetQuestion(candidates: readonly CandidateRequest[], hint: string, comment?: string): string {
+  const quoted = comment ? quoteLines(comment) : [];
+  const lead = quoted.length > 0
+    ? ["Which request shall I resolve with the service desk, adding this comment?", ...quoted]
+    : ["Which request shall I resolve with the service desk?"];
+  return `${[...lead, "", ...candidateLines(candidates)].join("\n")}\n\n(${hint})?`;
+}
+
+/** The choice of the request to add a reply to, with the reply quoted. */
+export function formatReplyTargetQuestion(candidates: readonly CandidateRequest[], hint: string, body: string): string {
+  return `${["Which request shall I add this to?", ...quoteLines(body), "", ...candidateLines(candidates)].join("\n")}\n\n(${hint})?`;
+}
+
+/** The choice of the request a file belongs to; `what` is "this photo" or "this file (<name>)". */
+export function formatAttachTargetQuestion(candidates: readonly CandidateRequest[], hint: string, what: string): string {
+  return `${[`Which request shall I add ${what} to?`, "", ...candidateLines(candidates)].join("\n")}\n\n(${hint})?`;
+}
+
+/** The re-ask after an answer that picks no option of a choice offer; ends with a question. */
+export function formatChooseAgain(hint: string): string {
+  return `I need you to pick one, so I haven't done anything yet. Which one (${hint})?`;
 }
 
 /** The opening of the support confirmation, per kind. */

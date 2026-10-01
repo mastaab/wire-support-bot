@@ -3,8 +3,9 @@ import { ConfirmOffer, classifyConfirmation, isAcknowledgement } from "../../src
 import type { ConfirmOfferHandlers } from "../../src/application/usecases/jira/ConfirmOffer";
 import { InMemoryPendingOfferStore } from "../../src/infrastructure/services/InMemoryPendingOfferStore";
 import { RECENT_DROP_MS } from "../../src/application/services/offers";
-import type { OfferCommand, PendingOfferStore } from "../../src/application/services/offers";
-import type { InboundFile } from "../../src/application/ports/PendingOfferPort";
+import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../src/application/services/offers";
+import type { InboundFile, OfferChoice } from "../../src/application/ports/PendingOfferPort";
+import { addToChoice, cancelChoice, keyChoice, raiseNewChoice } from "../../src/application/services/offerButtons";
 import type { QualifiedId } from "../../src/domain/ids/QualifiedId";
 import type { SentMessageRef } from "../../src/application/ports/WireOutboundPort";
 
@@ -68,6 +69,7 @@ function setup(options: { store?: PendingOfferStore; clock?: () => Date } = {}) 
     sendPlainText: vi.fn(async (_c: QualifiedId, text: string): Promise<SentMessageRef | undefined> => { sent.push(text); return undefined; }),
     getUserProfile: vi.fn(),
     sendCompositePrompt: vi.fn(),
+    sendButtonConfirmation: vi.fn(),
     sendReaction: vi.fn(),
     sendFile: vi.fn(),
     withTyping: <T>(_c: QualifiedId, work: () => Promise<T>): Promise<T> => work(),
@@ -89,8 +91,9 @@ function expectNothingDispatched(handlers: ReturnType<typeof setup>["handlers"])
 describe("ConfirmOffer", () => {
   it("returns false for a non-confirmation without touching the store", async () => {
     const store = {
-      put: vi.fn(), take: vi.fn(), has: vi.fn(), peek: vi.fn(), clearConversation: vi.fn(),
+      put: vi.fn(), take: vi.fn(), has: vi.fn(), peek: vi.fn(), find: vi.fn(), clearConversation: vi.fn(),
       drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(),
+      prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
     };
     const { handlers, wire, useCase } = setup({ store });
 
@@ -98,6 +101,8 @@ describe("ConfirmOffer", () => {
 
     expect(store.has).not.toHaveBeenCalled();
     expect(store.take).not.toHaveBeenCalled();
+    expect(store.put).not.toHaveBeenCalled();
+    expect(store.markAnswered).not.toHaveBeenCalled();
     expectNothingDispatched(handlers);
     expect(wire.sendPlainText).not.toHaveBeenCalled();
   });
@@ -520,5 +525,154 @@ describe("ConfirmOffer", () => {
     expect(await useCase.execute({ ...input, text: "yes" })).toBe(false);
 
     expectNothingDispatched(handlers);
+  });
+});
+
+describe("ConfirmOffer: buttons and choices", () => {
+  const PART_MISSING: OfferCommand = { kind: "support", requestKind: "part", summary: "Paper tray", description: "Order a paper tray.", part: { part: "paper tray" } };
+  const replyTo = (key: string): OfferCommand => ({ kind: "reply", issueKey: key, body: "Printer jams again." });
+  const NEW_SUPPORT: OfferCommand = { kind: "support", requestKind: "fault", summary: "Printer jams", description: "Printer jams again." };
+  const newOrExisting = (): OfferChoice[] => [addToChoice("SD-38", replyTo("SD-38")), addToChoice("SD-40", replyTo("SD-40")), raiseNewChoice(NEW_SUPPORT), cancelChoice()];
+  const resolveChoices = (): OfferChoice[] => [keyChoice("SD-40", { kind: "resolve", issueKey: "SD-40" }), keyChoice("SD-41", { kind: "resolve", issueKey: "SD-41" }), cancelChoice()];
+
+  function withOffer(command: OfferCommand, extra: Partial<PendingOffer> = {}) {
+    const ctx = setup();
+    ctx.store.put({
+      command, conversationId: convId, requesterId: alice, createdAt: now, expiresAt: new Date(now.getTime() + 10 * 60 * 1000),
+      id: "offer-1234", messageId: "msg-q", ...extra,
+    });
+    return ctx;
+  }
+  const click = (index: number, offerId = "offer-1234") => ({ conversationId: convId, requesterId: alice, requesterName: "Alice", offerId, index });
+
+  it("runs a yes-or-no offer for [Yes] like a text yes, with all checks of the use case, and marks the message answered", async () => {
+    const { store, handlers, useCase } = withOffer(REPLY);
+    expect(await useCase.choose(click(0))).toBe(true);
+    expect(handlers.replyToServiceDesk.execute).toHaveBeenCalledWith({
+      reference: "SD-6", body: "It still drops after the reset.", conversationId: convId, actorId: alice, replyToMessageId: undefined,
+    });
+    expect(store.has(convId, alice, now)).toBe(false);
+    expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
+  });
+
+  it("declines a yes-or-no offer for [No] like a text no", async () => {
+    const { store, handlers, sent, useCase } = withOffer(SUPPORT);
+    expect(await useCase.choose(click(1))).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent).toEqual(["Understood, I won't."]);
+    expect(store.has(convId, alice, now)).toBe(false);
+  });
+
+  it("does nothing for a button of another offer, an index beyond the options, another member or no offer", async () => {
+    for (const [label, input] of [
+      ["another offer", click(0, "offer-9999")],
+      ["no such option", click(2)],
+      ["another member", { ...click(0), requesterId: bob }],
+    ] as const) {
+      const { store, handlers, sent, useCase } = withOffer(SUPPORT);
+      expect(await useCase.choose(input), label).toBe(false);
+      expectNothingDispatched(handlers);
+      expect(sent).toEqual([]);
+      expect(store.has(convId, alice, now)).toBe(true);
+      expect(store.prompt(convId, "msg-q")?.answered).toBe(false);
+    }
+    const { handlers, useCase } = setup();
+    expect(await useCase.choose(click(0))).toBe(false);
+    expectNothingDispatched(handlers);
+  });
+
+  it("does nothing for an expired offer", async () => {
+    const { handlers, useCase } = withOffer(SUPPORT, { expiresAt: now });
+    expect(await useCase.choose(click(0))).toBe(false);
+    expectNothingDispatched(handlers);
+  });
+
+  it("runs the chosen target of a choice offer", async () => {
+    const { handlers, store, useCase } = withOffer(NEW_SUPPORT, { choices: newOrExisting() });
+    expect(await useCase.choose(click(1))).toBe(true);
+    expect(handlers.replyToServiceDesk.execute).toHaveBeenCalledWith(expect.objectContaining({ reference: "SD-40", body: "Printer jams again." }));
+    expect(handlers.raiseSupportRequest.execute).not.toHaveBeenCalled();
+    expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
+  });
+
+  it("raises the new request for [Raise new request] with the requester's name", async () => {
+    const { handlers, useCase } = withOffer(NEW_SUPPORT, { choices: newOrExisting() });
+    expect(await useCase.choose(click(2))).toBe(true);
+    expect(handlers.raiseSupportRequest.execute).toHaveBeenCalledWith(expect.objectContaining({
+      summary: "Printer jams", requesterId: alice, requesterName: "Alice", requestKind: "fault",
+    }));
+    expect(handlers.replyToServiceDesk.execute).not.toHaveBeenCalled();
+  });
+
+  it("declines a choice offer for [Cancel]", async () => {
+    const { handlers, sent, useCase } = withOffer(NEW_SUPPORT, { choices: newOrExisting() });
+    expect(await useCase.choose(click(3))).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent).toEqual(["Understood, I won't."]);
+  });
+
+  it("asks for the missing essentials when a chosen new part order is incomplete, and keeps it for amending", async () => {
+    const choices = [addToChoice("SD-38", replyTo("SD-38")), raiseNewChoice(PART_MISSING), cancelChoice()];
+    const { handlers, sent, store, useCase } = withOffer(PART_MISSING, { choices });
+    expect(await useCase.choose(click(1))).toBe(true);
+    expectNothingDispatched(handlers);
+    expect(sent).toEqual(["To order it I need the item the part is for (for example a serial number), the quantity and the delivery location. What are they?"]);
+    const kept = store.find(convId, alice, now);
+    expect(kept?.command).toEqual(PART_MISSING);
+    expect(kept?.choices).toBeUndefined();
+    expect(kept?.id).toBeUndefined();
+  });
+
+  describe("text answers to a choice", () => {
+    it.each<[string, string]>([["SD-41", "SD-41"], ["sd-40", "SD-40"], ["2", "SD-41"], ["1.", "SD-40"]])("runs the request picked by %j", async (text, key) => {
+      const { handlers, store, useCase } = withOffer({ kind: "resolve", issueKey: "SD-40" }, { choices: resolveChoices() });
+      expect(await useCase.execute({ ...input, text })).toBe(true);
+      expect(handlers.resolveSupportRequest.execute).toHaveBeenCalledWith(expect.objectContaining({ issueKey: key, replyToMessageId: "msg-9" }));
+      expect(store.has(convId, alice, now)).toBe(false);
+      expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
+    });
+
+    it.each(["new", "New request", "3"])("raises the new request for %j", async (text) => {
+      const { handlers, useCase } = withOffer(NEW_SUPPORT, { choices: newOrExisting() });
+      expect(await useCase.execute({ ...input, text })).toBe(true);
+      expect(handlers.raiseSupportRequest.execute).toHaveBeenCalledOnce();
+    });
+
+    it.each(["cancel", "no", "4"])("declines for %j", async (text) => {
+      const { handlers, sent, useCase } = withOffer(NEW_SUPPORT, { choices: newOrExisting() });
+      expect(await useCase.execute({ ...input, text })).toBe(true);
+      expectNothingDispatched(handlers);
+      expect(sent).toEqual(["Understood, I won't."]);
+    });
+
+    it.each(["yes", "ok", "sure"])("asks again for %j and keeps the offer", async (text) => {
+      const { handlers, sent, store, useCase } = withOffer(NEW_SUPPORT, { choices: newOrExisting() });
+      expect(await useCase.execute({ ...input, text })).toBe(true);
+      expectNothingDispatched(handlers);
+      expect(sent).toEqual(["I need you to pick one, so I haven't done anything yet. Which one (SD-38, SD-40, new or cancel)?"]);
+      expect(store.find(convId, alice, now)?.id).toBe("offer-1234");
+      expect(store.prompt(convId, "msg-q")?.answered).toBe(false);
+    });
+
+    it.each(["SD-99", "5", "the printer is on floor 2"])("is not an answer: %j", async (text) => {
+      const { handlers, sent, store, useCase } = withOffer(NEW_SUPPORT, { choices: newOrExisting() });
+      expect(await useCase.execute({ ...input, text })).toBe(false);
+      expectNothingDispatched(handlers);
+      expect(sent).toEqual([]);
+      expect(store.has(convId, alice, now)).toBe(true);
+    });
+  });
+
+  it("marks the button message answered for a text yes or no to a yes-or-no offer, but not for an acknowledgement", async () => {
+    const ack = withOffer(SUPPORT);
+    expect(await ack.useCase.execute({ ...input, text: "ok" })).toBe(true);
+    expect(ack.store.prompt(convId, "msg-q")?.answered).toBe(false);
+    expect(ack.store.find(convId, alice, now)?.id).toBe("offer-1234");
+
+    for (const text of ["yes", "no"]) {
+      const { store, useCase } = withOffer(SUPPORT);
+      expect(await useCase.execute({ ...input, text })).toBe(true);
+      expect(store.prompt(convId, "msg-q")?.answered).toBe(true);
+    }
   });
 });

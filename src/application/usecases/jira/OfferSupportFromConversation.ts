@@ -5,14 +5,19 @@ import { DEFAULT_PART_ASSET, PART_DETAIL_MAX, SUPPORT_REQUEST_KINDS, SUPPORT_SUM
 import type { PartAssetWording, PartDetails, SupportRequest, SupportRequestKind } from "../../../domain/entities/SupportRequest";
 import type { SupportRequestRepository } from "../../../domain/repositories/SupportRequestRepository";
 import type { MessageCategory } from "../../ports/ClassifierPort";
-import type { OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
+import type { OfferChoice, OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
 import type { OpenRequestRef, SupportDraft, SupportTriagePort } from "../../ports/SupportTriagePort";
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
 import {
   OFFER_DESCRIPTION_MAX, OFFER_TTL_MS, PART_DETAIL_KEYS, REPLY_BODY_MAX,
-  formatMissingPartsQuestion, formatReplyQuestion, formatResolveQuestion, formatSupportQuestion, missingPartDetails,
+  formatMissingPartsQuestion, formatNewOrExistingQuestion, formatReplyQuestion, formatReplyTargetQuestion, formatResolveQuestion,
+  formatResolveTargetQuestion, formatSupportQuestion, missingPartDetails,
 } from "../../services/offers";
+import type { CandidateRequest } from "../../services/offers";
+import {
+  OFFER_CANDIDATES_MAX, addToChoice, cancelChoice, choiceHint, keyChoice, newOfferId, raiseNewChoice, sendOfferPrompt,
+} from "../../services/offerButtons";
 import type { GetIssueStatus } from "./GetIssueStatus";
 import { rememberLastMessage } from "./supportRequestMarkers";
 import { statedPartDetails } from "../../services/partDetails";
@@ -50,6 +55,9 @@ const OPEN_REQUESTS_MAX = 20;
 
 /** How recently the speaker must have raised a request for a message without its own subject to continue it. */
 const RECENTLY_RAISED_MS = 60 * 60 * 1000;
+
+/** How long a done request still counts as a candidate for a new problem that may be the same. */
+const RECENTLY_DONE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Categories that may add to or resolve an open request, but never raise a new one. */
 const MAY_ADD_CATEGORIES: readonly MessageCategory[] = ["update", "blocker"];
@@ -103,7 +111,7 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
    * newest first, each marked when the speaker raised it within the last hour; null when the
    * read failed.
    */
-  private async openRequests(conversationId: QualifiedId, speakerId: QualifiedId): Promise<OpenRequestRef[] | null> {
+  private async openRequests(conversationId: QualifiedId, speakerId: QualifiedId): Promise<OpenRequest[] | null> {
     const projectKey = this.getIssueStatus.projectKey;
     const recentSince = this.now().getTime() - RECENTLY_RAISED_MS;
     try {
@@ -120,6 +128,7 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
         key: r.key,
         summary: r.summary,
         raisedBySpeakerRecently: r.key === newestBySpeaker?.key,
+        mine: sameQualifiedId(r.requesterId, speakerId),
       }));
     } catch (err) {
       this.logger?.warn("OfferSupportFromConversation: listing open requests failed", { err: errorName(err) });
@@ -128,10 +137,10 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
   }
 
   /** The open request the question asks about, or null. A key the model invents is ignored. */
-  private async matchStatus(text: string, open: readonly OpenRequestRef[]): Promise<string | null> {
+  private async matchStatus(text: string, open: readonly OpenRequest[]): Promise<string | null> {
     let key: string | null;
     try {
-      key = await this.triage.matchStatusQuestion(text, open);
+      key = await this.triage.matchStatusQuestion(text, open.map(toRef));
     } catch (err) {
       this.logger?.warn("OfferSupportFromConversation: matchStatusQuestion failed", { err: errorName(err) });
       return null;
@@ -161,13 +170,13 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
   }
 
   /** True when it sent an offer or a missing-details question. */
-  private async offerSupport(input: OfferSupportInput, open: readonly OpenRequestRef[], additionOnly: boolean): Promise<boolean> {
+  private async offerSupport(input: OfferSupportInput, open: readonly OpenRequest[], additionOnly: boolean): Promise<boolean> {
     // One live offer per speaker: a new one would silently replace what they may be about to confirm.
     if (this.offers.has(input.conversationId, input.senderId)) return false;
 
     let draft: SupportDraft | null;
     try {
-      draft = await this.triage.draftRequest(input.text, open);
+      draft = await this.triage.draftRequest(input.text, open.map(toRef));
     } catch (err) {
       this.logger?.warn("OfferSupportFromConversation: draftRequest failed", { err: errorName(err) });
       return false;
@@ -189,50 +198,120 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
         this.logger?.debug("OfferSupportFromConversation: closing comment outside the offer bounds", { key: resolving.key });
         return false;
       }
-      return this.offer(
-        input,
-        formatResolveQuestion(resolving.key, resolving.summary, comment || undefined),
-        comment ? { kind: "resolve", issueKey: resolving.key, comment } : { kind: "resolve", issueKey: resolving.key },
-      );
+      const resolveCommand = (key: string): OfferCommand => (comment ? { kind: "resolve", issueKey: key, comment } : { kind: "resolve", issueKey: key });
+      // Without a key in the message, another open request may be the one meant: the speaker picks.
+      const targets = this.targetCandidates(input.text, resolving, open);
+      if (targets.length > 1) {
+        const choices = [...targets.map((r) => keyChoice(r.key, resolveCommand(r.key))), cancelChoice()];
+        return this.offer(input, formatResolveTargetQuestion(targets, choiceHint(choices), comment || undefined), resolveCommand(resolving.key), choices);
+      }
+      return this.offer(input, formatResolveQuestion(resolving.key, resolving.summary, comment || undefined), resolveCommand(resolving.key));
     }
 
     const duplicateOf = typeof draft.duplicateOf === "string" ? draft.duplicateOf.trim().toUpperCase() : "";
     const covering = duplicateOf ? open.find((r) => r.key === duplicateOf) : undefined;
-    if (covering) {
-      const body = typeof draft.addition === "string" ? draft.addition.trim() : "";
-      if (!body || body.length > REPLY_BODY_MAX) {
-        this.logger?.debug("OfferSupportFromConversation: covered by an open request", { key: covering.key, addition: body.length > 0 });
+    const addition = typeof draft.addition === "string" ? draft.addition.trim() : "";
+    const command = additionOnly ? null : toSupportCommand(draft, input.text);
+
+    // A new problem that may be one of the conversation's requests: the speaker picks between
+    // adding to one of them and raising a new one, instead of the model guessing.
+    if (command) {
+      const candidates = await this.sameProblemCandidates(input, command, duplicateOf);
+      if (candidates === null) return false;
+      if (candidates.length > 0) {
+        const body = addition && addition.length <= REPLY_BODY_MAX ? addition : command.description;
+        const choices = [
+          ...candidates.map((r) => addToChoice(r.key, { kind: "reply", issueKey: r.key, body })),
+          raiseNewChoice(command),
+          cancelChoice(),
+        ];
+        return this.offer(input, formatNewOrExistingQuestion(command, body, candidates, choiceHint(choices), this.partAsset), command, choices);
+      }
+    }
+
+    if (covering && (additionOnly || !command)) {
+      if (!addition || addition.length > REPLY_BODY_MAX) {
+        this.logger?.debug("OfferSupportFromConversation: covered by an open request", { key: covering.key, addition: addition.length > 0 });
         return false;
       }
-      return this.offer(input, formatReplyQuestion(covering.key, covering.summary, body), { kind: "reply", issueKey: covering.key, body });
+      const replyCommand = (key: string): OfferCommand => ({ kind: "reply", issueKey: key, body: addition });
+      const targets = this.targetCandidates(input.text, covering, open);
+      if (targets.length > 1) {
+        const choices = [...targets.map((r) => keyChoice(r.key, replyCommand(r.key))), cancelChoice()];
+        return this.offer(input, formatReplyTargetQuestion(targets, choiceHint(choices), addition), replyCommand(covering.key), choices);
+      }
+      return this.offer(input, formatReplyQuestion(covering.key, covering.summary, addition), replyCommand(covering.key));
     }
     if (additionOnly) return false;
-    const command = toSupportCommand(draft, input.text);
     if (!command) {
       this.logger?.debug("OfferSupportFromConversation: draft outside the offer bounds");
       return false;
     }
     // A part order without all its essentials asks for what is missing instead. The incomplete
     // order is stored like any offer: the speaker's answer amends it, and it cannot be confirmed
-    // until it is complete.
+    // until it is complete. That question asks for details, not for a yes, so it has no buttons.
     const missing = missingPartDetails(command);
-    const question = missing.length > 0
-      ? formatMissingPartsQuestion(missing, this.partAsset)
-      : formatSupportQuestion(command.summary, command.description, command.requestKind, command.part, this.partAsset);
-    return this.offer(input, question, command);
+    if (missing.length > 0) return this.offer(input, formatMissingPartsQuestion(missing, this.partAsset), command, undefined, false);
+    return this.offer(input, formatSupportQuestion(command.summary, command.description, command.requestKind, command.part, this.partAsset), command);
+  }
+
+  /**
+   * The open requests a resolve or an addition may mean when the message names no request key:
+   * the model's pick first, then the speaker's other requests, then the rest, newest first, at
+   * most `OFFER_CANDIDATES_MAX`. Only the pick when the message names a key of the project.
+   */
+  private targetCandidates(text: string, pick: OpenRequest, open: readonly OpenRequest[]): OpenRequest[] {
+    if (namesProjectKey(text, this.getIssueStatus.projectKey)) return [pick];
+    const others = open.filter((r) => r.key !== pick.key);
+    return [pick, ...others.filter((r) => r.mine), ...others.filter((r) => !r.mine)].slice(0, OFFER_CANDIDATES_MAX);
+  }
+
+  /**
+   * Requests of this conversation that may describe the same problem as the draft: open ones and
+   * those done within `RECENTLY_DONE_MS`, filtered by code. The model's `duplicateOf` counts only
+   * when it is one of them and comes first; the others share a significant word with the draft's
+   * summary. At most `OFFER_CANDIDATES_MAX`, newest first; null when the read failed.
+   */
+  private async sameProblemCandidates(
+    input: OfferSupportInput, command: Extract<OfferCommand, { kind: "support" }>, duplicateOf: string,
+  ): Promise<CandidateRequest[] | null> {
+    const projectKey = this.getIssueStatus.projectKey;
+    const doneSince = this.now().getTime() - RECENTLY_DONE_MS;
+    let records: SupportRequest[];
+    try {
+      records = await this.requests.listByConversation(input.conversationId, { limit: OPEN_REQUESTS_MAX });
+    } catch (err) {
+      this.logger?.warn("OfferSupportFromConversation: listing requests failed", { err: errorName(err) });
+      return null;
+    }
+    const known = records.filter((r) => !r.deleted && sameQualifiedId(r.conversationId, input.conversationId) && isKeyInProject(r.key, projectKey)
+      && (r.statusCategory !== "done" || r.updatedAt.getTime() >= doneSince));
+    const words = significantWords(command.summary);
+    const hinted = known.find((r) => r.key === duplicateOf);
+    const similar = known.filter((r) => r !== hinted && [...significantWords(r.summary)].some((word) => words.has(word)));
+    return [...(hinted ? [hinted] : []), ...similar].slice(0, OFFER_CANDIDATES_MAX)
+      .map((r) => ({ key: r.key, summary: r.summary, done: r.statusCategory === "done" }));
   }
 
   /**
    * Sends the code-written question as a native reply to the source message, then stores the
-   * offer for the speaker. True when the question was sent, even if the work was cancelled during
-   * the send and the offer is not stored. A reply or resolve offer names an open request of this
-   * conversation, so it becomes that request's last message, quoted by the next watch update.
+   * offer for the speaker. An offer question goes with buttons ([Yes] [No], or one per option of
+   * a choice); `withButtons` is false for a question that asks for details instead. True when the
+   * question was sent, even if the work was cancelled during the send and the offer is not stored.
+   * A yes-or-no reply or resolve offer names an open request of this conversation, so it becomes
+   * that request's last message, quoted by the next watch update; a choice names several and is
+   * not stored as any one's last message.
    */
-  private async offer(input: OfferSupportInput, question: string, command: OfferCommand): Promise<boolean> {
+  private async offer(
+    input: OfferSupportInput, question: string, command: OfferCommand, choices?: OfferChoice[], withButtons = true,
+  ): Promise<boolean> {
     if (input.signal?.aborted || this.offers.has(input.conversationId, input.senderId)) return false;
+    const offerId = withButtons ? newOfferId() : undefined;
     let sent: SentMessageRef | undefined;
     try {
-      sent = await this.wireOutbound.sendPlainText(input.conversationId, question, { replyToMessageId: input.messageId });
+      sent = offerId
+        ? await sendOfferPrompt(this.wireOutbound, input.conversationId, question, offerId, choices, input.messageId)
+        : await this.wireOutbound.sendPlainText(input.conversationId, question, { replyToMessageId: input.messageId });
     } catch (err) {
       this.logger?.warn("OfferSupportFromConversation: sending the offer failed", { err: errorName(err) });
       return false;
@@ -247,14 +326,52 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
         requesterId: input.senderId,
         createdAt: now,
         expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
+        ...(offerId ? { id: offerId } : {}),
+        ...(offerId && sent ? { messageId: sent.messageId } : {}),
+        ...(choices ? { choices } : {}),
       });
     }
     // The question is in the channel either way; only its ID and hash are kept.
-    if (command.kind !== "support") {
+    if (command.kind !== "support" && !choices) {
       await rememberLastMessage(this.requests, command.issueKey, sent, "OfferSupportFromConversation", this.logger);
     }
     return true;
   }
+}
+
+/** An open request of the conversation as passive help uses it: what the model sees, and whether the speaker raised it. */
+interface OpenRequest extends OpenRequestRef {
+  mine: boolean;
+}
+
+/** What the model sees of an open request: key, summary and the recent mark, never the requester. */
+function toRef(request: OpenRequest): OpenRequestRef {
+  return request.raisedBySpeakerRecently === undefined
+    ? { key: request.key, summary: request.summary }
+    : { key: request.key, summary: request.summary, raisedBySpeakerRecently: request.raisedBySpeakerRecently };
+}
+
+/** True when the text names a key of the project ("SD-41"). */
+function namesProjectKey(text: string, projectKey: string): boolean {
+  const escaped = projectKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}-\\d+\\b`, "i").test(text);
+}
+
+/** Words too common to tie two requests together. */
+const COMMON_WORDS: ReadonlySet<string> = new Set([
+  "about", "after", "again", "also", "always", "anymore", "been", "before", "being", "could", "does", "doesn't", "done", "down",
+  "every", "from", "have", "having", "into", "just", "keeps", "more", "much", "need", "needs", "never", "only", "other",
+  "over", "please", "really", "same", "should", "since", "some", "still", "than", "that", "their", "them", "then", "there",
+  "these", "they", "this", "today", "very", "want", "wants", "were", "what", "when", "where", "which", "while", "will",
+  "with", "won't", "work", "working", "works", "would", "your", "request", "issue", "problem", "ticket",
+]);
+
+/** The words of a summary that may tie it to another request: four letters or more, not common, without a plural "s". */
+function significantWords(text: string): Set<string> {
+  const words = text.toLowerCase().split(/[^\p{L}\p{N}']+/u)
+    .filter((word) => word.length >= 4 && !COMMON_WORDS.has(word))
+    .map((word) => (word.length > 4 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word));
+  return new Set(words);
 }
 
 /** The draft as a `support` command within the offer bounds, or null. */

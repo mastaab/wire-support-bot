@@ -1,5 +1,7 @@
 import type { QualifiedId } from "../../domain/ids/QualifiedId";
-import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../application/ports/PendingOfferPort";
+import type {
+  OfferCommand, OfferPrompt, OfferPromptNotice, PendingOffer, PendingOfferStore,
+} from "../../application/ports/PendingOfferPort";
 import { RECENT_DROP_MS } from "../../application/services/offers";
 
 function key(q: QualifiedId): string {
@@ -12,17 +14,31 @@ interface DroppedOffer {
   droppedAt: Date;
 }
 
+/** A button message the bot sent for an offer, and the notices it has had. */
+interface PromptEntry {
+  /** Null for a message the store never knew (a notice was claimed for it). */
+  prompt: OfferPrompt | null;
+  notices: Set<OfferPromptNotice>;
+}
+
+/** Button messages remembered per conversation; the oldest is forgotten first. */
+const PROMPTS_PER_CONVERSATION = 200;
+
 /**
  * Pending offers in process memory, one per qualified requester per qualified conversation.
  * Offers are short-lived and a restart simply drops them, so nothing is persisted. A dropped
  * or expired offer is remembered for `RECENT_DROP_MS`, so a late "yes" can be answered; an
- * offer consumed by `take` is not remembered.
+ * offer consumed by `take` is not remembered. The button message of an offer stored with an ID
+ * and a message is remembered longer (bounded per conversation), with who was asked, whether the
+ * offer was answered and which one-off notices it had, so a late click gets the right answer once.
  */
 export class InMemoryPendingOfferStore implements PendingOfferStore {
   /** Conversation key to (requester key to offer). */
   private readonly offers = new Map<string, Map<string, PendingOffer>>();
   /** Conversation key to (requester key to recently dropped offer). */
   private readonly dropped = new Map<string, Map<string, DroppedOffer>>();
+  /** Conversation key to (button message ID to what is known about it). */
+  private readonly prompts = new Map<string, Map<string, PromptEntry>>();
 
   put(offer: PendingOffer): void {
     // Measured by the caller's clock, like every other method, not the system clock.
@@ -32,6 +48,34 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     const byRequester = this.offers.get(conversationKey) ?? new Map<string, PendingOffer>();
     byRequester.set(key(offer.requesterId), offer);
     this.offers.set(conversationKey, byRequester);
+    if (offer.id && offer.messageId) {
+      const entry = this.promptEntry(conversationKey, offer.messageId);
+      // A re-stored offer (asked again after an acknowledgement) keeps what its message had.
+      if (entry.prompt?.offerId !== offer.id) entry.prompt = { offerId: offer.id, requesterId: offer.requesterId, answered: false };
+    }
+  }
+
+  find(conversationId: QualifiedId, requesterId: QualifiedId, now: Date = new Date()): PendingOffer | null {
+    this.purgeExpired(now);
+    return this.liveOffer(conversationId, requesterId, now);
+  }
+
+  prompt(conversationId: QualifiedId, messageId: string): OfferPrompt | null {
+    const prompt = this.prompts.get(key(conversationId))?.get(messageId)?.prompt;
+    return prompt ? { ...prompt } : null;
+  }
+
+  markAnswered(conversationId: QualifiedId, offerId: string): void {
+    for (const entry of this.prompts.get(key(conversationId))?.values() ?? []) {
+      if (entry.prompt?.offerId === offerId) entry.prompt.answered = true;
+    }
+  }
+
+  claimNotice(conversationId: QualifiedId, messageId: string, notice: OfferPromptNotice): boolean {
+    const entry = this.promptEntry(key(conversationId), messageId);
+    if (entry.notices.has(notice)) return false;
+    entry.notices.add(notice);
+    return true;
   }
 
   take(conversationId: QualifiedId, requesterId: QualifiedId, now: Date = new Date()): PendingOffer | null {
@@ -54,6 +98,7 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
   clearConversation(conversationId: QualifiedId): void {
     this.offers.delete(key(conversationId));
     this.dropped.delete(key(conversationId));
+    this.prompts.delete(key(conversationId));
   }
 
   drop(conversationId: QualifiedId, requesterId: QualifiedId, now: Date = new Date()): OfferCommand | null {
@@ -87,6 +132,19 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     this.remove(conversationId, requesterId);
     this.remember(conversationId, requesterId, offer.command, offer.expiresAt);
     return null;
+  }
+
+  /** The entry for a button message, created when absent; bounded per conversation. */
+  private promptEntry(conversationKey: string, messageId: string): PromptEntry {
+    const byMessage = this.prompts.get(conversationKey) ?? new Map<string, PromptEntry>();
+    this.prompts.set(conversationKey, byMessage);
+    let entry = byMessage.get(messageId);
+    if (!entry) {
+      entry = { prompt: null, notices: new Set() };
+      byMessage.set(messageId, entry);
+      if (byMessage.size > PROMPTS_PER_CONVERSATION) byMessage.delete(byMessage.keys().next().value!);
+    }
+    return entry;
   }
 
   private remove(conversationId: QualifiedId, requesterId: QualifiedId): void {

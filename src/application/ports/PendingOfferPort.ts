@@ -35,14 +35,55 @@ export interface InboundFile {
   sizeInBytes: number;
 }
 
+/**
+ * One option of a choice offer, in button order. Code builds every option from validated data
+ * (stored requests of the conversation, the drafted command); model output never adds one.
+ */
+export interface OfferChoice {
+  /** The button label. */
+  label: string;
+  /**
+   * Text answers that pick this option, lower case, besides the option's number. The first one
+   * is shown in the question, for example "SD-41", "new" or "cancel".
+   */
+  answers: readonly string[];
+  /** What the option runs once picked; null declines the offer. */
+  command: OfferCommand | null;
+}
+
 export interface PendingOffer {
+  /**
+   * For a yes-or-no offer, what a yes runs. For a choice offer, the option the bot would
+   * otherwise have offered, used only to name the offer after it was dropped.
+   */
   command: OfferCommand;
   conversationId: QualifiedId;
   /** Only this member's confirmation counts. */
   requesterId: QualifiedId;
   createdAt: Date;
   expiresAt: Date;
+  /** Opaque ID; the offer's buttons carry it with the option's index. Absent for an offer asked without buttons. */
+  id?: string;
+  /** The bot's button message for this offer; a click is matched by it. Absent when the transport returned none. */
+  messageId?: string;
+  /** A choice between options (targets, new, cancel); absent for a yes-or-no offer. */
+  choices?: OfferChoice[];
 }
+
+/** What is remembered about an offer's button message, also after the offer itself has gone. */
+export interface OfferPrompt {
+  offerId: string;
+  /** The member who was asked; only their click counts. */
+  requesterId: QualifiedId;
+  /** The offer was decided, by a click or a text answer. */
+  answered: boolean;
+}
+
+/**
+ * The one-off texts a button message can get: "others" tells another member who may answer,
+ * "stale" says that the question is answered or expired.
+ */
+export type OfferPromptNotice = "others" | "stale";
 
 export interface PendingOfferStore {
   /** Stores the offer, replacing any pending one for the same requester in the conversation. */
@@ -53,6 +94,20 @@ export interface PendingOfferStore {
   has(conversationId: QualifiedId, requesterId: QualifiedId, now?: Date): boolean;
   /** The requester's unexpired offer's command, without removing it; null when there is none. */
   peek(conversationId: QualifiedId, requesterId: QualifiedId, now?: Date): OfferCommand | null;
+  /** The requester's unexpired offer, without removing it; null when there is none. */
+  find(conversationId: QualifiedId, requesterId: QualifiedId, now?: Date): PendingOffer | null;
+  /**
+   * The button message `messageId` of an offer stored with an ID and a message, while it is
+   * remembered (bounded, also after the offer was taken, dropped or expired); null otherwise.
+   */
+  prompt(conversationId: QualifiedId, messageId: string): OfferPrompt | null;
+  /** Records that the offer with this ID was decided, so a later click on its message is answered as stale. */
+  markAnswered(conversationId: QualifiedId, offerId: string): void;
+  /**
+   * True the first time a notice of this kind is claimed for the message, also for a message
+   * the store does not know; false afterwards, so each notice is sent at most once per message.
+   */
+  claimNotice(conversationId: QualifiedId, messageId: string, notice: OfferPromptNotice): boolean;
   /** Drops every pending offer in the conversation, e.g. when the bot leaves it. */
   clearConversation(conversationId: QualifiedId): void;
   /**

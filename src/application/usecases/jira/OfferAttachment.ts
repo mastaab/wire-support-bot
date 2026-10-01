@@ -2,11 +2,12 @@ import type { SupportRequest } from "../../../domain/entities/SupportRequest";
 import { sameQualifiedId } from "../../../domain/ids/QualifiedId";
 import type { QualifiedId } from "../../../domain/ids/QualifiedId";
 import type { SupportRequestRepository } from "../../../domain/repositories/SupportRequestRepository";
-import type { InboundFile, PendingOfferStore } from "../../ports/PendingOfferPort";
+import type { InboundFile, OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
-import { formatAttachQuestion } from "../../services/attachments";
-import { OFFER_TTL_MS } from "../../services/offers";
+import { describeFile, formatAttachQuestion } from "../../services/attachments";
+import { OFFER_TTL_MS, formatAttachTargetQuestion } from "../../services/offers";
+import { OFFER_CANDIDATES_MAX, choiceHint, doNotAttachChoice, keyChoice, newOfferId, sendOfferPrompt } from "../../services/offerButtons";
 import { rememberLastMessage } from "./supportRequestMarkers";
 
 /** Input of `OfferAttachment`. */
@@ -21,14 +22,16 @@ export interface OfferAttachmentInput {
 }
 
 /**
- * Offers to attach a file posted in the channel to the open support request it most likely
- * belongs to: the one with the latest bot message about it (`lastMessageAt`), else the newest
- * open one. Stores an `attach` offer for the sender and replies to the file with the question
- * (`formatAttachQuestion`), then stores the reply as the request's last message. Does nothing
- * without an open request, or while the sender already has a pending offer. True when it offered.
+ * Offers to attach a file posted in the channel to an open support request. When the sender has
+ * more than one open request of their own in the conversation, they choose between them (at most
+ * three, likeliest first) or decline; otherwise the offer names the request the file most likely
+ * belongs to: the one with the latest bot message about it (`lastMessageAt`), else the newest open
+ * one, and that question is stored as the request's last message. Stores an `attach` offer for the
+ * sender and replies to the file with the question and its buttons. Does nothing without an open
+ * request, or while the sender already has a pending offer. True when it offered.
  */
 /** The reply to a file while the sender still has a question to answer. */
-export const ANSWER_FIRST = "Please answer my question above first (yes or no), then post the file again.";
+export const ANSWER_FIRST = "Please answer my question above first, then post the file again.";
 
 export class OfferAttachment {
   constructor(
@@ -61,14 +64,20 @@ export class OfferAttachment {
     }
     const target = pickTarget(open, input.conversationId);
     if (!target) return false;
+    // With more than one open request of their own, the sender picks the request instead of the
+    // bot taking the likeliest one.
+    const own = ownTargets(open, input.conversationId, input.senderId);
+    const attach = (key: string): OfferCommand => ({ kind: "attach", issueKey: key, file: input.file });
+    const choices = own.length > 1 ? [...own.map((r) => keyChoice(r.key, attach(r.key))), doNotAttachChoice()] : undefined;
+    const command = attach(choices ? own[0]!.key : target.key);
+    const question = choices
+      ? formatAttachTargetQuestion(own, choiceHint(choices), describeFile(input.file))
+      : formatAttachQuestion(target.key, target.summary, input.file);
 
+    const offerId = newOfferId();
     let sent: SentMessageRef | undefined;
     try {
-      sent = await this.wireOutbound.sendPlainText(
-        input.conversationId,
-        formatAttachQuestion(target.key, target.summary, input.file),
-        { replyToMessageId: input.messageId },
-      );
+      sent = await sendOfferPrompt(this.wireOutbound, input.conversationId, question, offerId, choices, input.messageId);
     } catch (err) {
       this.logger?.warn("OfferAttachment: sending the offer failed", { err: errorName(err) });
       return false;
@@ -82,16 +91,31 @@ export class OfferAttachment {
     }
     const now = this.now();
     this.offers.put({
-      command: { kind: "attach", issueKey: target.key, file: input.file },
+      command,
       conversationId: input.conversationId,
       requesterId: input.senderId,
       createdAt: now,
       expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
+      id: offerId,
+      ...(sent ? { messageId: sent.messageId } : {}),
+      ...(choices ? { choices } : {}),
     });
-    // The question names the request, so the next watch update quotes it; only its ID and hash are kept.
-    await rememberLastMessage(this.requests, target.key, sent, "OfferAttachment", this.logger);
+    // A yes-or-no question names the request, so the next watch update quotes it; only its ID and
+    // hash are kept. A choice names several requests and is no one's last message.
+    if (!choices) await rememberLastMessage(this.requests, target.key, sent, "OfferAttachment", this.logger);
     return true;
   }
+}
+
+/**
+ * The sender's own open requests of this conversation, likeliest first (as `pickTarget` ranks
+ * them: the latest bot message, then the newest), at most `OFFER_CANDIDATES_MAX`.
+ */
+function ownTargets(requests: readonly SupportRequest[], conversationId: QualifiedId, senderId: QualifiedId): SupportRequest[] {
+  return requests
+    .filter((r) => !r.deleted && r.statusCategory !== "done" && sameQualifiedId(r.conversationId, conversationId) && sameQualifiedId(r.requesterId, senderId))
+    .sort((a, b) => (isBetterTarget(a, b) ? -1 : isBetterTarget(b, a) ? 1 : 0))
+    .slice(0, OFFER_CANDIDATES_MAX);
 }
 
 /**

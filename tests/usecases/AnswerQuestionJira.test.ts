@@ -11,7 +11,7 @@ import type { AuditLogEntry, AuditLogRepository } from "../../src/domain/reposit
 import type { SupportRequest, SupportRequestStatusCategory } from "../../src/domain/entities/SupportRequest";
 import { sameQualifiedId } from "../../src/domain/ids/QualifiedId";
 import type { QualifiedId } from "../../src/domain/ids/QualifiedId";
-import type { SentMessageRef } from "../../src/application/ports/WireOutboundPort";
+import type { CompositeButton, CompositePromptOptions, SentMessageRef } from "../../src/application/ports/WireOutboundPort";
 import { sentRefFor } from "./supportRequestFakes";
 
 const convId: QualifiedId = { id: "conv-1", domain: "example.com" };
@@ -111,6 +111,10 @@ function setup(options: SetupOptions = {}) {
     put: vi.fn((offer: PendingOffer) => { stored.push(offer); }),
     take: vi.fn(() => null),
     has: vi.fn(() => false),
+    find: vi.fn(() => null),
+    prompt: vi.fn(() => null),
+    markAnswered: vi.fn(),
+    claimNotice: vi.fn(() => true),
     clearConversation: vi.fn(),
     peek: vi.fn(() => null),
     drop: vi.fn(() => null),
@@ -121,6 +125,12 @@ function setup(options: SetupOptions = {}) {
   const sent: string[] = [];
   const wire = {
     sendPlainText: vi.fn(async (_c: QualifiedId, text: string): Promise<SentMessageRef | undefined> => {
+      if (options.sendFails) throw new Error("send failed");
+      sent.push(text);
+      return sentRefFor(sent.length);
+    }),
+    // Offer questions go with buttons; counted and numbered with the plain texts.
+    sendCompositePrompt: vi.fn(async (_c: QualifiedId, text: string, _b: CompositeButton[], _o?: CompositePromptOptions): Promise<SentMessageRef | undefined> => {
       if (options.sendFails) throw new Error("send failed");
       sent.push(text);
       return sentRefFor(sent.length);
@@ -484,6 +494,8 @@ describe("AnswerQuestion with Jira: offers", () => {
       requesterId: { id: "user-1", domain: "example.com" },
       createdAt: NOW,
       expiresAt: new Date(NOW.getTime() + OFFER_TTL_MS),
+      id: expect.any(String),
+      messageId: sentRefFor(1).messageId,
     }]);
     expect(sent).toEqual([supportQuestion]);
     expect(answer).toBe(supportQuestion);
@@ -551,7 +563,7 @@ describe("AnswerQuestion with Jira: offers", () => {
   it("stores the offer only after the question was sent", async () => {
     const { offers, wire, run } = setup({ modelAnswer: support });
     await run("Raise my VPN problem with support");
-    expect(wire.sendPlainText.mock.invocationCallOrder[0]!).toBeLessThan((offers.put as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
+    expect(wire.sendCompositePrompt.mock.invocationCallOrder[0]!).toBeLessThan((offers.put as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
   });
 
   it("stores no offer when sending the question fails", async () => {
@@ -567,10 +579,11 @@ describe("AnswerQuestion with Jira: offers", () => {
     const { wire, stored, run } = setup({ requests: [vpn()], modelAnswer: withMention });
     await run("Reply to SD-6 that Bob will test it", { members: [requester, bob] });
     expect(stored).toHaveLength(1);
-    expect(wire.sendPlainText).toHaveBeenCalledWith(convId, 'Shall I add this to **SD-6** "VPN drops every ten minutes"?\n> @Bob will test it.\n\n(yes or no)?', {
-      replyToMessageId: "q",
-      mentions: undefined,
-    });
+    // A button question carries no mentions at all.
+    expect(wire.sendCompositePrompt).toHaveBeenCalledWith(convId, 'Shall I add this to **SD-6** "VPN drops every ten minutes"?\n> @Bob will test it.\n\n(yes or no)?', [
+      { id: `${stored[0]!.id}:0`, label: "Yes" }, { id: `${stored[0]!.id}:1`, label: "No" },
+    ], { replyToMessageId: "q" });
+    expect(wire.sendPlainText).not.toHaveBeenCalled();
   });
 
   it("never writes to Jira or the records when preparing an offer", async () => {
@@ -1298,5 +1311,30 @@ describe("AnswerQuestion with Jira: watch markers", () => {
     expect(sent).toEqual(["SD-6 is open."]);
     expect(repo.setLastMessage).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith("AnswerQuestion: support request lookup failed", { err: "Error" });
+  });
+});
+
+describe("AnswerQuestion with Jira: offer buttons", () => {
+  const support = 'OFFER: {"kind":"support","summary":"VPN drops","description":"My VPN drops every ten minutes since Monday."}';
+
+  it("sends a yes-or-no offer with [Yes] [No] carrying the stored offer's ID, and stores the button message", async () => {
+    const { wire, stored, run } = setup({ modelAnswer: support });
+    await run("Please raise my VPN problem with the service desk");
+    expect(stored).toHaveLength(1);
+    const offerId = stored[0]!.id!;
+    expect(offerId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(wire.sendCompositePrompt.mock.calls[0]![2]).toEqual([{ id: `${offerId}:0`, label: "Yes" }, { id: `${offerId}:1`, label: "No" }]);
+    expect(stored[0]!.messageId).toBe(sentRefFor(1).messageId);
+    expect(stored[0]!.choices).toBeUndefined();
+  });
+
+  it("asks for missing part details as plain text, without buttons", async () => {
+    const part = 'OFFER: {"kind":"support","requestKind":"part","summary":"Order filters","description":"Order filters for printer 7."}';
+    const { wire, stored, run } = setup({ modelAnswer: part });
+    await run("Order filters for printer 7");
+    expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
+    expect(wire.sendPlainText.mock.calls[0]![1]).toContain("To order it I need");
+    expect(stored[0]!.id).toBeUndefined();
+    expect(stored[0]!.messageId).toBeUndefined();
   });
 });

@@ -37,14 +37,26 @@ Status, reply and resolve only work for requests raised in the same conversation
 
 ### Natural language and offers
 
-A member can also mention the bot and write in their own words: "the printer on the second floor is broken again, can you raise it?", "tell the desk that it works after a restart", "we can close SD-42". The model drafts a proposal, code checks it, and the bot asks a code-written question that ends in "(yes or no)?". Nothing is sent to the service desk until the member answers.
+A member can also mention the bot and write in their own words: "the printer on the second floor is broken again, can you raise it?", "tell the desk that it works after a restart", "we can close SD-42". The model drafts a proposal, code checks it, and the bot asks a code-written question that ends in "(yes or no)?", with the buttons [Yes] and [No] under it. Nothing is sent to the service desk until the member answers, by clicking a button or by writing "yes" or "no".
 
 The rules for an offer:
 
 - Only the member the offer was made to can confirm it, and only with their next message in the conversation. Any other message from them drops the offer; a correction ("the description should mention the third floor") gets a revised offer.
 - Only explicit answers count: "yes", "yes please", "go ahead", "do it", "confirm" and similar, or "no", "cancel", "stop" and similar. "ok", "sure" or "thanks" approve nothing; the bot asks again and keeps the offer.
 - An offer expires after 10 minutes.
+- The buttons follow the same rules: only the member who was asked can answer, and their first click decides. Clicks by other members change nothing; the bot answers the first of them with "Only <name> can answer this." A click on a question that was already answered, has expired or was replaced gets one short answer ("This question has already been answered." or "This question has expired; ask me again."). The result is always posted as text as well.
 
+#### Choosing instead of guessing
+
+Where the bot would otherwise have to guess which request is meant, it asks, with a button per option:
+
+- **New or existing request.** When a problem described in passing may be one the conversation already has (an open request, or one done in the last 7 days, whose summary shares a significant word with the problem, or which the model names), the bot quotes the problem, lists up to three of those requests and offers [Add to SD-38] … [Raise new request] [Cancel]. Without such a request it offers to raise a new one as before.
+- **Which request to resolve or add to.** When a passive offer to resolve a request or to add a detail could fit several open requests and the message names no key, the bot lists up to three of them (the model's pick first, then the member's own, then the newest) and [Cancel].
+- **Which request a photo or document belongs to** (see below).
+
+Every choice can also be answered by text: with the request key ("SD-41"), "new", "cancel" or "no", or the option's number. "yes" or "ok" pick nothing; the bot asks again. The options come from the conversation's own stored requests and are checked by code; the model never adds one.
+
+Clients that do not show buttons show the question's text, which names the text answers ("(yes or no)?", "(SD-38, new or cancel)?"), so members answer in text there.
 Questions that ask for no change ("what was the VPN request called?") get an answer from the recent conversation and the conversation's support requests. When the bot's latest message among the last three ended with a question, the next message is treated as a follow-up even without a mention.
 
 ### Passive help
@@ -64,7 +76,7 @@ A request is a question, a part order or a fault, and each kind can have its own
 
 ### Photos and documents
 
-With passive help on and an open request in the conversation, a photo or document posted in the conversation gets an offer to attach it to the request the bot most recently wrote about (otherwise the newest open one). After a yes, the bot downloads the file from Wire and attaches it to the ticket with a customer-facing reply such as "Photo from Wire, sent by <name>. Sent from Wire.". The bytes are held in memory only.
+With passive help on and an open request in the conversation, a photo or document posted in the conversation gets an offer to attach it to the request the bot most recently wrote about (otherwise the newest open one). When the sender has more than one open request of their own in the conversation, the bot asks which one instead: [SD-40] [SD-41] … (up to three, the likeliest first) [Do not attach]. After a yes, the bot downloads the file from Wire and attaches it to the ticket with a customer-facing reply such as "Photo from Wire, sent by <name>. Sent from Wire.". The bytes are held in memory only.
 
 Supported are JPEG, PNG, HEIC, HEIF and WebP images, and PDF, plain text, CSV, Word (`.docx`) and Excel (`.xlsx`) documents, up to 10 MB. Other types and self-deleting messages are not offered. If the sender still has an unanswered offer, the bot asks them to answer it first and post the file again.
 
@@ -90,6 +102,19 @@ The model never performs a write and is told never to claim one. In the answer p
 
 The explicit commands (`support:`, `reply to`, `resolve`) are themselves the member's decision and run without an offer.
 
+### Buttons
+
+Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], or the candidate requests of a choice (the conversation's own requests, filtered by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach".
+
+The click rules:
+
+- The first accepted click of the member who was asked decides. Only that click gets a confirmation, and Wire clients apply the confirmation to the message for everyone, so all members see the decision.
+- Later clicks on the same message, also the same member changing their choice, change nothing and get no confirmation.
+- A click by another member changes nothing. Their client still marks their choice locally, so the bot answers once per message in text ("Only <name> can answer this.") and stays silent for repeats.
+- A click on an answered, expired, replaced or unknown question (for example after a restart) gets one short text answer per message, no write and no confirmation.
+- A click counts as the member's next interaction, like a text answer: it consumes the offer, and the confirmed use case runs with all its checks, as for a text "yes".
+- The result is always posted as text as well, so clients that show no buttons or no confirmation show what happened. Text answers keep working everywhere.
+
 ### Scoping to the conversation
 
 Support requests are stored with the qualified conversation ID (ID and domain). Status, reply, resolve, attachments and the model's context only see requests of the current conversation. Offers are kept per conversation and member, both qualified. The watch posts each update only to the conversation the request was raised in.
@@ -102,7 +127,7 @@ Stored in Postgres:
 - An audit log of creates and updates: actor ID, conversation ID, action, entity and the changed fields (for example a status category or a timezone). It holds no message text and no names.
 - Per-conversation settings: the timezone.
 
-Held in memory only, and lost on restart: the recent messages of each conversation (`MESSAGE_BUFFER_SIZE`), pending offers and the member cache.
+Held in memory only, and lost on restart: the recent messages of each conversation (`MESSAGE_BUFFER_SIZE`), pending offers, the IDs of the bot's button messages with who was asked, and the member cache.
 
 Logs are structured JSON on stderr. Fields named `text`, `preview`, `raw`, `context`, `prompt`, `response` and `stack` are removed, and the use cases log error names and ticket keys rather than content. Log lines can carry conversation and user IDs and the sender's display name.
 
@@ -132,7 +157,7 @@ One gap remains: if the process stops between creating the group and storing its
 
 - It does not store or summarise the conversation, and does not search past conversations.
 - It does not read or write internal notes, and does not change assignees, priorities or other fields.
-- It does not act on edited messages or on buttons.
+- It does not act on edited messages, and buttons only answer the bot's own offer questions.
 - It does not raise anything from an unaddressed message without an explicit yes.
 - It does not watch requests raised from the CLI.
 
@@ -152,7 +177,8 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/infrastructure/wire/WireEventRouter.ts` | Receives Wire events and decides what each message is: an offer answer, a command, a question or passive-help input. |
 | `src/application/usecases/general/AnswerQuestion.ts` | The answer path: builds the model's context, parses and validates an offer, sends the answer or the question. |
 | `src/application/services/offers.ts` | Offer marker parsing, bounds and the code-written questions. |
-| `src/application/usecases/jira/ConfirmOffer.ts` | Classifies a yes or no and runs the confirmed use case. |
+| `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
+| `src/application/usecases/jira/ConfirmOffer.ts` | Classifies a yes, no or choice, by text or button, and runs the confirmed use case. |
 | `src/application/usecases/jira/RaiseSupportRequest.ts`, `ReplyToServiceDesk.ts`, `ResolveSupportRequest.ts`, `GetIssueStatus.ts`, `ListSupportRequests.ts` | The support request use cases, scoped to the conversation; writes are audited. |
 | `src/application/usecases/jira/OfferSupportFromConversation.ts` | Passive help: raise, add, resolve or status from an unaddressed message. |
 | `src/application/usecases/jira/CompletePartOrder.ts` | Fills a part order's missing essentials from the requester's next message. |
@@ -167,14 +193,14 @@ The code follows a hexagonal (ports and adapters) layout:
 ### How a message flows
 
 1. The router handles messages one at a time per conversation, resolves the sender's display name and ignores agent groups the bot has not yet left.
-2. If the sender has a pending offer, the message is checked as an answer: a yes or no is handled by `ConfirmOffer`; for a part-order draft, `CompletePartOrder` tries to fill the missing essentials; otherwise the offer is dropped.
+2. If the sender has a pending offer, the message is checked as an answer: a yes, a no or a choice is handled by `ConfirmOffer`; for a part-order draft, `CompletePartOrder` tries to fill the missing essentials; otherwise the offer is dropped.
 3. A message that bundles several commands is rejected. A `timezone` command is handled next.
 4. The message is added to the conversation's in-memory buffer.
 5. If the bot is addressed, the commands are matched in order: `support:`, `resolve` or `close`, `reply to`, `support requests`, then a status request.
 6. A message that mentions the bot, follows a question from the bot, or corrects the sender's dropped offer goes to the answer path (`AnswerQuestion`).
 7. Anything else goes to the passive-help queue when passive help is on: `ProcessingPipeline` classifies it and, for a service-desk category, calls `OfferSupportFromConversation`. The queue keeps each conversation's messages in order and cancels queued work when a conversation is deleted.
 
-Files take a shorter path: the router checks the type, size and self-deleting flag and hands the file to `OfferAttachment`.
+Files take a shorter path: the router checks the type, size and self-deleting flag and hands the file to `OfferAttachment`. Button clicks run in the same order as the conversation's messages: the router matches the click to the offer of the clicked message and its requester (see "Buttons") and hands an accepted click to `ConfirmOffer`.
 
 ## Extending
 
@@ -249,7 +275,7 @@ The container's entry point applies the migrations (`prisma migrate deploy`) and
 
 ### The CLI for local testing
 
-The CLI drives the real router and use cases from the terminal, without Wire. It simulates one conversation with four members, Alice (the default), Bob, Carol and Dave; prefix a line with `Bob: ` to send it as Bob. Start a line with `@Wire Support Bot` to mention the bot. Bot replies go to stdout and logs to stderr (level `warn` unless `LOG_LEVEL` is set). End with `exit`, `quit` or Ctrl-D.
+The CLI drives the real router and use cases from the terminal, without Wire. It simulates one conversation with four members, Alice (the default), Bob, Carol and Dave; prefix a line with `Bob: ` to send it as Bob. Start a line with `@Wire Support Bot` to mention the bot. Bot replies go to stdout and logs to stderr (level `warn` unless `LOG_LEVEL` is set). A question with buttons is printed with its options numbered under it; a line with only an option's number (`2`, or `Bob: 2`) clicks that option of the latest question, and any other line is a text answer. The CLI shows no confirmation. End with `exit`, `quit` or Ctrl-D.
 
 ```bash
 npm run build
@@ -375,7 +401,9 @@ dropdb wire_support_bot_test
 - Pending offers and recent messages are held in memory: a restart drops unanswered offers and the conversation context.
 - Desk updates arrive by polling, so they appear up to one interval late (the interval is at least 15 seconds).
 - The watch looks at up to 500 requests per check, oldest first, and the bot retries leaving up to 500 pending agent groups per run.
-- Edited messages are ignored, and old button messages get a note that buttons are no longer supported.
+- Edited messages are ignored.
+- Buttons were checked on Wire web and iOS; Android was not tested. On every client the result is also posted as text, and every question can be answered in text.
+- Offers live in memory, so after a restart a click on an earlier question only gets "This question has expired; ask me again.".
 - Only photos and documents of the listed types, up to 10 MB, are offered for attaching.
 - With a remote model provider and sharing on, ticket content leaves your infrastructure; see "What is stored and what is sent where".
 
