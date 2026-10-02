@@ -1451,3 +1451,97 @@ describe("AnswerQuestion with Jira: offer buttons", () => {
     expect(stored[0]!.messageId).toBeUndefined();
   });
 });
+
+describe("AnswerQuestion with Jira: asking again when the model makes no offer", () => {
+  const support = 'OFFER: {"kind":"support","summary":"Printer 7 jams","description":"Printer 7 jams on every job."}';
+  const supportQuestion = "Shall I report this to the service desk?\n> **Printer 7 jams**\n> Printer 7 jams on every job.\n\n(yes or no)?";
+  const invented = "To raise it, send `@Wire Support Bot support part \"printer 7\"`.";
+  const supportLine = "To raise it, send `@Wire Support Bot support: <problem>`.";
+  const answers = (general: { answer: ReturnType<typeof vi.fn> }, ...texts: string[]) => {
+    general.answer.mockReset();
+    for (const text of texts) general.answer.mockResolvedValueOnce(text);
+  };
+
+  it("asks once more with the offer instruction and uses the second answer's valid offer", async () => {
+    const { general, stored, sent, run } = setup();
+    answers(general, "You can raise it with the support command.", `Raising it.\n${support}`);
+    await run("Please raise it with the service desk: printer 7 jams on every job");
+    expect(general.answer).toHaveBeenCalledTimes(2);
+    expect(general.answer.mock.calls[0]).toHaveLength(5);
+    expect(general.answer.mock.calls[1]![5]).toEqual({ requireOffer: true });
+    expect(general.answer.mock.calls[1]!.slice(0, 5)).toEqual(general.answer.mock.calls[0]);
+    expect(stored).toHaveLength(1);
+    expect(sent).toEqual([withoutAnswerHint(supportQuestion)]);
+  });
+
+  it.each([
+    ["order", "Can you order a new tray for printer 7?"],
+    ["reply", "Tell the service desk on SD-6 that it still drops"],
+    ["resolve", "The VPN works again, please close my request"],
+  ])("asks again for a clear %s request", async (_kind, question) => {
+    const { general, run } = setup({ requests: [makeRequest("SD-6")] });
+    answers(general, "Sure.", "Sure.");
+    await run(question);
+    expect(general.answer).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "What is the status of SD-6?",
+    "How do I raise a ticket?",
+    "What did we decide about lunch?",
+    "Which requests are open?",
+  ])("does not ask again for %j, which asks for no change", async (question) => {
+    const { general, run } = setup({ requests: [makeRequest("SD-6")] });
+    answers(general, "Here is the answer.");
+    await run(question);
+    expect(general.answer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask again when the first answer has an offer marker, valid or not", async () => {
+    const valid = setup();
+    answers(valid.general, support);
+    await valid.run("Please raise it with the service desk");
+    expect(valid.general.answer).toHaveBeenCalledTimes(1);
+    expect(valid.stored).toHaveLength(1);
+
+    const broken = setup();
+    answers(broken.general, "OFFER: {not json");
+    await broken.run("Please raise it with the service desk");
+    expect(broken.general.answer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask again for an unaddressed message after an offer", async () => {
+    const { general, run } = setup();
+    answers(general, "Sure.");
+    const answer = await run("please raise it with the service desk", {
+      amendOnly: true, pendingOffer: { kind: "support", requestKind: "fault", summary: "Printer 7 jams", description: "Printer 7 jams." },
+    });
+    expect(answer).toBe("");
+    expect(general.answer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the first answer when the second has no offer, an invalid one or one code drops", async () => {
+    for (const second of ["Still no offer.", "OFFER: {not json", 'OFFER: {"kind":"resolve","issueKey":"SD-99"}']) {
+      const { general, stored, sent, run } = setup();
+      answers(general, "You can raise it from the service desk portal.", second);
+      await run("Please raise it with the service desk");
+      expect(general.answer).toHaveBeenCalledTimes(2);
+      expect(stored).toHaveLength(0);
+      expect(sent).toEqual(["You can raise it from the service desk portal."]);
+    }
+  });
+
+  it("replaces an invented command in the first answer that stands", async () => {
+    const { general, sent, run } = setup();
+    answers(general, `I can't raise it myself.\n${invented}`, "Still nothing.");
+    await run("Please raise it with the service desk");
+    expect(sent).toEqual([`I can't raise it myself.\n${supportLine}`]);
+  });
+
+  it("replaces an invented command in an answer to any question and keeps valid commands", async () => {
+    const { general, sent, run } = setup();
+    answers(general, "Use `@Wire Support Bot status of SD-6` for the status.\nOr `@Wire Support Bot ticket status SD-6`.");
+    await run("How do I see the status of SD-6?");
+    expect(sent).toEqual(["Use `@Wire Support Bot status of SD-6` for the status.\nMention me with the command if you'd like me to act."]);
+  });
+});

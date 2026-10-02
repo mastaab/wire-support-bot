@@ -1,4 +1,4 @@
-import type { GeneralAnswerService, ConversationMemberContext } from "../../ports/GeneralAnswerPort";
+import type { GeneralAnswerService, ConversationMemberContext, GeneralAnswerOptions } from "../../ports/GeneralAnswerPort";
 import type { WireOutboundPort, OutboundMention, SentMessageRef } from "../../ports/WireOutboundPort";
 import type { RetrievalPort, RetrievalResult } from "../../ports/RetrievalPort";
 import type { QualifiedId } from "../../../domain/ids/QualifiedId";
@@ -16,7 +16,8 @@ import {
   GENERIC_COMMAND_LINE, NO_CHANGE_REPLY, OFFER_TTL_MS, formatReplyQuestion, formatResolveQuestion,
   formatSupportQuestion, offerCommandLine, parseOfferMarker,
 } from "../../services/offers";
-import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
+import type { OfferCommand, ParsedAnswer, PendingOffer, PendingOfferStore } from "../../services/offers";
+import { replaceInventedCommandLines } from "../../services/botCommandLines";
 import { botActor, refreshStatusCategory } from "../jira/supportRequestStatus";
 import { formatSla, statusLabel } from "../jira/formatIssue";
 import { findSupportRequestInConversation } from "../jira/supportRequestScope";
@@ -167,6 +168,13 @@ interface PreparedOffer {
   requestKey?: string;
 }
 
+/** One model answer as the use case reads it. */
+interface Proposal {
+  parsed: ParsedAnswer;
+  command: OfferCommand | null;
+  prepared: PreparedOffer | null;
+}
+
 /** Live data for one support request, and its record when the read refreshed the stored category. */
 interface LiveTicket {
   key: string;
@@ -223,19 +231,27 @@ export class AnswerQuestion {
     const amended = amendableOffer(input.pendingOffer);
     if (amended) retrievalResults.push(pendingOfferResult(amended, now));
 
-    const modelAnswer = await this.generalAnswer.answer(
+    const ask = (options?: GeneralAnswerOptions) => this.generalAnswer.answer(
       input.question,
       input.conversationContext,
       retrievalResults,
       input.members,
       input.requester,
+      ...(options ? [options] : []),
     );
 
     // The raw marker is never sent, whether or not the offer is valid.
-    const parsed = parseOfferMarker(modelAnswer);
-    const text = parsed.text || FALLBACK_ANSWER;
-    const command = parsed.command ? await this.proposedCommand(parsed.command, input) : null;
-    const prepared = command ? await this.prepareOffer(this.jira, input, command) : null;
+    let { parsed, command, prepared } = await this.proposal(await ask(), input);
+    // A clear request to raise, order, reply or resolve that got no offer (the small model may
+    // answer with a command instead) is asked once more; the second answer is used only when it
+    // carries a valid offer, otherwise the first answer stands.
+    if (!parsed.hadMarker && !input.amendOnly && asksForAnyChange(input.question, this.jira.tracker.projectKey)) {
+      this.logger?.debug("AnswerQuestion: no offer for a clear request, asking again");
+      const second = await this.proposal(await ask({ requireOffer: true }), input);
+      if (second.prepared) ({ parsed, command, prepared } = second);
+    }
+    // A suggested bot command that does not exist is replaced by a supported command line.
+    const text = replaceInventedCommandLines(parsed.text || FALLBACK_ANSWER, this.jira.tracker.projectKey);
     if (input.amendOnly && !(prepared && command && isRevision(input.pendingOffer, command)
         && !sameCommand(input.pendingOffer, command))) {
       // Unaddressed chat after an offer ("lunch at noon?") is not for the bot, and repeating the
@@ -275,6 +291,14 @@ export class AnswerQuestion {
       await rememberLastMessage(this.jira.requests, prepared.requestKey, sent, "AnswerQuestion", this.logger);
     }
     return prepared.question;
+  }
+
+  /** The model's answer without its marker, its command and, when code accepts it, the prepared offer. */
+  private async proposal(answer: string, input: AnswerQuestionInput): Promise<Proposal> {
+    const parsed = parseOfferMarker(answer);
+    const command = parsed.command ? await this.proposedCommand(parsed.command, input) : null;
+    const prepared = command ? await this.prepareOffer(this.jira, input, command) : null;
+    return { parsed, command, prepared };
   }
 
   /**
@@ -501,6 +525,18 @@ function namedKeys(text: string, projectKey: string): string[] {
 /** True when the question may need live ticket data (see `TICKET_QUESTION`). */
 function asksAboutTickets(question: string, projectKey: string): boolean {
   return TICKET_QUESTION.test(question) || namedKeys(question, projectKey).length > 0;
+}
+
+/** A question about how to do something ("how do I raise a ticket?"), which asks for no change itself. */
+const HOW_TO_QUESTION = /^(?:(?:hi|hey|hello)\b[,!]?\s*)?how\s+(?:do|can|could|should|would|does|did)\s+(?:i|we|you|one|people|someone|anyone)\b/i;
+
+/**
+ * True when the requester's message clearly asks to raise, order, reply to or resolve something:
+ * the change intent of an offer kind (see `asksForChange`), but not a how-to question.
+ */
+function asksForAnyChange(question: string, projectKey: string): boolean {
+  if (HOW_TO_QUESTION.test(question.trim())) return false;
+  return (["support", "reply", "resolve"] as const).some((kind) => asksForChange(kind, question, projectKey));
 }
 
 /** True when the requester's question expresses the change that the offer proposes. */

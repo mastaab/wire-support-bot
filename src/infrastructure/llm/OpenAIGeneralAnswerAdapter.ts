@@ -15,7 +15,7 @@
  *   - No hollow affirmations, never repeat the question back
  */
 
-import type { GeneralAnswerService, ConversationMemberContext } from "../../application/ports/GeneralAnswerPort";
+import type { GeneralAnswerService, ConversationMemberContext, GeneralAnswerOptions } from "../../application/ports/GeneralAnswerPort";
 import type { RetrievalResult } from "../../application/ports/RetrievalPort";
 import type { LLMClientFactory } from "./LLMClientFactory";
 import type { Logger } from "../../application/ports/Logger";
@@ -120,6 +120,9 @@ function stripKeepingMarker(text: string): string {
   return body ? `${body}\n${marker}` : marker;
 }
 
+/** Added to the question when the use case asks again because the first answer made no offer. */
+export const REQUIRE_OFFER_INSTRUCTION = "## Instruction\nThe requester asked you to raise, order, reply to or resolve this. Do not answer with a command. End the answer with exactly one OFFER: line as described under \"Support request offers\".";
+
 /** The service desk the answer model must know about so it does not deny it. */
 export interface AnswerIntegrations {
   /** Configured Jira Service Management project key. */
@@ -199,6 +202,7 @@ export class OpenAIGeneralAnswerAdapter implements GeneralAnswerService {
     retrievalResults: RetrievalResult[],
     members?: ConversationMemberContext[],
     requester?: ConversationMemberContext,
+    options?: GeneralAnswerOptions,
   ): Promise<string> {
     const memberBlock =
       members && members.length > 0
@@ -240,7 +244,8 @@ export class OpenAIGeneralAnswerAdapter implements GeneralAnswerService {
         : "";
 
     const requesterBlock = requester ? `## Current requester\n${JSON.stringify(requester)}\n\n` : "";
-    const userContent = `${memberBlock}${requesterBlock}${requestsBlock}${ticketsBlock}${articlesBlock}${relatedBlock}${contextBlock}## User's Question\n${question}`;
+    const offerBlock = options?.requireOffer ? `\n\n${REQUIRE_OFFER_INSTRUCTION}` : "";
+    const userContent = `${memberBlock}${requesterBlock}${requestsBlock}${ticketsBlock}${articlesBlock}${relatedBlock}${contextBlock}## User's Question\n${question}${offerBlock}`;
 
     try {
       const result = await this.llm.chatCompletion(

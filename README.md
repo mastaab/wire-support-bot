@@ -37,7 +37,7 @@ Status, reply and resolve only work for requests raised in the same conversation
 
 ### Natural language and offers
 
-A member can also mention the bot and write in their own words: "the printer on the second floor is broken again, can you raise it?", "tell the desk that it works after a restart", "we can close SD-42". The model drafts a proposal, code checks it, and the bot asks a code-written question with the buttons [Yes] and [No] under it. The buttons show the choices, so the question carries no text answer hint. Nothing is sent to the service desk until the member answers, by clicking a button or by writing "yes" or "no".
+A member can also mention the bot and write in their own words: "the printer on the second floor is broken again, can you raise it?", "tell the desk that it works after a restart", "we can close SD-42". The model drafts a proposal, code checks it, and the bot asks a code-written question with the buttons [Yes] and [No] under it. When the message clearly asks to raise, order, reply or resolve something (the same wording checks that an offer needs; a how-to question such as "how do I raise a ticket?" does not count) and the model's answer makes no offer, the bot asks the model once more, telling it that the answer must end with an offer; it uses the second answer only when that carries a valid offer, otherwise the first answer stands. A line of an answer that suggests a bot command that does not exist (for example `@Wire Support Bot support part "filter"`) is not shown; the bot shows a supported command line instead ("To raise it, send `@Wire Support Bot support: <problem>`.", the matching reply or resolve command, or "Mention me with the command if you'd like me to act."). The buttons show the choices, so the question carries no text answer hint. Nothing is sent to the service desk until the member answers, by clicking a button or by writing "yes" or "no".
 
 The rules for an offer:
 
@@ -197,6 +197,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/infrastructure/wire/WireEventRouter.ts` | Receives Wire events and decides what each message is: an offer answer, a command, a question or passive-help input. |
 | `src/application/usecases/general/AnswerQuestion.ts` | The answer path: builds the model's context, parses and validates an offer, sends the answer or the question. |
 | `src/application/services/offers.ts` | Offer marker parsing, bounds and the code-written questions. |
+| `src/application/services/botCommandLines.ts` | Replaces answer lines that suggest a bot command that does not exist with a supported command line. |
 | `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
 | `src/application/services/deskUpdateQuestions.ts` | The requester's question after a desk reply or resolve: texts, options, lifetime, and not asking over another open question. |
 | `src/application/services/offerPromptClosing.ts` | Closes ended button questions: the closing lines, one edit per message, the expiry sweep. |
