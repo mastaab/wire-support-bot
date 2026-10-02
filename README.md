@@ -150,7 +150,7 @@ Held in memory only, and lost on restart: the recent messages of each conversati
 
 Logs are structured JSON on stderr. Fields named `text`, `preview`, `raw`, `context`, `prompt`, `response` and `stack` are removed, and the use cases log error names and ticket keys rather than content. Log lines can carry conversation and user IDs and the sender's display name.
 
-The Wire SDK's own log calls are recorded as "Wire SDK diagnostic" at their severity, without their text or data; for warnings and errors the line adds only the error's class name (`errorName`) and an HTTP `status`, error `code` or backend `label` when the error carries one as a number or a short identifier.
+The Wire SDK's own log calls are recorded as "Wire SDK diagnostic" at their severity, without their text or data; for warnings and errors the line adds only the error's class name (`errorName`) and an HTTP `status`, error `code` or backend `label` when the error carries one as a number or a short identifier. A warning or error without an error object adds the class name of its first object argument (`objectType`, never a plain object) and that object's `type` when it is a short identifier (`eventType`). A dropped WebSocket connection, which the SDK reconnects by itself, therefore shows as an error with `objectType` "ErrorEvent" and `eventType` "error", followed by a warning without fields ("WebSocket Closed" in the SDK).
 
 Sent to the model endpoint:
 

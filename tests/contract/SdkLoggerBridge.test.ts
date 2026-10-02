@@ -110,6 +110,67 @@ describe("SDK logging privacy", () => {
     ]);
   });
 
+  it("logs the class name and event type of a WebSocket error event, never its message or nested error", () => {
+    /**
+     * The shape of the `ws` events: the SDK's WebSocketClient logs the ErrorEvent as "Websocket
+     * Error:" (its `type` is a getter, as in ws/lib/event-target.js).
+     */
+    class Event {
+      readonly #type: string;
+      constructor(type: string, readonly target: unknown) {
+        this.#type = type;
+      }
+      get type(): string {
+        return this.#type;
+      }
+    }
+    class ErrorEvent extends Event {
+      constructor(readonly message: string, readonly error: unknown, target: unknown) {
+        super("error", target);
+      }
+    }
+    class CloseEvent extends Event {
+      constructor(readonly code: number, readonly reason: string) {
+        super("close", null);
+      }
+    }
+    const socket = { url: `wss://example.invalid/${marker}`, readyState: 3 };
+    const { raw, lines } = capture(bridge => {
+      bridge.error("Websocket Error:", new ErrorEvent(`Connection reset ${marker}`, { code: "ECONNRESET", message: marker }, socket));
+      bridge.warn("WebSocket Closed", new CloseEvent(1006, marker));
+      bridge.warn("Event:", new Event(`bad type ${marker}`, socket));
+      bridge.warn("Event:", new Event("x".repeat(33), socket));
+      bridge.error("Plain:", { type: "error", message: marker });
+      bridge.error("Unsafe class:", new (class { constructor(readonly type: string) {} })("error"));
+      bridge.warn("Null first:", null, new CloseEvent(1000, marker));
+      bridge.warn("Text only", marker, 42);
+      bridge.info("Info:", new ErrorEvent(marker, null, socket));
+    });
+    expect(raw).not.toContain(marker);
+    expect(raw).not.toContain("ECONNRESET");
+    expect(raw).not.toContain("1006");
+    const fields = lines.map(({ time: _time, msg: _msg, component: _component, ...rest }) => rest);
+    expect(fields).toEqual([
+      { level: "error", objectType: "ErrorEvent", eventType: "error" },
+      { level: "warn", objectType: "CloseEvent", eventType: "close" },
+      { level: "warn", objectType: "Event" },
+      { level: "warn", objectType: "Event" },
+      { level: "error" },
+      { level: "error" },
+      { level: "warn", objectType: "CloseEvent", eventType: "close" },
+      { level: "warn" },
+      { level: "info" },
+    ]);
+  });
+
+  it("keeps the Error fields and no object fields when an Error is among the arguments", () => {
+    const event = Object.assign(Object.create({ constructor: { name: "ErrorEvent" } }), { type: "error" });
+    const { lines } = capture(bridge => bridge.error("Websocket Error:", event, new WireApiException(401, "invalid-credentials", marker)));
+    expect(lines[0]).toMatchObject({ errorName: "WireApiException", code: 401, label: "invalid-credentials" });
+    expect(lines[0]).not.toHaveProperty("objectType");
+    expect(lines[0]).not.toHaveProperty("eventType");
+  });
+
   it("keeps debug and info without error fields", () => {
     const { lines } = capture(bridge => {
       bridge.debug("debug", new WireApiException(404, "not-found", marker));

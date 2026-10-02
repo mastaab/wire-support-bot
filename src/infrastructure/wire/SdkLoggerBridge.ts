@@ -35,11 +35,12 @@ function errorName(error: Error): string | undefined {
  * HTTP status, error code or backend label held on the error itself (WireApiException has
  * `code` and `label`, RetryableHttpStatusError has `status`) or one level deep in its
  * `response` or `cause` (WireException subclasses keep the original error as `cause`).
- * Messages, stacks, paths, other fields and nested objects never reach the log.
+ * Messages, stacks, paths, other fields and nested objects never reach the log. Without an
+ * Error, the fields of `sdkObjectDetails`.
  */
 export function sdkErrorDetails(args: unknown[]): Record<string, string | number> {
   const error = args.find((arg): arg is Error => arg instanceof Error);
-  if (!error) return {};
+  if (!error) return sdkObjectDetails(args);
   const details: Record<string, string | number> = {};
   const name = errorName(error);
   if (name) details.errorName = name;
@@ -56,11 +57,30 @@ export function sdkErrorDetails(args: unknown[]): Record<string, string | number
   return details;
 }
 
+/** A short identifier such as an event type ("error", "close"). */
+const SHORT_IDENTIFIER = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+
+/**
+ * Content-free fields for a warning or error without an Error, such as the SDK's "Websocket
+ * Error:" with the WebSocket error event: the class name of the first non-null object argument
+ * (never "Object", so a plain object adds nothing) and, for such an object, its `type` when that
+ * is a short identifier. Messages, other fields and nested content never reach the log.
+ */
+export function sdkObjectDetails(args: unknown[]): Record<string, string> {
+  const object = args.find((arg): arg is object => typeof arg === "object" && arg !== null);
+  if (!object) return {};
+  const objectType = safeValue(read(read(object, "constructor"), "name"));
+  if (typeof objectType !== "string" || objectType === "Object") return {};
+  const type = read(object, "type");
+  return typeof type === "string" && SHORT_IDENTIFIER.test(type) ? { objectType, eventType: type } : { objectType };
+}
+
 /** SDK messages and metadata can include decrypted events and HTTP bodies. */
 export function makeSdkLoggerBridge(botLogger: Logger) {
   const log = botLogger.child({ component: "sdk" });
   // Keep severity visible without persisting third-party free-form content; warnings and
-  // errors add only the content-free error fields from sdkErrorDetails.
+  // errors add only the content-free fields from sdkErrorDetails (for a non-Error object such
+  // as a WebSocket error event, its class name and event type).
   const details = (args: unknown[]) => {
     const fields = sdkErrorDetails(args);
     return Object.keys(fields).length > 0 ? fields : undefined;
