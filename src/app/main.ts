@@ -14,6 +14,8 @@ async function main(): Promise<void> {
   let sdk: Awaited<ReturnType<typeof container.getWireClient>> | null = null;
 
   const shutdown = async (signal: string): Promise<void> => {
+    // Exit even if a cleanup step hangs, so Ctrl+C or a stop signal always ends the process.
+    setTimeout(() => process.exit(0), 5_000).unref();
     logger.info("Shutdown requested", { signal });
     await container.shutdown();
     process.exit(0);

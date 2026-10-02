@@ -28,7 +28,7 @@ import dotenv from "dotenv";
 import readline from "readline";
 import { randomUUID } from "node:crypto";
 import { loadConfig } from "./config";
-import { initLogging, getLogger } from "./logging";
+import { writeSafely, guardAgainstBrokenPipe, initLogging, getLogger } from "./logging";
 import { getPrismaClient } from "../infrastructure/persistence/postgres/PrismaClient";
 import { WireEventRouter } from "../infrastructure/wire/WireEventRouter";
 import { cliButtonClick, createCliOutbound } from "./cliOutbound";
@@ -130,7 +130,9 @@ async function main() {
     });
   }
 
-  const cliOutbound = createCliOutbound(MEMBERS, (text) => process.stdout.write(text));
+  guardAgainstBrokenPipe(process.stdout);
+  guardAgainstBrokenPipe(process.stderr);
+  const cliOutbound = createCliOutbound(MEMBERS, (text) => writeSafely(process.stdout, text));
   const wireOutbound = cliOutbound.wireOutbound;
 
   // The service desk. Passive help also needs WIRE_SUPPORT_BOT_JIRA_PASSIVE.
@@ -206,9 +208,9 @@ async function main() {
   const isInteractive = process.stdin.isTTY;
 
   if (isInteractive) {
-    process.stderr.write(`Wire Support Bot CLI: type messages, prefix with "Name: " to change sender\n`);
-    process.stderr.write(`Members: ${MEMBERS.map(m => m.name).join(", ")}\n`);
-    process.stderr.write(`Type "exit" or Ctrl-D to quit.\n\n`);
+    writeSafely(process.stderr, `Wire Support Bot CLI: type messages, prefix with "Name: " to change sender\n`);
+    writeSafely(process.stderr, `Members: ${MEMBERS.map(m => m.name).join(", ")}\n`);
+    writeSafely(process.stderr, `Type "exit" or Ctrl-D to quit.\n\n`);
   }
 
   const rl = readline.createInterface({ input: process.stdin, output: undefined, terminal: false });
@@ -234,7 +236,7 @@ async function main() {
 
     if (isInteractive) {
       const senderName = MEMBERS.find(m => m.id.id === sender.id)?.name ?? sender.id;
-      process.stderr.write(`[${senderName}] ${text}\n`);
+      writeSafely(process.stderr, `[${senderName}] ${text}\n`);
     }
 
     // A bare number after a button question clicks that option, as a member would in Wire.
@@ -253,6 +255,6 @@ async function main() {
 }
 
 main().catch(() => {
-  process.stderr.write("CLI failed; verify configuration and service availability\n");
+  writeSafely(process.stderr, "CLI failed; verify configuration and service availability\n");
   process.exit(1);
 });
