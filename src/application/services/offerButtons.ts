@@ -65,7 +65,7 @@ export function matchChoice(choices: readonly OfferChoice[], text: string, optio
       continue;
     }
     const index = choices.findIndex((choice) =>
-      choice.answers.includes(candidate) || normaliseAnswer(choice.label) === candidate);
+      choice.answers.includes(candidate) || normalizeAnswer(choice.label) === candidate);
     if (index >= 0) return index;
   }
   return null;
@@ -76,12 +76,12 @@ export function matchChoice(choices: readonly OfferChoice[], text: string, optio
  * emphasis, and once more without a trailing "thanks" or "please". Empty for an empty answer.
  */
 export function answerForms(text: string): string[] {
-  const normalised = normaliseAnswer(text);
-  if (!normalised) return [];
-  return [normalised, normaliseAnswer(normalised.replace(/[\s,]+(thanks|thank you|please)$/, ""))];
+  const normalized = normalizeAnswer(text);
+  if (!normalized) return [];
+  return [normalized, normalizeAnswer(normalized.replace(/[\s,]+(thanks|thank you|please)$/, ""))];
 }
 
-function normaliseAnswer(text: string): string {
+function normalizeAnswer(text: string): string {
   return text
     .trim()
     .toLowerCase()
@@ -105,7 +105,7 @@ function displayAnswer(choice: OfferChoice): string {
   return /^[a-z][a-z0-9]*-\d+$/.test(first) ? first.toUpperCase() : first;
 }
 
-/** An option that picks a request by its key, labelled with the key ("SD-41"). */
+/** An option that picks a request by its key, labeled with the key ("SD-41"). */
 export function keyChoice(key: string, command: OfferCommand): OfferChoice {
   return { label: key, answers: [key.toLowerCase()], command };
 }
@@ -127,7 +127,7 @@ export function raiseNewChoice(command: OfferCommand): OfferChoice {
 /** Declining forms every choice accepts, like a "no" to a yes-or-no offer. */
 const DECLINES: readonly string[] = ["cancel", "no", "n", "nope", "no thanks", "none", "neither", "stop", "don't", "do not"];
 
-/** The option that declines the offer, labelled "Cancel". */
+/** The option that declines the offer, labeled "Cancel". */
 export function cancelChoice(): OfferChoice {
   return { label: "Cancel", answers: DECLINES, command: null };
 }

@@ -317,7 +317,7 @@ describe("WireEventRouter contract: button clicks on offers", () => {
       expect(closes()).toEqual([[PROMPT_ID, closed("Answered by Alice: No")]]);
     });
 
-    it("an acknowledgement keeps the question open: no close, and the asked person's click still counts", async () => {
+    it("an acknowledgment keeps the question open: no close, and the asked person's click still counts", async () => {
       const { router, ask, handlers, closes } = setup();
       ask();
       await router.onTextMessageReceived(text(alice, "ok"));

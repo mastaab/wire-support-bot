@@ -4,7 +4,7 @@
  * interface only; the adapter owns HTTP, authentication and workflow details.
  */
 
-/** Language-independent status bucket. Tracker status names are localised, so never match on them. */
+/** Language-independent status bucket. Tracker status names are localized, so never match on them. */
 export type IssueStatusCategory = "todo" | "in_progress" | "done";
 
 export type SlaState = "running" | "paused" | "met" | "breached";
@@ -75,7 +75,7 @@ export interface IssueTrackerPort {
   /** Returns null when the issue does not exist or is not visible. */
   getIssue(key: string): Promise<IssueSnapshot | null>;
   /**
-   * Moves the issue towards a done-category status by following workflow transitions
+   * Moves the issue toward a done-category status by following workflow transitions
    * by category, within a bounded number of hops. Returns the final snapshot, which may
    * not be done if no path was found; callers must report the actual category.
    */

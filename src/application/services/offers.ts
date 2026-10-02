@@ -57,7 +57,7 @@ export interface ParsedAnswer {
  * Separates the model's optional offer marker from its answer. A marker is an `OFFER:` line
  * plus any following JSON continuation lines, since the model may spread the JSON over
  * several lines. Every marker block is removed, so raw JSON is never shown. Only a block that
- * ends the answer (nothing but blank lines after it) is honoured, and only when it is valid
+ * ends the answer (nothing but blank lines after it) is honored, and only when it is valid
  * JSON of a known shape.
  */
 export function parseOfferMarker(answer: string): ParsedAnswer {

@@ -4,7 +4,7 @@ import { refreshStatusCategory } from "../../src/application/usecases/jira/suppo
 import { OUT_OF_SCOPE, alice, convId, makeAudit, makeLogger, makeRequest, makeRequests } from "./supportRequestFakes";
 
 describe("findSupportRequestInConversation", () => {
-  it("returns the request of this conversation, normalising the key", async () => {
+  it("returns the request of this conversation, normalizing the key", async () => {
     const requests = makeRequests();
 
     expect(await findSupportRequestInConversation(requests, "  sd-6 ", convId, "SD")).toEqual(makeRequest());

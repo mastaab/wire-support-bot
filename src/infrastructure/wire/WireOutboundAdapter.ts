@@ -16,7 +16,7 @@ import type { WireReplyContext } from "./WireReplyContext";
 import { renameBot, usableBotName } from "./renameBot";
 
 /**
- * The SDK serialises and accepts this message type but does not export its factory from the
+ * The SDK serializes and accepts this message type but does not export its factory from the
  * package entrypoint, so it is built from the exported union instead.
  */
 type ButtonActionConfirmation = Extract<WireMessage, { type: "composite_button_action_confirmation" }>;
@@ -172,7 +172,7 @@ export function createWireOutboundAdapter(
       logger.debug("closeButtonPrompt", { conversationId: conversationId.id, messageId, textLength: text.length });
       const out = await renamed(h.manager, text);
       // A composite edit with a text item only: clients drop the buttons. A text edit of a
-      // composite message is not honoured by the clients.
+      // composite message is not honored by the clients.
       await h.manager.sendMessage(CompositeEditedMessage.create({
         conversationId,
         replacingMessageId: messageId,

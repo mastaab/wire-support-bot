@@ -21,7 +21,7 @@ function withoutAttachmentMarkup(body: string): string {
   return body.replace(ATTACHMENT_MARKUP, (_m, image: string | undefined, file: string | undefined) => `(attachment: ${(image ?? file ?? "").trim()})`);
 }
 
-/** English label for a status category. Tracker status names are localised, so they are never shown. */
+/** English label for a status category. Tracker status names are localized, so they are never shown. */
 export function statusLabel(category: IssueStatusCategory): string {
   switch (category) {
     case "todo": return "To do";

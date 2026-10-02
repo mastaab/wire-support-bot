@@ -12,7 +12,7 @@ export type MessageCategory =
   | "update"
   /** Progress is blocked by an impediment; may add to an open request. */
   | "blocker"
-  /** Anything else: chat, greetings, acknowledgements, questions to colleagues. */
+  /** Anything else: chat, greetings, acknowledgments, questions to colleagues. */
   | "other";
 
 export interface ClassifyResult {

@@ -95,7 +95,7 @@ describe("part asset wording: use cases", () => {
     expect(sent).toEqual(["To order it I need the device (asset tag or room number). What is it?"]);
   });
 
-  it("ConfirmOffer names the missing asset with the configured question on a yes and after an acknowledgement", async () => {
+  it("ConfirmOffer names the missing asset with the configured question on a yes and after an acknowledgment", async () => {
     const store = new InMemoryPendingOfferStore();
     const handlers = { raiseSupportRequest: { execute: vi.fn() }, replyToServiceDesk: { execute: vi.fn() }, resolveSupportRequest: { execute: vi.fn() } };
     const { wire, sent } = makeWire();

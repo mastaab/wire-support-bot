@@ -15,9 +15,9 @@ export async function findSupportRequestInConversation(
   conversationId: QualifiedId,
   projectKey: string,
 ): Promise<SupportRequest | null> {
-  const normalised = key.trim().toUpperCase();
-  if (!isKeyInProject(normalised, projectKey)) return null;
-  const request = await requests.findByKey(normalised);
+  const normalized = key.trim().toUpperCase();
+  if (!isKeyInProject(normalized, projectKey)) return null;
+  const request = await requests.findByKey(normalized);
   if (!request || request.deleted || !sameQualifiedId(request.conversationId, conversationId)) return null;
   return request;
 }

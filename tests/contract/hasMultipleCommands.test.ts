@@ -12,7 +12,7 @@ describe("combined-command guard", () => {
     "1. `status of SD-1`\n2. `status of SD-2`",
     "@Wire Support Bot support requests\n@Wire Support Bot status of SD-3",
     "status of SD-1 and then resolve SD-1",
-  ])("recognises separate support commands: %s", text => {
+  ])("recognizes separate support commands: %s", text => {
     expect(hasMultipleCommands(text, [], botId, "SD")).toBe(true);
   });
 

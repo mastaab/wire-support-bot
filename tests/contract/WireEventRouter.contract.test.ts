@@ -148,9 +148,9 @@ describe("WireEventRouter contract: ordinary chat", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// General behaviour
+// General behavior
 // ─────────────────────────────────────────────────────────────────────────────
-describe("WireEventRouter contract: general behaviour", () => {
+describe("WireEventRouter contract: general behavior", () => {
   let deps: WireEventRouterDeps;
   let router: WireEventRouter;
 
@@ -242,7 +242,7 @@ describe("WireEventRouter contract: member cache lifecycle", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 2: Pipeline enqueue behaviour
+// Phase 2: Pipeline enqueue behavior
 // ─────────────────────────────────────────────────────────────────────────────
 describe("WireEventRouter contract: passive help enqueue", () => {
   function makeQueueDeps() {

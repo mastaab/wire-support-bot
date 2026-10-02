@@ -69,7 +69,7 @@ export function createCliOutbound(members: readonly CliMember[], write: (text: s
 /**
  * A bare option number ("2") typed after a button question is a click on that option of the
  * latest question, sent by `sender`; null for any other line, which the CLI sends as text (so
- * "yes", "SD-41" or "new" answer as they do in Wire). When the question has buttons labelled with
+ * "yes", "SD-41" or "new" answer as they do in Wire). When the question has buttons labeled with
  * numbers (the quick quantities [1] [2] [5]), a bare number clicks only the button with that label
  * and any other number is sent as text, so typing "3" answers a quantity of 3 instead of
  * clicking the third button.

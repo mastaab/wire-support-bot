@@ -47,10 +47,10 @@ function expectAudited(auditLog: ReturnType<typeof makeAudit>, mimeType: string,
     entityId: "SD-6",
     details: { attachment: { mimeType, sizeInBytes }, outcome },
   });
-  const serialised = JSON.stringify(entry);
-  expect(serialised).not.toContain("IMG_0042");
-  expect(serialised).not.toContain("service-log");
-  expect(serialised).not.toContain("secret-token");
+  const serialized = JSON.stringify(entry);
+  expect(serialized).not.toContain("IMG_0042");
+  expect(serialized).not.toContain("service-log");
+  expect(serialized).not.toContain("secret-token");
 }
 
 function expectSingleReplyStored(
@@ -96,7 +96,7 @@ describe("AttachFileToRequest", () => {
     expect(tracker.addCustomerAttachment).toHaveBeenCalledWith("SD-6", expect.anything(), "Photo from Wire. Sent from Wire.");
   });
 
-  it("normalises the key before the scope check", async () => {
+  it("normalizes the key before the scope check", async () => {
     const { tracker, useCase } = setup();
 
     expect(await useCase.execute({ ...input, issueKey: " sd-6 " })).toBe(true);

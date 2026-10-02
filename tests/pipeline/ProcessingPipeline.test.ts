@@ -71,7 +71,7 @@ describe("passive service-desk help", () => {
     expect(deps.classifier.classify).toHaveBeenCalledWith("The printer jams", { channelId: "conv-1@example.com" }, ["[Alice] hello", "[user-2] The printer jams"]);
   });
 
-  it("shows the app typing while it drafts help for a recognised service-desk matter", async () => {
+  it("shows the app typing while it drafts help for a recognized service-desk matter", async () => {
     const deps = makeDeps({ classifier: { classify: vi.fn().mockResolvedValue(serviceRequest) } });
     let typing = false;
     vi.mocked(deps.wireOutbound.withTyping).mockImplementation(async (_conversationId, work) => {
@@ -130,7 +130,7 @@ describe("passive service-desk help", () => {
     expect(deps.logger.warn).toHaveBeenCalledWith("Pipeline: classify failed", { err: "Error" });
   });
 
-  it("does nothing for a job cancelled before it runs", async () => {
+  it("does nothing for a job canceled before it runs", async () => {
     const deps = makeDeps({ classifier: { classify: vi.fn().mockResolvedValue(serviceRequest) } });
     const controller = new AbortController();
     controller.abort();
@@ -139,7 +139,7 @@ describe("passive service-desk help", () => {
     expect(deps.supportHelp.execute).not.toHaveBeenCalled();
   });
 
-  it("does not call the use case when the job is cancelled during classification", async () => {
+  it("does not call the use case when the job is canceled during classification", async () => {
     const controller = new AbortController();
     const deps = makeDeps({ classifier: { classify: vi.fn(async () => { controller.abort(); return serviceRequest; }) } });
     await new ProcessingPipeline(deps).process(baseJob(), controller.signal);

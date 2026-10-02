@@ -59,7 +59,7 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     this.offers.set(conversationKey, byRequester);
     if (offer.id && offer.messageId) {
       const entry = this.promptEntry(conversationKey, offer.messageId);
-      // A re-stored offer (asked again after an acknowledgement) keeps what its message had.
+      // A re-stored offer (asked again after an acknowledgment) keeps what its message had.
       if (entry.prompt?.offerId !== offer.id) {
         entry.prompt = { offerId: offer.id, requesterId: offer.requesterId, answered: false, closed: false };
         entry.question = offer.question;

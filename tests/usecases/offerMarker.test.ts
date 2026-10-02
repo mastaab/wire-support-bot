@@ -20,7 +20,7 @@ describe("parseOfferMarker", () => {
     expect(command).toEqual({ kind: "support", requestKind: "fault", summary: "VPN drops again", description: "Line one.\nLine two." });
   });
 
-  it("accepts reply and resolve offers and normalises keys", () => {
+  it("accepts reply and resolve offers and normalizes keys", () => {
     expect(parseOfferMarker(`ok\n${marker({ kind: "reply", issueKey: "sd-4", body: "  The draft is attached.  " })}`).command)
       .toEqual({ kind: "reply", issueKey: "SD-4", body: "The draft is attached." });
     expect(parseOfferMarker(`ok\n${marker({ kind: "resolve", issueKey: " sd-6 " })}`).command).toEqual({ kind: "resolve", issueKey: "SD-6" });
@@ -41,7 +41,7 @@ describe("parseOfferMarker", () => {
     ["code prefix", (json: string) => `\`OFFER:\` ${json}`],
     ["list bullet", (json: string) => `- OFFER: ${json}`],
     ["code fence", (json: string) => `\`\`\`json\nOFFER: ${json}\n\`\`\``],
-  ])("honours and hides a marker with Markdown decoration: %s", (_label, decorate) => {
+  ])("honors and hides a marker with Markdown decoration: %s", (_label, decorate) => {
     const json = JSON.stringify({ kind: "support", requestKind: "fault", summary: "Rollers squeal", description: "The rollers on printer 12 squeal" });
     expect(parseOfferMarker(`I can raise that.\n\n${decorate(json)}\n`)).toEqual({
       text: "I can raise that.",
@@ -50,12 +50,12 @@ describe("parseOfferMarker", () => {
     });
   });
 
-  it("hides a decorated marker in the middle of the answer without honouring it", () => {
+  it("hides a decorated marker in the middle of the answer without honoring it", () => {
     const json = JSON.stringify({ kind: "support", summary: "Rollers squeal", description: "Squeal" });
     expect(parseOfferMarker(`Before.\n**OFFER**: ${json}\nAfter.`)).toEqual({ text: "Before.\nAfter.", command: null, hadMarker: true });
   });
 
-  it("does not take prose that starts with a capitalised Offer for a marker", () => {
+  it("does not take prose that starts with a capitalized Offer for a marker", () => {
     expect(parseOfferMarker("Offer: I can raise this with the service desk.")).toEqual({
       text: "Offer: I can raise this with the service desk.", command: null, hadMarker: false,
     });
@@ -88,11 +88,11 @@ describe("parseOfferMarker", () => {
     ["a resolve with an action ID", marker({ kind: "resolve", issueKey: "ACT0010" })],
     ["a resolve with a non-string comment", marker({ kind: "resolve", issueKey: "SD-6", comment: 42 })],
     ["a resolve with a comment that is too long", marker({ kind: "resolve", issueKey: "SD-6", comment: "c".repeat(REPLY_BODY_MAX + 1) })],
-  ])("honours no command for %s, and still hides the marker", (_label, line) => {
+  ])("honors no command for %s, and still hides the marker", (_label, line) => {
     expect(parseOfferMarker(`Answer.\n${line}`)).toEqual({ text: "Answer.", command: null, hadMarker: true });
   });
 
-  it("only honours a marker on the last line, but never shows one anywhere", () => {
+  it("only honors a marker on the last line, but never shows one anywhere", () => {
     expect(parseOfferMarker(`${marker({ kind: "resolve", issueKey: "SD-1" })}\nMore text after it.`)).toEqual({
       text: "More text after it.",
       command: null,
@@ -116,7 +116,7 @@ describe("parseOfferMarker", () => {
     expect(parsed.text).not.toContain("SECRET DRAFT");
   });
 
-  it("hides a multi-line marker in the middle of the answer without honouring it", () => {
+  it("hides a multi-line marker in the middle of the answer without honoring it", () => {
     const answer = 'Before.\nOFFER: {\n  "kind": "resolve",\n  "issueKey": "SD-1"\n}\nAfter the marker.';
     expect(parseOfferMarker(answer)).toEqual({ text: "Before.\nAfter the marker.", command: null, hadMarker: true });
   });
@@ -194,7 +194,7 @@ describe("parseOfferMarker: request kinds and part details", () => {
   });
 
   it("leaves out empty, non-text, overlong and unknown part details, and takes a number as text", () => {
-    const part = { asset: "   ", part: { name: "tray" }, quantity: 2, deliverTo: "d".repeat(PART_DETAIL_MAX + 1), colour: "red" };
+    const part = { asset: "   ", part: { name: "tray" }, quantity: 2, deliverTo: "d".repeat(PART_DETAIL_MAX + 1), color: "red" };
     expect(parseOfferMarker(marker({ ...base, requestKind: "part", part })).command).toEqual({
       kind: "support", requestKind: "part", summary: "Toner cartridges empty", description: "Need new toner cartridges.",
       part: { quantity: "2" },

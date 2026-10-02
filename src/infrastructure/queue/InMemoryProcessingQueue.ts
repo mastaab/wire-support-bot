@@ -6,7 +6,7 @@
  * Redis TTL). Processing is intentionally transient: jobs lost on restart
  * are acceptable and desired.
  *
- * Behaviour:
+ * Behavior:
  *   - Up to MAX_CONCURRENCY jobs run simultaneously.
  *   - Queue depth capped at MAX_DEPTH. When full, the oldest unprocessed job
  *     is dropped (with a warning log) before enqueueing the new one.
@@ -112,7 +112,7 @@ export class InMemoryProcessingQueue<T = unknown> {
     }
   }
 
-  /** Discard queued context and wait for the cancelled worker to release all work. */
+  /** Discard queued context and wait for the canceled worker to release all work. */
   cancelChannel(channelId: string): Promise<void> {
     for (let i = this.queue.length - 1; i >= 0; i--) {
       if (this.queue[i].channelId === channelId) this.queue.splice(i, 1);

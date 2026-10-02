@@ -38,7 +38,7 @@ export interface OfferSupportInput {
   confidence: number;
   /** Conversation timezone for reply times in a status answer. */
   timezone?: string;
-  /** Cancelled when the bot leaves the conversation; checked before anything is sent. */
+  /** Canceled when the bot leaves the conversation; checked before anything is sent. */
   signal?: AbortSignal;
 }
 
@@ -148,8 +148,8 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
       this.logger?.warn("OfferSupportFromConversation: matchStatusQuestion failed", { err: errorName(err) });
       return null;
     }
-    const normalised = typeof key === "string" ? key.trim().toUpperCase() : "";
-    return open.find((r) => r.key === normalised)?.key ?? null;
+    const normalized = typeof key === "string" ? key.trim().toUpperCase() : "";
+    return open.find((r) => r.key === normalized)?.key ?? null;
   }
 
   /**
@@ -304,7 +304,7 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
    * offer for the speaker. An offer question goes with buttons ([Yes] [No], or one per option of
    * a choice, or the options for a part order's essential named by `fillsPart`); `withButtons`
    * is false for a question that asks for free-text details instead. True when the
-   * question was sent, even if the work was cancelled during the send and the offer is not stored.
+   * question was sent, even if the work was canceled during the send and the offer is not stored.
    * A button question is not stored as a request's last message: it is edited when it closes, so
    * the next watch update quotes the request's previous last message instead.
    */
@@ -323,7 +323,7 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
       this.logger?.warn("OfferSupportFromConversation: sending the offer failed", { err: errorName(err) });
       return false;
     }
-    // Cancelled during the send (the bot left the conversation, which cleared its offers):
+    // Canceled during the send (the bot left the conversation, which cleared its offers):
     // storing this one now would let it outlive the conversation.
     if (!input.signal?.aborted) {
       const now = this.now();

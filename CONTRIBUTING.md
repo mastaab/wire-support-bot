@@ -39,7 +39,7 @@ Keep one concern per module, use explicit types, and match the existing style. A
 - New use cases and non-trivial logic need tests. Unit tests use mocked ports and need no database, network or Wire connection; follow `tests/usecases/` and `tests/pipeline/`.
 - Changes to Wire event routing or outbound mapping need contract tests in `tests/contract/`, including button clicks (the asked member, other members, repeated and late clicks, and clicks together with text answers) and how each question is closed.
 - Repository changes need integration tests in `tests/integration/`, run with `INTEGRATION_TESTS=1` against a throwaway database. Never point tests at a shared or production database.
-- For behaviour that depends on the model, try it with the CLI (see the README) against a test project before you rely on it.
+- For behavior that depends on the model, try it with the CLI (see the README) against a test project before you rely on it.
 
 ## Gates
 

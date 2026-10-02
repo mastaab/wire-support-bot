@@ -1,5 +1,5 @@
 /**
- * Recognises a request for a Jira ticket's status. The router calls it only
+ * Recognizes a request for a Jira ticket's status. The router calls it only
  * when the bot is addressed: every support-request command needs a mention.
  *
  * - The exact command (`status of SD-4`) matches.

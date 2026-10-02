@@ -268,7 +268,7 @@ describe("formatIssue", () => {
     expect(line).not.toContain("undefined");
   });
 
-  it("formats an issue status without the tracker's localised status name", () => {
+  it("formats an issue status without the tracker's localized status name", () => {
     expect(formatIssueStatus(snapshot)).toBe([
       "**SD-6** VPN drops every ten minutes",
       "Status: In progress",

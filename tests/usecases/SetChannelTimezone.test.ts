@@ -49,7 +49,7 @@ describe("SetChannelTimezone", () => {
     expect(wire.sendPlainText).toHaveBeenCalledWith(conversationId, "This channel's timezone is now **Europe/Berlin** (currently 18:40 CEST).", { replyToMessageId: "m" });
   });
 
-  it("canonicalises a lower-case name", async () => {
+  it("canonicalizes a lower-case name", async () => {
     const { useCase, channelConfig, reply } = setup();
     await useCase.execute({ conversationId, channelId, actorId, timezone: "america/new_york" });
     expect(channelConfig.setTimezone).toHaveBeenCalledWith(channelId, "America/New_York", whenMissing);

@@ -475,7 +475,7 @@ describe("JiraServiceManagementAdapter own account lookup", () => {
 describe("JiraServiceManagementAdapter.listChangedSince", () => {
   const SEARCH = "POST /rest/api/3/search/jql";
   const NOW = new Date("2026-09-26T12:00:00Z");
-  const found = (key: string, category: string, updated: string, name = "Localised name") =>
+  const found = (key: string, category: string, updated: string, name = "Localized name") =>
     ({ key, fields: { status: { id: "1", name, statusCategory: { key: category } }, updated } });
   const bodies = (fetch: ReturnType<typeof stubJira>) =>
     fetch.mock.calls.map(([, init]) => JSON.parse(init.body as string) as { jql: string; fields: string[]; maxResults: number; nextPageToken?: string });
@@ -663,7 +663,7 @@ describe("JiraServiceManagementAdapter.addCustomerAttachment", () => {
     ["invoice\u202Efdp.exe", "invoicefdp.exe"],
     ["a\u200Bb\u2066c.pdf", "abc.pdf"],
     [`${"x".repeat(300)}.pdf`, `${"x".repeat(251)}.pdf`],
-  ])("sanitises the file name %j to %j", async (name, expected) => {
+  ])("sanitizes the file name %j to %j", async (name, expected) => {
     const fetch = stubJira({ [UPLOAD]: [uploaded()], [ATTACH]: [empty(204)] });
     await adapter().addCustomerAttachment("SD-1", photo(name), "Photo");
     expect(sentFile(fetch).name).toBe(expected);

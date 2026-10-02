@@ -16,7 +16,7 @@ Classify the message into one or more of these categories:
 ${SERVICE_REQUEST_LINE_MARKER}- request_status: someone asks about the state of a problem or service request they or others reported
 - update: news about ongoing work, such as a change to a problem already reported
 - blocker: progress is blocked by an impediment
-- other: anything else, such as chat, greetings, acknowledgements, questions to colleagues and bot commands
+- other: anything else, such as chat, greetings, acknowledgments, questions to colleagues and bot commands
 
 A message may have several categories: a problem that blocks work is both a service_request and a blocker. Use other only when no other category applies.
 

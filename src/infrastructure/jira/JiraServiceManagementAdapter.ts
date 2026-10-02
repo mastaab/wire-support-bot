@@ -4,7 +4,7 @@
  * - Requests are raised through the Service Management API so they enter the queues and
  *   SLAs; the due date and labels are set with a follow-up issue edit because that API only
  *   accepts fields on the customer request form.
- * - Status is read by category only. Status names are localised and never used.
+ * - Status is read by category only. Status names are localized and never used.
  * - Errors and logs never include request bodies, response bodies or credentials.
  */
 
@@ -151,7 +151,7 @@ const UPLOAD_TIMEOUT_MS = 60_000;
  * invisible format characters (which can disguise an extension) removed, trimmed, cut to
  * Jira's length limit keeping the extension, and "attachment" when nothing is left.
  */
-function sanitiseFileName(name: string): string {
+function sanitizeFileName(name: string): string {
   const cleaned = name.replace(/[\\/\p{Cc}\p{Cf}]/gu, "").trim();
   if (!cleaned) return "attachment";
   if (cleaned.length <= FILE_NAME_MAX) return cleaned;
@@ -338,7 +338,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     this.assertInProject(key);
     const form = new FormData();
     // Copied into a plain ArrayBuffer view, since Blob does not accept a shared buffer.
-    form.append("file", new Blob([new Uint8Array(file.data)], { type: file.mimeType }), sanitiseFileName(file.name));
+    form.append("file", new Blob([new Uint8Array(file.data)], { type: file.mimeType }), sanitizeFileName(file.name));
     const uploaded = await this.request<{ temporaryAttachments?: Array<{ temporaryAttachmentId?: unknown }> }>(
       "POST",
       `/rest/servicedeskapi/servicedesk/${this.config.serviceDeskId}/attachTemporaryFile`,
@@ -421,7 +421,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
   }
 
   /**
-   * The bot's own Jira account ID, used to recognise replies sent from Wire. A failed lookup
+   * The bot's own Jira account ID, used to recognize replies sent from Wire. A failed lookup
    * is not cached, so the next call tries again; until then no reply is marked as the bot's.
    */
   private async readOwnAccountId(): Promise<string | undefined> {
@@ -469,7 +469,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     const headers: Record<string, string> = {
       Authorization: this.authorization,
       Accept: "application/json",
-      // Without an explicit language Jira localises status names for this account.
+      // Without an explicit language Jira localizes status names for this account.
       "Accept-Language": "en-GB",
       ...extraHeaders,
     };

@@ -27,7 +27,7 @@ In the examples, `SD` stands for the configured project key and `SD-42` for a ti
 | `@Wire Support Bot support: <problem>` | Raises a support request at once. The first line becomes the summary (cut at 120 characters), the whole text the description. |
 | `@Wire Support Bot status of SD-42` | Shows the request's live status, SLAs and latest replies from the service desk. A question such as "any update on SD-42?" works too. |
 | `@Wire Support Bot reply to SD-42: <text>` | Sends a customer-facing reply to the request. |
-| `@Wire Support Bot resolve SD-42` | Resolves the request by following the workflow transitions towards a done status. `close SD-42` works too. |
+| `@Wire Support Bot resolve SD-42` | Resolves the request by following the workflow transitions toward a done status. `close SD-42` works too. |
 | `@Wire Support Bot resolve SD-42: <comment>` | Adds a closing comment as a customer-facing reply, then resolves. |
 | `@Wire Support Bot support requests` | Lists the open support requests of this conversation. |
 | `@Wire Support Bot my support requests` | Lists the open support requests the sender raised in this conversation. |
@@ -174,7 +174,7 @@ One gap remains: if the process stops between creating the group and storing its
 
 ### What the bot does not do
 
-- It does not store or summarise the conversation, and does not search past conversations.
+- It does not store or summarize the conversation, and does not search past conversations.
 - It does not read or write internal notes, and does not change assignees, priorities or other fields.
 - It does not act on edited messages, and buttons only answer the bot's own offer questions.
 - It does not raise anything from an unaddressed message without an explicit yes.
@@ -250,7 +250,7 @@ The seam covers the answer path, which needs a mention. Suggesting knowledge for
 
 ### Another tracker
 
-The use cases talk to the service desk only through `IssueTrackerPort` in `src/application/ports/IssueTrackerPort.ts`: create an issue, read it, resolve it by status category, list and add customer-facing replies, list changed issues and add an attachment. To use another tracker, implement that port in a new adapter and construct it instead of `JiraServiceManagementAdapter` in `src/app/container.ts` and `src/app/cli.ts`. Keep the port's guarantees: status categories rather than localised status names, no internal notes, and error messages without response bodies or credentials. The configuration (`JiraConfig` in `src/app/config.ts`) and ticket keys (`src/domain/ids/jiraLink.ts`, keys such as `SD-42`) are Jira-shaped today, so a tracker with a different key format needs changes there too.
+The use cases talk to the service desk only through `IssueTrackerPort` in `src/application/ports/IssueTrackerPort.ts`: create an issue, read it, resolve it by status category, list and add customer-facing replies, list changed issues and add an attachment. To use another tracker, implement that port in a new adapter and construct it instead of `JiraServiceManagementAdapter` in `src/app/container.ts` and `src/app/cli.ts`. Keep the port's guarantees: status categories rather than localized status names, no internal notes, and error messages without response bodies or credentials. The configuration (`JiraConfig` in `src/app/config.ts`) and ticket keys (`src/domain/ids/jiraLink.ts`, keys such as `SD-42`) are Jira-shaped today, so a tracker with a different key format needs changes there too.
 
 ## Setup
 
@@ -433,8 +433,8 @@ dropdb wire_support_bot_test
 - Only photos and documents of the listed types, up to 10 MB, are offered for attaching.
 - With a remote model provider and sharing on, ticket content leaves your infrastructure; see "What is stored and what is sent where".
 
-## Licence
+## License
 
 This project is licensed under the GNU General Public License, version 3 only (`GPL-3.0-only`); see [LICENSE](LICENSE).
 
-Its Wire libraries are GPL-3.0 as well (`@wireapp/wire-apps-js-sdk`, `@wireapp/core-crypto` and `bazinga64`). A bot built from this code runs those libraries in the same process, so if you distribute your bot, the combined work falls under the GPL and you must offer its source to the people you distribute it to. Running the bot only for yourself does not require that. The other dependencies are under permissive licences (MIT, Apache-2.0, BSD) or MPL-2.0, which are compatible with the GPL.
+Its Wire libraries are GPL-3.0 as well (`@wireapp/wire-apps-js-sdk`, `@wireapp/core-crypto` and `bazinga64`). A bot built from this code runs those libraries in the same process, so if you distribute your bot, the combined work falls under the GPL and you must offer its source to the people you distribute it to. Running the bot only for yourself does not require that. The other dependencies are under permissive licenses (MIT, Apache-2.0, BSD) or MPL-2.0, which are compatible with the GPL.

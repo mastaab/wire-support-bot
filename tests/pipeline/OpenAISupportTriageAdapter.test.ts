@@ -127,7 +127,7 @@ describe("OpenAISupportTriageAdapter", () => {
         expect(system).toContain("\"resolves\":\"<listed key>\"|null,\"closingComment\":\"<closing remark>\"|null");
       });
 
-      it("returns a listed key, normalised to the listed form, with a trimmed comment", async () => {
+      it("returns a listed key, normalized to the listed form, with a trimmed comment", async () => {
         const { llm } = makeLLM(JSON.stringify({ summary: "", description: "", duplicateOf: null, addition: null, resolves: " sd-6 ", closingComment: `  ${COMMENT} ` }));
         const draft = await new OpenAISupportTriageAdapter(llm, makeLogger()).draftRequest("the tray was delivered, close SD-6 and note it arrived at depot north", OPEN);
         expect(draft).toEqual({ requestKind: "fault", summary: "", description: "", duplicateOf: null, addition: null, resolves: "SD-6", closingComment: COMMENT });
@@ -245,7 +245,7 @@ describe("OpenAISupportTriageAdapter", () => {
       it("leaves out essentials that are absent, empty, not text or over the limit", async () => {
         const draft = await draftWith({
           requestKind: "part",
-          part: { asset: "a".repeat(PART_DETAIL_MAX + 1), part: "b".repeat(PART_DETAIL_MAX), quantity: "  ", deliverTo: { site: "x" }, colour: "red" },
+          part: { asset: "a".repeat(PART_DETAIL_MAX + 1), part: "b".repeat(PART_DETAIL_MAX), quantity: "  ", deliverTo: { site: "x" }, color: "red" },
         });
         expect(draft?.part).toEqual({ part: "b".repeat(PART_DETAIL_MAX) });
       });
@@ -332,7 +332,7 @@ describe("OpenAISupportTriageAdapter", () => {
   });
 
   describe("matchStatusQuestion", () => {
-    it("returns a listed key, normalised to the listed form", async () => {
+    it("returns a listed key, normalized to the listed form", async () => {
       const { llm, chatCompletion } = makeLLM(JSON.stringify({ key: "sd-6" }));
       expect(await new OpenAISupportTriageAdapter(llm, makeLogger()).matchStatusQuestion("any news on the VPN?", OPEN)).toBe("SD-6");
       const [slot, messages, options] = chatCompletion.mock.calls[0]!;

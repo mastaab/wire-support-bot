@@ -52,15 +52,15 @@ const NO: ReadonlySet<string> = new Set(["no", "n", "nope", "no thanks", "cancel
  * bot asks again and keeps the offer, instead of dropping it while the requester thinks it
  * is still open.
  */
-const ACKNOWLEDGEMENTS: ReadonlySet<string> = new Set([
+const ACKNOWLEDGMENTS: ReadonlySet<string> = new Set([
   "ok", "okay", "k", "sure", "y", "thanks", "thank you", "cheers", "cool", "great", "fine", "alright", "all right",
 ]);
 
-/** True for a bare acknowledgement such as "ok" or "ok thanks", which is not a decision. */
-export function isAcknowledgement(text: string): boolean {
-  const normalised = normalise(text);
-  if (!normalised) return false;
-  return [normalised, normalise(stripCourtesy(normalised))].some((c) => ACKNOWLEDGEMENTS.has(c));
+/** True for a bare acknowledgment such as "ok" or "ok thanks", which is not a decision. */
+export function isAcknowledgment(text: string): boolean {
+  const normalized = normalize(text);
+  if (!normalized) return false;
+  return [normalized, normalize(stripCourtesy(normalized))].some((c) => ACKNOWLEDGMENTS.has(c));
 }
 
 /**
@@ -69,15 +69,15 @@ export function isAcknowledgement(text: string): boolean {
  * longer ("yes but change the owner first") is not a confirmation.
  */
 export function classifyConfirmation(text: string): Confirmation | null {
-  const normalised = normalise(text);
-  if (!normalised) return null;
-  const candidates = [normalised, normalise(stripCourtesy(normalised))];
+  const normalized = normalize(text);
+  if (!normalized) return null;
+  const candidates = [normalized, normalize(stripCourtesy(normalized))];
   if (candidates.some(c => YES.has(c))) return "yes";
   if (candidates.some(c => NO.has(c))) return "no";
   return null;
 }
 
-function normalise(text: string): string {
+function normalize(text: string): string {
   return text
     .trim()
     .toLowerCase()
@@ -146,10 +146,10 @@ export class ConfirmOffer {
 
     const answer = classifyConfirmation(input.text);
     if (!answer) {
-      if (!isAcknowledgement(input.text) || !live) return false;
+      if (!isAcknowledgment(input.text) || !live) return false;
       const pending = this.offers.take(input.conversationId, input.requesterId, now);
       if (!pending) return false;
-      // Keep the offer and ask again: an acknowledgement is a response, but not a decision.
+      // Keep the offer and ask again: an acknowledgment is a response, but not a decision.
       this.offers.put(pending);
       await this.wireOutbound.sendPlainText(input.conversationId, askAgain(pending.command, this.partAsset), { replyToMessageId: input.replyToMessageId });
       return true;
@@ -179,7 +179,7 @@ export class ConfirmOffer {
     return true;
   }
 
-  /** A text answer to a choice offer: an option runs, a bare yes or acknowledgement asks again, anything else is not an answer. */
+  /** A text answer to a choice offer: an option runs, a bare yes or acknowledgment asks again, anything else is not an answer. */
   private async answerChoice(live: PendingOffer, choices: readonly OfferChoice[], input: ConfirmOfferInput, now: Date): Promise<boolean> {
     const index = matchChoice(choices, input.text);
     if (index === null && live.deskUpdate) {
@@ -192,7 +192,7 @@ export class ConfirmOffer {
       return true;
     }
     if (index === null) {
-      if (classifyConfirmation(input.text) !== "yes" && !isAcknowledgement(input.text)) return false;
+      if (classifyConfirmation(input.text) !== "yes" && !isAcknowledgment(input.text)) return false;
       await this.wireOutbound.sendPlainText(input.conversationId, formatChooseAgain(choiceHint(choices)), { replyToMessageId: input.replyToMessageId });
       return true;
     }
@@ -257,7 +257,7 @@ export class ConfirmOffer {
   /**
    * A text answer to a button question for one part-order essential. An option's label ("2",
    * "Depot north", "other") picks it like a click; for the quantity, a bare number ("3") fills it
-   * directly. A "no" declines the order; a "yes" or an acknowledgement says what is still missing
+   * directly. A "no" declines the order; a "yes" or an acknowledgment says what is still missing
    * and keeps the question open. Anything else is not handled here: the router hands it to
    * `CompletePartOrder`, so a free-text value or a correction ("actually three") still works.
    */
@@ -266,7 +266,7 @@ export class ConfirmOffer {
     const quantity = live.fillsPart === "quantity" ? answerForms(input.text).find((form) => /^\d{1,4}$/.test(form) && Number(form) > 0) : undefined;
     const decision = classifyConfirmation(input.text);
     if (index === null && !quantity && decision !== "no") {
-      if (decision !== "yes" && !isAcknowledgement(input.text)) return false;
+      if (decision !== "yes" && !isAcknowledgment(input.text)) return false;
       await this.wireOutbound.sendPlainText(input.conversationId, formatStillMissingReply(missingPartDetails(live.command), this.partAsset), {
         replyToMessageId: input.replyToMessageId,
       });
@@ -383,7 +383,7 @@ export class ConfirmOffer {
   }
 }
 
-/** The code-written re-ask after an acknowledgement; it ends with a question like the offer itself. */
+/** The code-written re-ask after an acknowledgment; it ends with a question like the offer itself. */
 function askAgain(command: OfferCommand, asset: PartAssetWording): string {
   const partQuestion = partOrderTextQuestion(command, asset);
   if (partQuestion) return partQuestion;

@@ -25,7 +25,7 @@ describe("attachableKind", () => {
     ["IMAGE/JPEG", "photo"],
     ["Image/Png", "photo"],
     ["Application/PDF", "file"],
-  ])("normalises %j to %s", (type, kind) => {
+  ])("normalizes %j to %s", (type, kind) => {
     expect(attachableKind(type)).toBe(kind);
   });
 

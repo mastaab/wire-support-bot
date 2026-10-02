@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { ConfirmOffer, classifyConfirmation, isAcknowledgement } from "../../src/application/usecases/jira/ConfirmOffer";
+import { ConfirmOffer, classifyConfirmation, isAcknowledgment } from "../../src/application/usecases/jira/ConfirmOffer";
 import type { ConfirmOfferHandlers } from "../../src/application/usecases/jira/ConfirmOffer";
 import { InMemoryPendingOfferStore } from "../../src/infrastructure/services/InMemoryPendingOfferStore";
 import { RECENT_DROP_MS } from "../../src/application/services/offers";
@@ -37,12 +37,12 @@ describe("classifyConfirmation", () => {
   ])("does not treat %j as a confirmation", (text) => {
     expect(classifyConfirmation(text)).toBeNull();
   });
-  it.each(["ok", "OK!", "okay", "sure", "ok thanks", "ok, thanks", "thanks", "y", "cheers"])("recognises %j as an acknowledgement, not a decision", (text) => {
-    expect(isAcknowledgement(text)).toBe(true);
+  it.each(["ok", "OK!", "okay", "sure", "ok thanks", "ok, thanks", "thanks", "y", "cheers"])("recognizes %j as an acknowledgment, not a decision", (text) => {
+    expect(isAcknowledgment(text)).toBe(true);
   });
 
-  it.each(["yes", "no", "what is due today?", "ok so what's next", "okay resolve SD-7 instead"])("does not treat %j as a bare acknowledgement", (text) => {
-    expect(isAcknowledgement(text)).toBe(false);
+  it.each(["yes", "no", "what is due today?", "ok so what's next", "okay resolve SD-7 instead"])("does not treat %j as a bare acknowledgment", (text) => {
+    expect(isAcknowledgment(text)).toBe(false);
   });
 });
 
@@ -197,7 +197,7 @@ describe("ConfirmOffer", () => {
     [REPLY, "I need a clear yes or no, so I haven't added this to **SD-6** yet. Shall I add it (yes or no)?"],
     [RESOLVE, "I need a clear yes or no, so I haven't resolved **SD-6** yet. Shall I resolve it with the service desk (yes or no)?"],
     [RESOLVE_WITH_COMMENT, "I need a clear yes or no, so I haven't resolved **SD-6** yet. Shall I add the comment and resolve it (yes or no)?"],
-  ])("asks again after an acknowledgement for a %j offer, keeps it, and a following yes still confirms it", async (command, question) => {
+  ])("asks again after an acknowledgment for a %j offer, keeps it, and a following yes still confirms it", async (command, question) => {
     const { handlers, wire, store, useCase, offer } = setup();
     offer(command);
 
@@ -215,7 +215,7 @@ describe("ConfirmOffer", () => {
     expect(dispatched).toHaveBeenCalledTimes(1);
   });
 
-  it("does not treat an acknowledgement as handled when nothing is pending", async () => {
+  it("does not treat an acknowledgment as handled when nothing is pending", async () => {
     const { handlers, wire, useCase } = setup();
     expect(await useCase.execute({ ...input, text: "ok thanks" })).toBe(false);
     expectNothingDispatched(handlers);
@@ -405,7 +405,7 @@ describe("ConfirmOffer", () => {
       ]);
     });
 
-    it("asks for the missing free-text details again after an acknowledgement", async () => {
+    it("asks for the missing free-text details again after an acknowledgment", async () => {
       const { handlers, sent, store, useCase, offer } = setup();
       offer(INCOMPLETE);
 
@@ -487,7 +487,7 @@ describe("ConfirmOffer", () => {
     it.each([
       [ATTACH_PHOTO, "I need a clear yes or no, so I haven't added this photo to **SD-6** yet. Shall I add it (yes or no)?"],
       [ATTACH_DOCUMENT, "I need a clear yes or no, so I haven't added this file (service-log.pdf) to **SD-6** yet. Shall I add it (yes or no)?"],
-    ])("asks again after an acknowledgement for %j, keeps it, and a following yes attaches it", async (command, question) => {
+    ])("asks again after an acknowledgment for %j, keeps it, and a following yes attaches it", async (command, question) => {
       const { attachFileToRequest, wire, store, useCase, offer } = setupAttach();
       offer(command);
 
@@ -668,7 +668,7 @@ describe("ConfirmOffer: buttons and choices", () => {
     });
   });
 
-  it("marks the button message answered for a text yes or no to a yes-or-no offer, but not for an acknowledgement", async () => {
+  it("marks the button message answered for a text yes or no to a yes-or-no offer, but not for an acknowledgment", async () => {
     const ack = withOffer(SUPPORT);
     expect(await ack.useCase.execute({ ...input, text: "ok" })).toBe(true);
     expect(ack.store.prompt(convId, "msg-q")?.answered).toBe(false);

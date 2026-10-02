@@ -32,7 +32,7 @@ describe.skipIf(process.env.INTEGRATION_TESTS !== "1")("ChannelConfigRepository 
     expect(await channels.get(id)).toEqual(stored);
   });
 
-  it("keeps the organisation on a timezone change of an existing config", async () => {
+  it("keeps the organization on a timezone change of an existing config", async () => {
     const id = channelId(2);
     await channels.upsert({ channelId: id, organisationId: "synthetic.test", timezone: "UTC" });
     await channels.setTimezone(id, "America/New_York", { organisationId: "other.synthetic.test" });

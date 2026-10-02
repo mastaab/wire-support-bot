@@ -65,7 +65,7 @@ describe("CLI fallback for buttons", () => {
     for (const line of ["yes", "SD-41", "0", "3", "1 please", "12a"]) expect(cliButtonClick(line, alice, convId, cli.latestPrompt())).toBeNull();
   });
 
-  it("clicks only the button labelled with the number when the buttons are quantities, and sends other numbers as text", async () => {
+  it("clicks only the button labeled with the number when the buttons are quantities, and sends other numbers as text", async () => {
     const { cli } = setup();
     const buttons = ["1", "2", "5", "Other"].map((label, index) => ({ id: `offer-1234:${index}`, label }));
     await cli.wireOutbound.sendCompositePrompt(convId, "How many shall I order?", buttons);

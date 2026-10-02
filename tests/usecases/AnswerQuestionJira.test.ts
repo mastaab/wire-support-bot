@@ -282,11 +282,11 @@ describe("AnswerQuestion with Jira: live ticket data", () => {
   });
 
   it("uses the category label, never the tracker's status name, and truncates long replies", async () => {
-    const localised = { ...snapshotFor("SD-6", "in_progress"), statusName: "In Arbeit" };
+    const localized = { ...snapshotFor("SD-6", "in_progress"), statusName: "In Arbeit" };
     const { run, ofType } = setup({
       requests: [makeRequest("SD-6", { statusCategory: "in_progress" })], shareWithModel: true,
       tracker: {
-        getIssue: vi.fn(async () => localised),
+        getIssue: vi.fn(async () => localized),
         listCustomerReplies: vi.fn(async () => [{ author: "Agent", created: NOW, body: "x".repeat(600) }]),
       },
     });

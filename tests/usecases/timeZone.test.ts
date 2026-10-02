@@ -14,7 +14,7 @@ describe("canonicalTimeZone", () => {
 });
 
 describe("resolveDefaultTimezone", () => {
-  it("defaults to UTC, canonicalises a valid name and rejects an unknown one", () => {
+  it("defaults to UTC, canonicalizes a valid name and rejects an unknown one", () => {
     expect(resolveDefaultTimezone({})).toBe("UTC");
     expect(resolveDefaultTimezone({ WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE: "europe/berlin" })).toBe("Europe/Berlin");
     expect(() => resolveDefaultTimezone({ WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE: "Mars/Olympus" })).toThrow(/IANA/);

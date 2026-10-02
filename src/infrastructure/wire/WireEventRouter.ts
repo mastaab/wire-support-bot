@@ -722,7 +722,7 @@ export class WireEventRouter extends WireEventsHandler {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Startup hydration: called once after the SDK is initialised
+  // Startup hydration: called once after the SDK is initialized
   // ─────────────────────────────────────────────────────────────────────────
 
   /**

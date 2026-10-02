@@ -322,14 +322,14 @@ describe("OfferSupportFromConversation", () => {
       expect(live.sent).toEqual([]);
 
       const controller = new AbortController();
-      const cancelled = setup(undefined, draft);
-      cancelled.triage.draftRequest.mockImplementation(async () => { controller.abort(); return draft; });
-      await cancelled.useCase.execute(input({ signal: controller.signal }));
-      expect(cancelled.sent).toEqual([]);
-      expect(cancelled.offers.put).not.toHaveBeenCalled();
+      const canceled = setup(undefined, draft);
+      canceled.triage.draftRequest.mockImplementation(async () => { controller.abort(); return draft; });
+      await canceled.useCase.execute(input({ signal: controller.signal }));
+      expect(canceled.sent).toEqual([]);
+      expect(canceled.offers.put).not.toHaveBeenCalled();
     });
 
-    it("does not store the addition offer when the work is cancelled while the question is being sent", async () => {
+    it("does not store the addition offer when the work is canceled while the question is being sent", async () => {
       const controller = new AbortController();
       const { wire, offers, sent, useCase } = setup(undefined, { ...DRAFT, duplicateOf: "SD-6", addition: "It happened again." });
       wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
@@ -527,7 +527,7 @@ describe("OfferSupportFromConversation", () => {
         expect(offers.put.mock.calls[0]![0].command.part.asset).toBe(asset);
       });
 
-      it("does not store the incomplete order when the work is cancelled while the question is being sent", async () => {
+      it("does not store the incomplete order when the work is canceled while the question is being sent", async () => {
         const controller = new AbortController();
         const { wire, offers, sent, useCase } = setup(undefined, { ...PART_DRAFT, part: { part: "paper tray roller" } });
         wire.sendPlainText.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
@@ -573,7 +573,7 @@ describe("OfferSupportFromConversation", () => {
       expect(offers.put).not.toHaveBeenCalled();
     });
 
-    it("sends and stores nothing when the job was cancelled during the draft", async () => {
+    it("sends and stores nothing when the job was canceled during the draft", async () => {
       const controller = new AbortController();
       const { triage, offers, sent, useCase } = setup();
       triage.draftRequest.mockImplementation(async () => { controller.abort(); return DRAFT; });
@@ -584,7 +584,7 @@ describe("OfferSupportFromConversation", () => {
       expect(offers.put).not.toHaveBeenCalled();
     });
 
-    it("does not store the offer when the work is cancelled while the question is being sent", async () => {
+    it("does not store the offer when the work is canceled while the question is being sent", async () => {
       const controller = new AbortController();
       const { wire, offers, sent, useCase } = setup();
       wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
@@ -686,7 +686,7 @@ describe("OfferSupportFromConversation", () => {
       expect(padded.offers.put.mock.calls[0]![0].command).toEqual({ kind: "resolve", issueKey: "SD-6", comment: COMMENT });
     });
 
-    it("normalises the key to the listed form", async () => {
+    it("normalizes the key to the listed form", async () => {
       const { offers, useCase } = setup(undefined, { ...RESOLVE, resolves: " sd-6 " });
 
       await useCase.execute(input());
@@ -770,7 +770,7 @@ describe("OfferSupportFromConversation", () => {
       expect(busy.offers.put).not.toHaveBeenCalled();
     });
 
-    it("sends and stores nothing when the job was cancelled during the draft", async () => {
+    it("sends and stores nothing when the job was canceled during the draft", async () => {
       const controller = new AbortController();
       const { triage, offers, sent, useCase } = setup(undefined, RESOLVE);
       triage.draftRequest.mockImplementation(async () => { controller.abort(); return RESOLVE; });
@@ -781,7 +781,7 @@ describe("OfferSupportFromConversation", () => {
       expect(offers.put).not.toHaveBeenCalled();
     });
 
-    it("does not store the offer when the work is cancelled while the question is being sent", async () => {
+    it("does not store the offer when the work is canceled while the question is being sent", async () => {
       const controller = new AbortController();
       const { wire, offers, sent, useCase } = setup(undefined, RESOLVE);
       wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => { sent.push(text); controller.abort(); return undefined; });
@@ -858,7 +858,7 @@ describe("OfferSupportFromConversation", () => {
       expect(getIssueStatus.execute).not.toHaveBeenCalled();
     });
 
-    it("does not answer when the job was cancelled during the match", async () => {
+    it("does not answer when the job was canceled during the match", async () => {
       const controller = new AbortController();
       const { triage, getIssueStatus, useCase } = setup(undefined, DRAFT, "SD-6");
       triage.matchStatusQuestion.mockImplementation(async () => { controller.abort(); return "SD-6"; });
@@ -983,12 +983,12 @@ describe("OfferSupportFromConversation", () => {
       failing.triage.draftRequest.mockRejectedValue(new SyntaxError("bad"));
       cases.push([failing, input()]);
       cases.push([setup(undefined, DRAFT, null), input({ categories: ["request_status"] })]);
-      // Cancelled before the send, and a failed send.
+      // Canceled before the send, and a failed send.
       const controller = new AbortController();
       controller.abort();
       cases.push([setup(), input({ signal: controller.signal })]);
-      const statusCancelled = setup(undefined, DRAFT, "SD-6");
-      cases.push([statusCancelled, input({ categories: ["request_status"], signal: controller.signal })]);
+      const statusCanceled = setup(undefined, DRAFT, "SD-6");
+      cases.push([statusCanceled, input({ categories: ["request_status"], signal: controller.signal })]);
       const sendFails = setup();
       sendFails.wire.sendCompositePrompt.mockRejectedValue(new TypeError("socket closed"));
       cases.push([sendFails, input()]);
@@ -1045,7 +1045,7 @@ describe("OfferSupportFromConversation: last message reference", () => {
     expect(none.offers.put).toHaveBeenCalledTimes(1);
   });
 
-  it("stores neither the offer nor a reference when the work is cancelled while the question is being sent", async () => {
+  it("stores neither the offer nor a reference when the work is canceled while the question is being sent", async () => {
     const controller = new AbortController();
     const { requests, wire, offers, sent, useCase } = setup(undefined, ADDITION);
     wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => {
