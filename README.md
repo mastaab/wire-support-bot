@@ -51,7 +51,7 @@ The rules for an offer:
 
 Where the bot would otherwise have to guess which request is meant, it asks, with a button per option:
 
-- **New or existing request.** When a problem described in passing may be one the conversation already has (an open request, or one done in the last 7 days, whose summary shares a significant word with the problem, or which the model names), the bot quotes the problem, lists up to three of those requests and offers [Add to SD-38] … [Raise new request] [Cancel]. Without such a request it offers to raise a new one as before.
+- **New or existing request.** When a problem described in passing may be one the conversation already has (an open request, or one done in the last 7 days, whose summary shares distinctive words with the problem, or which the model names), the bot quotes the problem, lists up to three of those requests (the model's pick first, then the others by how much they share: numbers and identifiers count strongly, words found in most of the conversation's requests weakly, generic words such as "broken", "not working", "issue" or "again" not at all; a request naming another identifier for the same thing, such as truck 13 for a truck 12 problem, is never listed) and offers [Add to SD-38] … [Raise new request] [Cancel]. Without such a request it offers to raise a new one as before.
 - **Which request to resolve or add to.** When a passive offer to resolve a request or to add a detail could fit several open requests and the message names no key, the bot lists up to three of them (the model's pick first, then the member's own, then the newest) and [Cancel].
 - **Which request a photo or document belongs to** (see below).
 
@@ -122,7 +122,7 @@ The explicit commands (`support:`, `reply to`, `resolve`) are themselves the mem
 
 ### Buttons
 
-Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update.
+Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered and ranked by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update.
 
 The click rules:
 
@@ -201,6 +201,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
 | `src/application/services/deskUpdateQuestions.ts` | The requester's question after a desk reply or resolve: texts, options, lifetime, and not asking over another open question. |
 | `src/application/services/offerPromptClosing.ts` | Closes ended button questions: the closing lines, one edit per message, the expiry sweep. |
+| `src/application/services/similarRequests.ts` | Ranks the conversation's requests that may describe the same problem as a new one. |
 | `src/application/services/partOrderSteps.ts` | A part order's questions, one step at a time: free-text essentials, quantity and delivery location buttons, the complete order. |
 | `src/application/usecases/jira/ConfirmOffer.ts` | Classifies a yes, no or choice, by text or button, and runs the confirmed use case. |
 | `src/application/usecases/jira/RaiseSupportRequest.ts`, `ReplyToServiceDesk.ts`, `ResolveSupportRequest.ts`, `GetIssueStatus.ts`, `ListSupportRequests.ts` | The support request use cases, scoped to the conversation; writes are audited. |

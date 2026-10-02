@@ -1122,7 +1122,7 @@ describe("OfferSupportFromConversation: last message reference", () => {
 
 describe("OfferSupportFromConversation: choosing the target", () => {
   const printer = (key: string, overrides: Partial<SupportRequest> = {}): SupportRequest =>
-    makeRequest({ key, summary: `Printer on floor ${key.slice(3)} is broken`, ...overrides });
+    makeRequest({ key, summary: `Printer ${key.slice(3)} on floor 3 is broken`, ...overrides });
   const buttonLabels = (wire: ReturnType<typeof setup>["wire"]) => (wire.sendCompositePrompt.mock.calls[0]![2] as Array<{ label: string }>).map((b) => b.label);
 
   describe("new or existing request", () => {
@@ -1134,7 +1134,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
       expect(sent).toEqual([
         "This may be the same problem as an existing request. Shall I add it there, or raise a new request?\n"
         + "> **Printer on floor 3 jams on every job**\n> The printer on floor 3 jams on every job.\n\n"
-        + '- **SD-38** "Printer on floor 38 is broken"',
+        + '- **SD-38** "Printer 38 on floor 3 is broken"',
       ]);
       expect(buttonLabels(wire)).toEqual(["Add to SD-38", "Raise new request", "Cancel"]);
       const offer = offers.put.mock.calls[0]![0];
@@ -1189,7 +1189,7 @@ describe("OfferSupportFromConversation: choosing the target", () => {
       const { wire, sent, useCase } = setup(records);
       await useCase.execute(input());
       expect(buttonLabels(wire)).toEqual(["Add to SD-41", "Add to SD-42", "Add to SD-47", "Raise new request", "Cancel"]);
-      expect(sent[0]).toContain('- **SD-42** "Printer on floor 42 is broken" (resolved)');
+      expect(sent[0]).toContain('- **SD-42** "Printer 42 on floor 3 is broken" (resolved)');
     });
 
     it("keeps the yes-or-no offer to raise when no request may be the same problem", async () => {
@@ -1198,6 +1198,46 @@ describe("OfferSupportFromConversation: choosing the target", () => {
       expect(wire.sendCompositePrompt.mock.calls[0]![1]).toBe(withoutAnswerHint(formatSupportQuestion(DRAFT.summary, DRAFT.description)));
       expect(buttonLabels(wire)).toEqual(["Yes", "No"]);
       expect(offers.put.mock.calls[0]![0].choices).toBeUndefined();
+    });
+
+    describe("ranking the candidates", () => {
+      const BRAKES: SupportDraft = { ...DRAFT, summary: "Truck 12 makes a grinding noise when braking", description: "Truck 12 makes a grinding noise when braking." };
+      const truck = (key: string, summary: string): SupportRequest => makeRequest({ key, summary });
+
+      it("does not list another truck's request, and keeps the yes-or-no offer when none remains", async () => {
+        const { wire, offers, useCase } = setup([truck("SD-13", "Truck 13 is broken")], BRAKES);
+        await useCase.execute(input());
+        expect(buttonLabels(wire)).toEqual(["Yes", "No"]);
+        expect(offers.put.mock.calls[0]![0].choices).toBeUndefined();
+      });
+
+      it("lists the same truck's request, matching plural forms, before one sharing a weaker word", async () => {
+        const records = [
+          truck("SD-20", "Grinding noise from the gearbox"),
+          truck("SD-13", "Truck 13 is broken"),
+          truck("SD-12", "Truck 12 brakes squeal"),
+        ];
+        const { wire, useCase } = setup(records, BRAKES);
+        await useCase.execute(input());
+        expect(buttonLabels(wire)).toEqual(["Add to SD-12", "Add to SD-20", "Raise new request", "Cancel"]);
+      });
+
+      it("puts the model's suggestion first, unless it names another identifier for the same thing", async () => {
+        const records = [truck("SD-12", "Truck 12 brakes squeal"), truck("SD-6", "Brake fluid order"), truck("SD-13", "Truck 13 is broken")];
+        const hinted = setup(records, { ...BRAKES, duplicateOf: "SD-6" });
+        await hinted.useCase.execute(input());
+        expect(buttonLabels(hinted.wire)).toEqual(["Add to SD-6", "Add to SD-12", "Raise new request", "Cancel"]);
+
+        const otherTruck = setup(records, { ...BRAKES, duplicateOf: "SD-13" });
+        await otherTruck.useCase.execute(input());
+        expect(buttonLabels(otherTruck.wire)).toEqual(["Add to SD-12", "Raise new request", "Cancel"]);
+      });
+
+      it("ignores generic words such as broken, not, working and again", async () => {
+        const { wire, useCase } = setup([truck("SD-6", "Printer not working again, broken")], { ...DRAFT, summary: "Coffee machine broken again, not working" });
+        await useCase.execute(input());
+        expect(buttonLabels(wire)).toEqual(["Yes", "No"]);
+      });
     });
 
     it("stays silent when the requests cannot be read for the candidates", async () => {

@@ -22,6 +22,7 @@ import type { GetIssueStatus } from "./GetIssueStatus";
 import { rememberLastMessage } from "./supportRequestMarkers";
 import { fillMissingPartDetails, statedPartDetails } from "../../services/partDetails";
 import { partOrderStep } from "../../services/partOrderSteps";
+import { namesOtherIdentifier, rankSimilarRequests } from "../../services/similarRequests";
 
 /** Classifier confidence required before passive help acts on a message. */
 export const PASSIVE_CONFIDENCE_MIN = 0.8;
@@ -279,8 +280,9 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
   /**
    * Requests of this conversation that may describe the same problem as the draft: open ones and
    * those done within `RECENTLY_DONE_MS`, filtered by code. The model's `duplicateOf` counts only
-   * when it is one of them and comes first; the others share a significant word with the draft's
-   * summary. At most `OFFER_CANDIDATES_MAX`, newest first; null when the read failed.
+   * when it is one of them and names no other identifier, and comes first; the others are ranked
+   * by the words their summaries share with the draft's (see `rankSimilarRequests`), ties newest
+   * first. At most `OFFER_CANDIDATES_MAX`; null when the read failed.
    */
   private async sameProblemCandidates(
     input: OfferSupportInput, command: Extract<OfferCommand, { kind: "support" }>, duplicateOf: string,
@@ -296,9 +298,9 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
     }
     const known = records.filter((r) => !r.deleted && sameQualifiedId(r.conversationId, input.conversationId) && isKeyInProject(r.key, projectKey)
       && (r.statusCategory !== "done" || r.updatedAt.getTime() >= doneSince));
-    const words = significantWords(command.summary);
-    const hinted = known.find((r) => r.key === duplicateOf);
-    const similar = known.filter((r) => r !== hinted && [...significantWords(r.summary)].some((word) => words.has(word)));
+    // The model's pick names no other identifier for the same thing ("truck 13" for a truck 12 problem).
+    const hinted = known.find((r) => r.key === duplicateOf && !namesOtherIdentifier(command.summary, r.summary));
+    const similar = rankSimilarRequests(command.summary, known).filter((r) => r !== hinted);
     return [...(hinted ? [hinted] : []), ...similar].slice(0, OFFER_CANDIDATES_MAX)
       .map((r) => ({ key: r.key, summary: r.summary, done: r.statusCategory === "done" }));
   }
@@ -367,23 +369,6 @@ function toRef(request: OpenRequest): OpenRequestRef {
 function namesProjectKey(text: string, projectKey: string): boolean {
   const escaped = projectKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`\\b${escaped}-\\d+\\b`, "i").test(text);
-}
-
-/** Words too common to tie two requests together. */
-const COMMON_WORDS: ReadonlySet<string> = new Set([
-  "about", "after", "again", "also", "always", "anymore", "been", "before", "being", "could", "does", "doesn't", "done", "down",
-  "every", "from", "have", "having", "into", "just", "keeps", "more", "much", "need", "needs", "never", "only", "other",
-  "over", "please", "really", "same", "should", "since", "some", "still", "than", "that", "their", "them", "then", "there",
-  "these", "they", "this", "today", "very", "want", "wants", "were", "what", "when", "where", "which", "while", "will",
-  "with", "won't", "work", "working", "works", "would", "your", "request", "issue", "problem", "ticket",
-]);
-
-/** The words of a summary that may tie it to another request: four letters or more, not common, without a plural "s". */
-function significantWords(text: string): Set<string> {
-  const words = text.toLowerCase().split(/[^\p{L}\p{N}']+/u)
-    .filter((word) => word.length >= 4 && !COMMON_WORDS.has(word))
-    .map((word) => (word.length > 4 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word));
-  return new Set(words);
 }
 
 /** The draft as a `support` command within the offer bounds, or null. */
