@@ -386,7 +386,7 @@ describe("ConfirmOffer", () => {
       expect(await useCase.execute({ ...input, text: "yes" })).toBe(true);
 
       expectNothingDispatched(handlers);
-      expect(sent).toEqual(["I haven't ordered anything yet: I still need the item the part is for (for example a serial number) and the delivery location."]);
+      expect(sent).toEqual(["I haven't ordered anything yet: I still need the item the part is for (for example a machine, vehicle or device) and the delivery location."]);
       expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "msg-9" });
       expect(store.has(convId, alice, now)).toBe(true);
       expect(store.recentlyDropped(convId, alice, now)).toBeNull();
@@ -400,7 +400,7 @@ describe("ConfirmOffer", () => {
 
       expectNothingDispatched(handlers);
       expect(sent).toEqual([
-        "I haven't ordered anything yet: I still need the item the part is for (for example a serial number), the part (name or number), the quantity and the delivery location.",
+        "I haven't ordered anything yet: I still need the item the part is for (for example a machine, vehicle or device), the part (name or number), the quantity and the delivery location.",
       ]);
     });
 
@@ -411,7 +411,7 @@ describe("ConfirmOffer", () => {
       expect(await useCase.execute({ ...input, text: "ok" })).toBe(true);
 
       expectNothingDispatched(handlers);
-      expect(sent).toEqual(["To order it I need the item the part is for (for example a serial number). What is it?"]);
+      expect(sent).toEqual(["To order it I need the item the part is for (for example a machine, vehicle or device). What is it?"]);
       expect(store.has(convId, alice, now)).toBe(true);
     });
 
@@ -620,7 +620,7 @@ describe("ConfirmOffer: buttons and choices", () => {
     const { handlers, sent, store, useCase } = withOffer(PART_MISSING, { choices });
     expect(await useCase.choose(click(1))).toBe(true);
     expectNothingDispatched(handlers);
-    expect(sent).toEqual(["To order it I need the item the part is for (for example a serial number). What is it?"]);
+    expect(sent).toEqual(["To order it I need the item the part is for (for example a machine, vehicle or device). What is it?"]);
     const kept = store.find(convId, alice, now);
     expect(kept?.command).toEqual(PART_MISSING);
     expect(kept?.choices).toBeUndefined();

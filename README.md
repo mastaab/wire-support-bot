@@ -351,7 +351,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 | Setting | Required | Default | Meaning |
 |---|---|---|---|
 | `WIRE_SUPPORT_BOT_PART_ASSET_LABEL` | no | `Asset` | Label of the item a part is for, shown in confirmations and tickets; one line, at most 40 characters. |
-| `WIRE_SUPPORT_BOT_PART_ASSET_QUESTION` | no | `the item the part is for (for example a serial number)` | How the bot asks for it, completing "To order it I need ..."; one line, at most 200 characters. |
+| `WIRE_SUPPORT_BOT_PART_ASSET_QUESTION` | no | `the item the part is for (for example a machine, vehicle or device)` | How the bot asks for it, completing "To order it I need ..."; one line, at most 200 characters. |
 | `WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS` | no | unset (asked in text) | Delivery locations offered as buttons, with [Other] added: up to 5, separated by `;`, each one line of at most 40 characters; empty entries, repeats and "Other" fail at start-up. |
 
 ### Passive help and watch

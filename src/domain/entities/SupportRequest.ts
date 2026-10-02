@@ -34,7 +34,7 @@ export interface PartAssetWording {
 
 export const DEFAULT_PART_ASSET: PartAssetWording = {
   label: "Asset",
-  question: "the item the part is for (for example a serial number)",
+  question: "the item the part is for (for example a machine, vehicle or device)",
 };
 
 /** Longest asset label and asset question accepted from the configuration. */

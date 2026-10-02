@@ -315,8 +315,8 @@ describe("RaiseSupportRequest: request kinds and part orders", () => {
   });
 
   it.each([
-    ["no details", undefined, "I haven't ordered anything yet: I still need the item the part is for (for example a serial number), the part (name or number), the quantity and the delivery location."],
-    ["an empty asset and no delivery location", { part: "Tray", quantity: "1", asset: "  " }, "I haven't ordered anything yet: I still need the item the part is for (for example a serial number) and the delivery location."],
+    ["no details", undefined, "I haven't ordered anything yet: I still need the item the part is for (for example a machine, vehicle or device), the part (name or number), the quantity and the delivery location."],
+    ["an empty asset and no delivery location", { part: "Tray", quantity: "1", asset: "  " }, "I haven't ordered anything yet: I still need the item the part is for (for example a machine, vehicle or device) and the delivery location."],
     ["an overlong quantity", { ...part, quantity: "9".repeat(PART_DETAIL_MAX + 1) }, "I haven't ordered anything yet: I still need the quantity."],
   ])("refuses a part order with %s and raises nothing", async (_label, details, reply) => {
     const { tracker, requests, audit, sent, useCase } = kindSetup(types);

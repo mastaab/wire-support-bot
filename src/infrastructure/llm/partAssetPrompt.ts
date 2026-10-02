@@ -7,7 +7,7 @@ import type { PartAssetWording } from "../../domain/entities/SupportRequest";
  */
 export function partAssetDescription(asset: PartAssetWording): string {
   const question = oneLine(asset.question).replace(/\.+$/, "");
-  return `the item the part is for; this service desk asks for ${question} and labels it "${oneLine(asset.label)}"`;
+  return `the item the part is for; this service desk asks for ${question} and labels it "${oneLine(asset.label)}". Take the item as the requester names it (for example "truck 12" or "the printer on floor 2"): it counts as given even without a serial, fleet or other number`;
 }
 
 function oneLine(text: string): string {

@@ -144,7 +144,7 @@ describe("CompletePartOrder", () => {
     await expect(useCase.execute(input({ pending, text: "a paper tray" }))).resolves.toBe(true);
 
     expect(sent).toEqual([formatMissingPartsQuestion(["asset"])]);
-    expect(sent[0]).toBe("To order it I need the item the part is for (for example a serial number). What is it?");
+    expect(sent[0]).toBe("To order it I need the item the part is for (for example a machine, vehicle or device). What is it?");
     expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { replyToMessageId: "msg-9" });
     expect(offers.put.mock.calls[0]![0].command).toEqual({ ...DRAFT, part: { quantity: "2", part: "paper tray" } });
   });

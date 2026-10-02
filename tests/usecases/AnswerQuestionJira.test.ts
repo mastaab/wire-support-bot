@@ -1075,7 +1075,7 @@ describe("AnswerQuestion with Jira: request kinds and part orders", () => {
   it("asks for the missing free-text details of an incomplete part order first and stores it as an amendable draft", async () => {
     const { stored, sent, run } = setup({ modelAnswer: `Happy to.\n${offer({ requestKind: "part", part: { part: "Toner cartridges, black", quantity: "2" } })}` });
     const answer = await run("Can you order two black toner cartridges?");
-    const question = "To order it I need the item the part is for (for example a serial number). What is it?";
+    const question = "To order it I need the item the part is for (for example a machine, vehicle or device). What is it?";
     expect(sent).toEqual([question]);
     expect(answer).toBe(question);
     expect(stored.map((o) => o.command)).toEqual([incomplete]);
@@ -1086,7 +1086,7 @@ describe("AnswerQuestion with Jira: request kinds and part orders", () => {
     const { sent, run } = setup({ modelAnswer: offer({ requestKind: "part" }) });
     await run("Please order a replacement tray");
     expect(sent).toEqual([
-      "To order it I need the item the part is for (for example a serial number) and the part (name or number). What are they?",
+      "To order it I need the item the part is for (for example a machine, vehicle or device) and the part (name or number). What are they?",
     ]);
   });
 

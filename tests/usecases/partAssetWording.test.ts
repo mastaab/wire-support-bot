@@ -33,9 +33,9 @@ function offers() {
 
 describe("part asset wording: offer texts", () => {
   it("uses the generic label and question by default", () => {
-    expect(partDetailFields()[0]).toEqual({ key: "asset", label: "Asset", ask: "the item the part is for (for example a serial number)" });
+    expect(partDetailFields()[0]).toEqual({ key: "asset", label: "Asset", ask: "the item the part is for (for example a machine, vehicle or device)" });
     expect(partDetailFields(DEFAULT_PART_ASSET)).toEqual(partDetailFields());
-    expect(formatMissingPartsQuestion(["asset"])).toBe("To order it I need the item the part is for (for example a serial number). What is it?");
+    expect(formatMissingPartsQuestion(["asset"])).toBe("To order it I need the item the part is for (for example a machine, vehicle or device). What is it?");
   });
 
   it("shows the configured label in the confirmation and asks with the configured question", () => {

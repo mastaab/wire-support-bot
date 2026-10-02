@@ -121,7 +121,7 @@ describe("integrationsPrompt", () => {
     const prompt = integrationsPrompt({ jiraProjectKey: "SD" });
     expect(prompt).toContain('"question" for a question to the service desk, "part" for an order of a replacement part, and "fault" for a fault, breakdown, damage, or a service or maintenance need. When unsure, use "fault".');
     expect(prompt).toContain('"part":{"asset":"<the item the part is for>","part":"<part name or number>","quantity":"<how many>","deliverTo":"<delivery location>"}');
-    expect(prompt).toContain('"asset" (the item the part is for; this service desk asks for the item the part is for (for example a serial number) and labels it "Asset"), "part" (part name or number)');
+    expect(prompt).toContain('"asset" (the item the part is for; this service desk asks for the item the part is for (for example a machine, vehicle or device) and labels it "Asset". Take the item as the requester names it (for example "truck 12" or "the printer on floor 2"): it counts as given even without a serial, fleet or other number), "part" (part name or number)');
     expect(prompt).toContain("Take each value only from the requester's own messages, in their words; never invent, guess or infer one.");
     expect(prompt).toContain("Leave out every essential the requester has not given; the system asks for the missing ones, so do not ask for them yourself.");
     expect(prompt).toContain("For a part order, keep the essentials already given and add those the message supplies.");
@@ -131,7 +131,7 @@ describe("integrationsPrompt", () => {
 
   it("describes the asset essential with the configured label and question", () => {
     const prompt = integrationsPrompt({ jiraProjectKey: "SD", partAsset: { label: "Device", question: "the device (asset tag or room number)" } });
-    expect(prompt).toContain('"asset" (the item the part is for; this service desk asks for the device (asset tag or room number) and labels it "Device")');
+    expect(prompt).toContain('"asset" (the item the part is for; this service desk asks for the device (asset tag or room number) and labels it "Device". Take the item as the requester names it (for example "truck 12" or "the printer on floor 2"): it counts as given even without a serial, fleet or other number)');
     expect(prompt).not.toContain("serial number");
   });
 

@@ -30,3 +30,25 @@ describe("statedPartDetails", () => {
       .toEqual({ asset: "printer 12", part: "toner cartridges", deliverTo: "Depot North" });
   });
 });
+
+describe("statedPartDetails: every significant word must be stated", () => {
+  it("drops a delivery location the model made up from one shared word", () => {
+    expect(statedPartDetails({ asset: "truck 12", part: "air filter", deliverTo: "the truck location" }, "please order an air filter for truck 12"))
+      .toEqual({ asset: "truck 12", part: "air filter" });
+  });
+
+  it("keeps values whose words are all stated, ignoring filler words", () => {
+    expect(statedPartDetails({ deliverTo: "to workshop 3" }, "deliver them to workshop 3")).toEqual({ deliverTo: "to workshop 3" });
+    expect(statedPartDetails({ deliverTo: "the depot north" }, "depot north please")).toEqual({ deliverTo: "the depot north" });
+  });
+
+  it("allows a plural s either way", () => {
+    expect(statedPartDetails({ part: "left mirror" }, "we need two new left mirrors")).toEqual({ part: "left mirror" });
+    expect(statedPartDetails({ part: "cables" }, "one cable")).toEqual({ part: "cables" });
+  });
+
+  it("drops a value made of filler words only, or with any unstated word", () => {
+    expect(statedPartDetails({ deliverTo: "the" }, "the printer is broken")).toEqual({});
+    expect(statedPartDetails({ part: "replacement toner cartridge" }, "we need toner")).toEqual({});
+  });
+});

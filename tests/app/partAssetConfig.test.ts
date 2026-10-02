@@ -6,7 +6,7 @@ describe("resolvePartAsset", () => {
   it("uses the generic wording when nothing is configured", () => {
     expect(resolvePartAsset({})).toEqual(DEFAULT_PART_ASSET);
     expect(resolvePartAsset({ WIRE_SUPPORT_BOT_PART_ASSET_LABEL: "  ", WIRE_SUPPORT_BOT_PART_ASSET_QUESTION: "" }))
-      .toEqual({ label: "Asset", question: "the item the part is for (for example a serial number)" });
+      .toEqual({ label: "Asset", question: "the item the part is for (for example a machine, vehicle or device)" });
   });
 
   it("reads the configured label and question, trimmed", () => {
