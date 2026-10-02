@@ -75,7 +75,9 @@ describe("integrationsPrompt", () => {
     expect(system).toContain("service-desk assistant");
     expect(system).toContain("you help the team raise problems, questions and part orders with the service desk");
     expect(system).toContain("Channel setting: `@Wire Support Bot timezone <name>` sets the channel's timezone for reply times");
-    expect(system).toContain("Explain it only from this description");
+    expect(system).toContain("describe the timezone setting only as this prompt describes it, in your own words");
+    expect(system).not.toContain("Explain it only from this description");
+    expect(system).not.toContain("written as complete mentioned commands from");
     expect(system).not.toMatch(/decision|reminder|pause|secure mode|resume|catch me up|status: shows/i);
   });
 
@@ -86,7 +88,7 @@ describe("integrationsPrompt", () => {
     expect(system).toContain("present two clearly separate groups, each under its own short heading, and say that every command needs the bot to be mentioned");
     expect(system).toContain("When someone asks to change it, give them that command: sending it changes the timezone at once. Never say that you cannot change the timezone.");
     expect(system).not.toContain("you cannot change it yourself");
-    expect(system).toContain("1. Support request commands: `support:`, `support requests`, `my support requests`, `status of`, `reply to` and `resolve`, written as complete mentioned commands from \"Jira integration\", for example `@Wire Support Bot status of <key>`.");
+    expect(system).toContain("1. Support request commands: `@Wire Support Bot support: <problem>`, `@Wire Support Bot support requests`, `@Wire Support Bot my support requests`, `@Wire Support Bot status of <key>`, `@Wire Support Bot reply to <key>: <text>` and `@Wire Support Bot resolve <key>`.");
     expect(system).toContain("2. Channel setting: `@Wire Support Bot timezone <name>`");
     expect(system).toContain("Never call either group, or any single command, your only command or the only thing you can do");
     expect(system).not.toContain("The only channel command");

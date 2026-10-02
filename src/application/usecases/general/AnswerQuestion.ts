@@ -439,7 +439,13 @@ export class AnswerQuestion {
     // A revision of the offer this message displaced needs no fresh change intent: the
     // original offer established it. Scope and bounds are still checked below.
     const passiveSupport = command.kind === "support" && jira.passive === true;
-    if (!passiveSupport && !isRevision(input.pendingOffer, command) && !asksForChange(command.kind, input.question, jira.tracker.projectKey)) {
+    const revision = isRevision(input.pendingOffer, command);
+    // A how-to question ("how do I order a part?") never gets an offer, also with passive help on.
+    if (!revision && HOW_TO_QUESTION.test(input.question.trim())) {
+      this.logger?.warn("AnswerQuestion: offer dropped, the question asks for no change", { kind: command.kind });
+      return null;
+    }
+    if (!passiveSupport && !revision && !asksForChange(command.kind, input.question, jira.tracker.projectKey)) {
       this.logger?.warn("AnswerQuestion: offer dropped, the question asks for no change", { kind: command.kind });
       return null;
     }
@@ -541,6 +547,8 @@ function asksForAnyChange(question: string, projectKey: string): boolean {
 
 /** True when the requester's question expresses the change that the offer proposes. */
 function asksForChange(kind: OfferCommand["kind"], question: string, projectKey: string): boolean {
+  // "How do I order a part?" asks how, not for an order, so it never accepts an offer.
+  if (HOW_TO_QUESTION.test(question.trim())) return false;
   switch (kind) {
     case "support":
       return SUPPORT_INTENT.test(question);

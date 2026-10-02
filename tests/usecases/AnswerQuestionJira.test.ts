@@ -686,6 +686,9 @@ describe("AnswerQuestion with Jira: offers", () => {
       ["reply", "Did support add a comment on SD-6?"],
       ["reply", "Note: SD-6 is still open, right?"],
       ["reply", "Can you add me to the support channel?"],
+      ["support", "How do I order a part?"],
+      ["support", "how can I raise a ticket with the service desk?"],
+      ["resolve", "How do I close SD-6?"],
     ];
     for (const [kind, question] of rejected) {
       it(`drops a ${kind} offer for "${question}", sends the no-change reply and logs only the kind`, async () => {
@@ -863,6 +866,13 @@ describe("AnswerQuestion with Jira: passive service-desk help on", () => {
     await run("the printer on floor 2 is out of toner");
     expect(sent).toEqual([withoutAnswerHint("Shall I report this to the service desk?\n> **Printer on floor 2 is out of toner**\n> The printer on floor 2 is out of toner.\n\n(yes or no)?")]);
     expect(stored).toHaveLength(1);
+  });
+
+  it("drops a support offer for a how-to question even with passive help on", async () => {
+    const { stored, sent, run } = setup({ passive: true, modelAnswer: support });
+    await run("How do I order a part?");
+    expect(stored).toHaveLength(0);
+    expect(sent[0]).toContain("I haven't changed anything with the service desk.");
   });
 
   it("still needs raising wording for a support offer when passive help is off", async () => {
