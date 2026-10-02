@@ -36,6 +36,19 @@ import { NOT_AN_ANSWER_LINE, closeEndedOfferPrompts, closeOfferPrompt, type Offe
 const CONTEXT_WINDOW = 10;
 const NAME_TTL_MS = 24 * 60 * 60 * 1000; // re-fetch display names after 24 h to catch renames
 
+/**
+ * True for a support command addressed to the bot (raise, resolve, reply, list, status), checked
+ * with the same patterns as the routing below. Used while the bot waits for the text of a reply,
+ * so such a command still runs as a command.
+ */
+function isSupportCommand(commandText: string, projectKey: string): boolean {
+  return /^support\s*:/i.test(commandText)
+    || new RegExp(`^(?:resolve|close)\\s+${projectKey}-\\d+`, "i").test(commandText)
+    || new RegExp(`^reply\\s+to\\s+${projectKey}-\\d+\\s*:`, "i").test(commandText)
+    || /^(my\s+)?(?:open\s+)?support\s+requests?[?.]?\s*$/i.test(commandText)
+    || matchIssueStatusRequest(commandText, projectKey) !== null;
+}
+
 /** True for a support offer that orders a replacement part, complete or not. */
 function isPartOrder(command: OfferCommand): boolean {
   return command.kind === "support" && command.requestKind === "part";
@@ -238,8 +251,12 @@ export class WireEventRouter extends WireEventsHandler {
         text: commandText, conversationId: convId, requesterId: sender,
         requesterName: senderDisplayName, replyToMessageId: wireMessage.id,
       });
+      // While the bot waits for the text of a reply, a command addressed to it is a command, not the text.
+      const commandInstead = !!live?.awaitsReplyText && isBotAddressed
+        && isSupportCommand(commandText, this.deps.getIssueStatus.projectKey);
       // A yes or a picked option raises, replies to or resolves a ticket, which the requester waits for.
-      const handled = classifyConfirmation(commandText) === "yes" || live?.choices ? await this.typing(convId, confirm) : await confirm();
+      const handled = commandInstead ? false
+        : classifyConfirmation(commandText) === "yes" || live?.choices ? await this.typing(convId, confirm) : await confirm();
       if (handled) {
         // Record the answer so the answer model sees the offer as closed, not pending, and a bot
         // entry after it, so the offer's "(yes or no)?" no longer counts as the bot's latest
@@ -251,7 +268,7 @@ export class WireEventRouter extends WireEventsHandler {
       // A dropped choice is not a draft to amend or complete: the requester has moved on. A
       // button question for a part-order essential is the exception: its draft stays, so a typed
       // value or a correction completes it below.
-      if (live?.choices && !live.fillsPart) droppedOffer = undefined;
+      if ((live?.choices && !live.fillsPart) || live?.awaitsReplyText) droppedOffer = undefined;
       // With no live offer, only a recently dropped one brought us here and the requester has
       // moved on, so a later yes (perhaps to a colleague) is not answered about it.
       if (!droppedOffer) pendingOffers.forgetDropped(convId, sender);

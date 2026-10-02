@@ -49,6 +49,22 @@ export interface OfferChoice {
   answers: readonly string[];
   /** What the option runs once picked; null declines the offer. */
   command: OfferCommand | null;
+  /**
+   * Set on an option of a desk-update question that asks for the reply text instead of running a
+   * command ([Reply], [Still broken]); its `command` is null. The requester's next message is
+   * then taken as the text and offered as a reply with [Yes] [No].
+   */
+  asksReplyText?: ReplyTextPrompt;
+}
+
+/** Which question asks for the reply text: after [Reply], or after [Still broken]. */
+export type ReplyTextPrompt = "reply" | "stillBroken";
+
+/** The support request a desk-update question or a request for reply text is about. */
+export interface DeskUpdateTarget {
+  issueKey: string;
+  /** The request's stored summary, for the reply offer that follows. */
+  summary: string;
 }
 
 /** The part-order essentials asked for with buttons: a quick quantity or a configured delivery location. */
@@ -82,6 +98,19 @@ export interface PendingOffer {
    * order continues with its next question, and [Other] asks for the value in text.
    */
   fillsPart?: ChoosablePartDetail;
+  /**
+   * Set on a question the watch asks the requester after posting a desk update ([Reply] [Solved,
+   * close it], or [Solved] [Still broken]). It lives longer than other offers, is never asked over
+   * another open question, and a newer question replaces it. A text answer picks an option or says
+   * "no"; any other message is not an answer.
+   */
+  deskUpdate?: DeskUpdateTarget;
+  /**
+   * Set while the bot waits for the text of a reply to this request, after [Reply] or [Still
+   * broken]: the requester's next message is the text, offered as a reply with [Yes] [No]. Its
+   * `command` is the reply with an empty body, used only to name it after it was dropped.
+   */
+  awaitsReplyText?: DeskUpdateTarget;
 }
 
 /** What is remembered about an offer's button message, also after the offer itself has gone. */

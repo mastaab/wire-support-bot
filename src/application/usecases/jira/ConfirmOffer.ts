@@ -2,11 +2,15 @@ import type { QualifiedId } from "../../../domain/ids/QualifiedId";
 import { DEFAULT_PART_ASSET } from "../../../domain/entities/SupportRequest";
 import type { PartAssetWording } from "../../../domain/entities/SupportRequest";
 import {
-  NOTHING_TO_CONFIRM_REPLY, formatChooseAgain, formatStillMissingReply, missingPartDetails, offerCommandLine,
+  NOTHING_TO_CONFIRM_REPLY, OFFER_TTL_MS, REPLY_BODY_MAX, formatChooseAgain, formatReplyQuestion, formatStillMissingReply,
+  missingPartDetails, offerCommandLine,
 } from "../../services/offers";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
-import type { OfferChoice } from "../../ports/PendingOfferPort";
-import { YES_NO_LABELS, answerForms, choiceHint, decisionAt, matchChoice } from "../../services/offerButtons";
+import type { DeskUpdateTarget, OfferChoice, ReplyTextPrompt } from "../../ports/PendingOfferPort";
+import {
+  YES_NO_LABELS, answerForms, choiceHint, decisionAt, matchChoice, newOfferId, offerPromptFields, sendOfferPrompt,
+} from "../../services/offerButtons";
+import { REPLY_TEXT_CANCELED, replyTextQuestion } from "../../services/deskUpdateQuestions";
 import { answeredLine, closeOfferPrompt } from "../../services/offerPromptClosing";
 import type { Logger } from "../../ports/Logger";
 import { askPartOrderStep, partOrderTextQuestion } from "../../services/partOrderSteps";
@@ -136,6 +140,7 @@ export class ConfirmOffer {
   async execute(input: ConfirmOfferInput): Promise<boolean> {
     const now = this.now();
     const live = this.offers.find(input.conversationId, input.requesterId, now);
+    if (live?.awaitsReplyText) return this.takeReplyText(live.awaitsReplyText, input, now);
     if (live?.fillsPart && live.choices) return this.answerFill(live, live.choices, input, now);
     if (live?.choices) return this.answerChoice(live, live.choices, input, now);
 
@@ -168,14 +173,24 @@ export class ConfirmOffer {
     if (!decision) return false;
     const offer = this.offers.take(input.conversationId, input.requesterId, now);
     if (!offer) return false;
-    const label = offer.choices ? offer.choices[input.index]!.label : YES_NO_LABELS[input.index]!;
-    await this.decide(offer, decision.command, input, !offer.choices, label);
+    const choice = offer.choices?.[input.index];
+    const label = choice ? choice.label : YES_NO_LABELS[input.index]!;
+    await this.decide(offer, decision.command, input, !offer.choices, label, choice?.asksReplyText);
     return true;
   }
 
   /** A text answer to a choice offer: an option runs, a bare yes or acknowledgement asks again, anything else is not an answer. */
   private async answerChoice(live: PendingOffer, choices: readonly OfferChoice[], input: ConfirmOfferInput, now: Date): Promise<boolean> {
     const index = matchChoice(choices, input.text);
+    if (index === null && live.deskUpdate) {
+      // A desk-update question is answered by an option or a "no"; anything else is the
+      // requester moving on, also a "yes" or "thanks", which may be meant for the desk's reply.
+      if (classifyConfirmation(input.text) !== "no") return false;
+      const offer = this.offers.take(input.conversationId, input.requesterId, now);
+      if (!offer) return false;
+      await this.decide(offer, null, input, false, YES_NO_LABELS[1]);
+      return true;
+    }
     if (index === null) {
       if (classifyConfirmation(input.text) !== "yes" && !isAcknowledgement(input.text)) return false;
       await this.wireOutbound.sendPlainText(input.conversationId, formatChooseAgain(choiceHint(choices)), { replyToMessageId: input.replyToMessageId });
@@ -183,8 +198,60 @@ export class ConfirmOffer {
     }
     const offer = this.offers.take(input.conversationId, input.requesterId, now);
     if (!offer) return false;
-    await this.decide(offer, choices[index]!.command, input, false, choices[index]!.label);
+    await this.decide(offer, choices[index]!.command, input, false, choices[index]!.label, choices[index]!.asksReplyText);
     return true;
+  }
+
+  /**
+   * The requester's message after the bot asked for the text of a reply ([Reply] or [Still
+   * broken]): a "no" cancels, a text too long for Jira is refused and the bot keeps waiting, and
+   * any other text is offered as a reply to the request with [Yes] [No]. Nothing reaches Jira
+   * before that yes; `ReplyToServiceDesk` re-validates the request then.
+   */
+  private async takeReplyText(target: DeskUpdateTarget, input: ConfirmOfferInput, now: Date): Promise<boolean> {
+    const body = input.text.trim();
+    if (!body) return false;
+    const waiting = this.offers.take(input.conversationId, input.requesterId, now);
+    if (!waiting) return false;
+    const reply = (text: string) => this.wireOutbound.sendPlainText(input.conversationId, text, { replyToMessageId: input.replyToMessageId });
+    if (classifyConfirmation(body) === "no") {
+      await reply(REPLY_TEXT_CANCELED);
+      return true;
+    }
+    if (body.length > REPLY_BODY_MAX) {
+      this.offers.put(waiting);
+      await reply(`I'm afraid that is too long for Jira; please keep it under ${REPLY_BODY_MAX} characters and send it again.`);
+      return true;
+    }
+    const command: OfferCommand = { kind: "reply", issueKey: target.issueKey, body };
+    const question = formatReplyQuestion(target.issueKey, target.summary, body);
+    const offerId = newOfferId();
+    const sent = await sendOfferPrompt(this.wireOutbound, input.conversationId, question, offerId, undefined, input.replyToMessageId);
+    const at = this.now();
+    this.offers.put({
+      command, conversationId: input.conversationId, requesterId: input.requesterId,
+      createdAt: at, expiresAt: new Date(at.getTime() + OFFER_TTL_MS), ...offerPromptFields(offerId, sent, question),
+    });
+    return true;
+  }
+
+  /**
+   * After [Reply] or [Still broken] on a desk-update question: asks for the reply text and waits
+   * for the requester's next message, for as long as an offer lives.
+   */
+  private async askReplyText(offer: PendingOffer, target: DeskUpdateTarget, prompt: ReplyTextPrompt, context: AnswerContext): Promise<void> {
+    const now = this.now();
+    this.offers.put({
+      command: { kind: "reply", issueKey: target.issueKey, body: "" },
+      conversationId: offer.conversationId,
+      requesterId: context.requesterId,
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
+      awaitsReplyText: target,
+    });
+    await this.wireOutbound.sendPlainText(context.conversationId, replyTextQuestion(target.issueKey, prompt), {
+      replyToMessageId: context.replyToMessageId,
+    });
   }
 
   /**
@@ -225,10 +292,12 @@ export class ConfirmOffer {
    * Runs `command` for the taken offer, or declines it when null, after recording the offer's
    * message as answered and closing it with "Answered by <name>: <answer>". `confirmed` is true
    * for a yes to a yes-or-no offer, whose incomplete part order is kept for amending; a chosen
-   * incomplete order is asked about afresh.
+   * incomplete order is asked about afresh. `asksReplyText` is set for an option of a desk-update
+   * question that asks for the reply text instead.
    */
   private async decide(
     offer: PendingOffer, command: OfferCommand | null, context: AnswerContext, confirmed: boolean, answer: string,
+    asksReplyText?: ReplyTextPrompt,
   ): Promise<void> {
     if (offer.id) this.offers.markAnswered(offer.conversationId, offer.id);
     const { conversationId, requesterId: actorId, replyToMessageId } = context;
@@ -236,8 +305,13 @@ export class ConfirmOffer {
       { offers: this.offers, wireOutbound: this.wireOutbound, logger: this.logger },
       conversationId, offer.messageId, answeredLine(context.requesterName, answer),
     );
+    if (asksReplyText && offer.deskUpdate) {
+      await this.askReplyText(offer, offer.deskUpdate, asksReplyText, context);
+      return;
+    }
     if (!command) {
-      await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
+      // A desk-update question's [Solved] or "no" changes nothing; its closing line says so.
+      if (!offer.deskUpdate) await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
       return;
     }
 

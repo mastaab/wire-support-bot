@@ -87,6 +87,16 @@ describe("resolveJiraConfig", () => {
     }
   });
 
+  it("reads the lifetime of questions after a desk update in whole hours from 0 to 72, unset leaving the default", () => {
+    expect(resolveJiraConfig(full)!.updateQuestionHours).toBeUndefined();
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS: "0" })!.updateQuestionHours).toBe(0);
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS: "8" })!.updateQuestionHours).toBe(8);
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS: "72" })!.updateQuestionHours).toBe(72);
+    for (const bad of ["73", "-1", "1.5", "4h"]) {
+      expect(() => resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS: bad })).toThrow(/UPDATE_QUESTION_HOURS/);
+    }
+  });
+
   it("maps desk agents to Wire handles and rejects malformed mappings", () => {
     expect(resolveJiraConfig(full)!.agents).toBeUndefined();
     const cfg = resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_AGENTS: "712020:abc-1=@RobinDesk, 5b10a2=dana.desk" })!;

@@ -3,6 +3,9 @@ import { WatchSupportRequests } from "../../src/application/usecases/jira/WatchS
 import type { WatchGuards } from "../../src/application/usecases/jira/WatchSupportRequests";
 import { SupportRequestWrites } from "../../src/application/services/SupportRequestWrites";
 import { GetIssueStatus } from "../../src/application/usecases/jira/GetIssueStatus";
+import { DeskUpdateQuestions } from "../../src/application/services/deskUpdateQuestions";
+import { InMemoryPendingOfferStore } from "../../src/infrastructure/services/InMemoryPendingOfferStore";
+import { sweepEndedOfferPrompts } from "../../src/application/services/offerPromptClosing";
 import { OpenAgentConversation } from "../../src/application/usecases/jira/OpenAgentConversation";
 import type { OpenAgentConversationInput, OpenAgentConversationOutcome } from "../../src/application/usecases/jira/OpenAgentConversation";
 import type { SupportRequest } from "../../src/domain/entities/SupportRequest";
@@ -10,7 +13,7 @@ import type { ChannelConfig } from "../../src/domain/repositories/ChannelConfigR
 import type { IssueChange, IssueReply, IssueStatusCategory } from "../../src/application/ports/IssueTrackerPort";
 import { IssueTrackerError } from "../../src/application/ports/IssueTrackerPort";
 import {
-  convId, created, loggedText, makeAudit, makeLogger, makeRequest, makeRequests, makeSnapshot, makeTracker, makeWire, sentRefFor,
+  alice, convId, created, loggedText, makeAudit, makeLogger, makeRequest, makeRequests, makeSnapshot, makeTracker, makeWire, sentRefFor,
 } from "./supportRequestFakes";
 
 const T0 = new Date("2026-09-26T10:00:00Z");
@@ -753,5 +756,129 @@ describe("WatchSupportRequests: direct conversation with the desk agent", () => 
     tracker.listChangedSince.mockResolvedValue([withAssignee("SD-6", "todo", T0, AGENT)]);
     await watcher.check();
     expect(requests.setAssignee).toHaveBeenCalledWith("SD-6", AGENT);
+  });
+});
+
+describe("WatchSupportRequests: questions after a desk update", () => {
+  const HOURS_4 = 4 * 60 * 60 * 1000;
+
+  /** The watch with real desk-update questions over a real offer store, sharing the Wire mock. */
+  function withQuestions(records: SupportRequest[]) {
+    const offers = new InMemoryPendingOfferStore();
+    // The guards need the questions before the watch exists, and the questions need the watch's Wire mock.
+    const guards: WatchGuards = {};
+    const env = setup(records, { guards });
+    guards.questions = new DeskUpdateQuestions({ offers, wireOutbound: env.wire, lifetimeMs: HOURS_4, logger: env.logger, now: () => T0 });
+    const labels = (): string[][] => env.wire.sendCompositePrompt.mock.calls.map((call) => (call[2] as Array<{ label: string }>).map((b) => b.label));
+    return { ...env, offers, labels };
+  }
+
+  it("asks the requester [Reply] [Solved, close it] after a desk reply, in a separate message that is not the last message", async () => {
+    const { watcher, tracker, requests, wire, sent, offers, labels } = withQuestions([watched()]);
+    tracker.listChangedSince.mockResolvedValue([change("SD-6", "todo", T0)]);
+    tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:30:00Z", "Please restart the router.")]);
+
+    expect(await watcher.check()).toEqual({ announced: 1, pending: 0 });
+
+    // The update is posted as before: quoted, and stored as the request's last message.
+    expect(wire.sendPlainText).toHaveBeenCalledOnce();
+    expect(wire.sendPlainText).toHaveBeenCalledWith(convId, sent[0], { quote: LAST_MESSAGE });
+    expect(requests.setLastMessage).toHaveBeenCalledOnce();
+    expect(requests.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
+    // The question follows separately, unquoted, and is never stored as the last message.
+    expect(sent[1]).toBe("Alice, would you like to reply to the service desk about **SD-6**, or is it solved so I can close it?");
+    expect(labels()).toEqual([["Reply", "Solved, close it"]]);
+    expect(offers.find(convId, alice, T0)).toMatchObject({ messageId: sentRefFor(2).messageId, deskUpdate: { issueKey: "SD-6" } });
+    // Nothing is written to Jira by asking.
+    expect(tracker.addCustomerReply).not.toHaveBeenCalled();
+    expect(tracker.resolveIssue).not.toHaveBeenCalled();
+  });
+
+  it("asks [Solved] [Still broken] after the desk resolved the request", async () => {
+    const { watcher, tracker, requests, sent, labels } = withQuestions([watched({ statusCategory: "in_progress" })]);
+    tracker.listChangedSince.mockResolvedValue([change("SD-6", "done", T0)]);
+
+    await watcher.check();
+
+    expect(sent[0]).toContain("Resolved by the service desk.");
+    expect(sent[1]).toBe("Alice, is **SD-6** solved for you, or is it still broken?");
+    expect(labels()).toEqual([["Solved", "Still broken"]]);
+    expect(requests.setLastMessage).toHaveBeenCalledOnce();
+    expect(requests.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
+  });
+
+  it("asks [Solved] [Still broken] when a resolve and a reply come in one update, and after a reply on a resolved request", async () => {
+    const both = withQuestions([watched({ statusCategory: "in_progress" })]);
+    both.tracker.listChangedSince.mockResolvedValue([change("SD-6", "done", T0)]);
+    both.tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:50:00Z", "Fixed the tunnel.")]);
+    await both.watcher.check();
+    expect(both.labels()).toEqual([["Solved", "Still broken"]]);
+
+    const resolved = withQuestions([watched({ statusCategory: "done" })]);
+    resolved.tracker.listChangedSince.mockResolvedValue([change("SD-6", "done", T0)]);
+    resolved.tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:50:00Z", "One more note.")]);
+    await resolved.watcher.check();
+    expect(resolved.labels()).toEqual([["Solved", "Still broken"]]);
+  });
+
+  it.each([
+    ["todo", "in_progress"],
+    ["in_progress", "todo"],
+    ["done", "todo"],
+    ["done", "in_progress"],
+  ] as const)("asks nothing for a status change from %s to %s without a reply", async (from, to) => {
+    const { watcher, tracker, sent, wire } = withQuestions([watched({ statusCategory: from })]);
+    tracker.listChangedSince.mockResolvedValue([change("SD-6", to, T0)]);
+    await watcher.check();
+    expect(sent).toHaveLength(1);
+    expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing at a baseline, and nothing when the update could not be posted", async () => {
+    const baseline = withQuestions([makeRequest()]);
+    baseline.tracker.listChangedSince.mockResolvedValue([change("SD-6", "done", T0)]);
+    baseline.tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:30:00Z", "old")]);
+    await baseline.watcher.check();
+    expect(baseline.wire.sendCompositePrompt).not.toHaveBeenCalled();
+
+    const failing = withQuestions([watched()]);
+    failing.tracker.listChangedSince.mockResolvedValue([change("SD-6", "todo", T0)]);
+    failing.tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:30:00Z", "Please restart the router.")]);
+    failing.wire.sendPlainText.mockRejectedValueOnce(new Error("offline"));
+    expect(await failing.watcher.check()).toEqual({ announced: 0, pending: 1 });
+    expect(failing.wire.sendCompositePrompt).not.toHaveBeenCalled();
+  });
+
+  it("still counts the update as announced when the question cannot be sent", async () => {
+    const { watcher, tracker, wire, offers, logger } = withQuestions([watched()]);
+    tracker.listChangedSince.mockResolvedValue([change("SD-6", "todo", T0)]);
+    tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:30:00Z", "Please restart the router.")]);
+    wire.sendCompositePrompt.mockRejectedValueOnce(new Error("offline"));
+    expect(await watcher.check()).toEqual({ announced: 1, pending: 0 });
+    expect(offers.find(convId, alice, T0)).toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith("DeskUpdateQuestions: sending the question failed", { key: "SD-6", err: "Error" });
+  });
+
+  it("does not ask over the requester's open question", async () => {
+    const { watcher, tracker, wire, offers } = withQuestions([watched()]);
+    const open = {
+      command: { kind: "resolve" as const, issueKey: "SD-7" }, conversationId: convId, requesterId: alice,
+      createdAt: T0, expiresAt: new Date(T0.getTime() + 10 * 60 * 1000),
+    };
+    offers.put(open);
+    tracker.listChangedSince.mockResolvedValue([change("SD-6", "todo", T0)]);
+    tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:30:00Z", "Please restart the router.")]);
+    expect(await watcher.check()).toEqual({ announced: 1, pending: 0 });
+    expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
+    expect(offers.find(convId, alice, T0)).toEqual(open);
+  });
+
+  it("closes an unanswered question when it expires", async () => {
+    const { watcher, tracker, wire, sent, offers } = withQuestions([watched()]);
+    tracker.listChangedSince.mockResolvedValue([change("SD-6", "todo", T0)]);
+    tracker.listCustomerReplies.mockResolvedValue([reply("Dana", "2026-09-26T09:30:00Z", "Please restart the router.")]);
+    await watcher.check();
+    await sweepEndedOfferPrompts({ offers, wireOutbound: wire }, new Date(T0.getTime() + HOURS_4));
+    expect(wire.closeButtonPrompt).toHaveBeenCalledWith(convId, sentRefFor(2).messageId, `${sent[1]}\n\nThis question has expired.`);
   });
 });

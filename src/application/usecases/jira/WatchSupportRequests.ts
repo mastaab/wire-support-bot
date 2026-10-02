@@ -10,6 +10,7 @@ import type { IssueChange, IssueReply, IssueSnapshot, IssueTrackerPort } from ".
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
 import { SupportRequestWrites } from "../../services/SupportRequestWrites";
+import type { DeskUpdateKind, DeskUpdateQuestions } from "../../services/deskUpdateQuestions";
 import type { OpenAgentConversation } from "./OpenAgentConversation";
 import { formatReplies, formatSla, type RepliesHeading } from "./formatIssue";
 import { botActor, refreshStatusCategory } from "./supportRequestStatus";
@@ -49,6 +50,11 @@ export interface WatchGuards {
   skipConversation?: (conversationId: QualifiedId) => boolean;
   /** Direct conversations with the desk agent: Jira account ID to Wire handle, and the use case. */
   agents?: { handles: ReadonlyMap<string, string>; open: OpenAgentConversation };
+  /**
+   * Asks the requester what to do after a posted desk reply or resolve, in a separate button
+   * message that is never stored as the request's last message. Absent: no such questions.
+   */
+  questions?: DeskUpdateQuestions;
 }
 
 const NEW_REPLIES_HEADING: RepliesHeading = {
@@ -252,6 +258,9 @@ export class WatchSupportRequests {
           this.logger?.warn("WatchSupportRequests: setLastMessage failed", { key: request.key, ...trackerErrorFields(err) });
         }
       }
+      const question = followUpKind(status, newReplies.length > 0);
+      // Never fails: the update is posted and must not be posted again.
+      if (question) await this.guards.questions?.ask(request, question);
     }
 
     const now = this.now();
@@ -318,6 +327,16 @@ function statusChangeLines(
   if (previous === "done") return ["Reopened by the service desk."];
   if (next === "in_progress") return ["Now in progress."];
   return ["Moved back to To do."];
+}
+
+/**
+ * The question after a posted update: with the request now done (resolved by the desk, or a reply
+ * on a resolved request), whether it is solved; with a new desk reply, whether to reply or close.
+ * None for other status changes: the bot only knows the category, not the status name.
+ */
+function followUpKind(status: SupportRequestStatusCategory, newReplies: boolean): DeskUpdateKind | null {
+  if (status === "done") return "resolved";
+  return newReplies ? "reply" : null;
 }
 
 function newestReplyTime(replies: readonly IssueReply[]): Date | undefined {

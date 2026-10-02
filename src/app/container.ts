@@ -24,6 +24,7 @@ import { InMemoryPendingOfferStore } from "../infrastructure/services/InMemoryPe
 import { ReplyToServiceDesk } from "../application/usecases/jira/ReplyToServiceDesk";
 import { ConfirmOffer } from "../application/usecases/jira/ConfirmOffer";
 import { WatchSupportRequests } from "../application/usecases/jira/WatchSupportRequests";
+import { DESK_UPDATE_QUESTION_HOURS_DEFAULT, DeskUpdateQuestions } from "../application/services/deskUpdateQuestions";
 import { SupportRequestWrites } from "../application/services/SupportRequestWrites";
 import { AttachFileToRequest } from "../application/usecases/jira/AttachFileToRequest";
 import { OfferAttachment } from "../application/usecases/jira/OfferAttachment";
@@ -126,12 +127,19 @@ export function createContainer(config: Config, logger: Logger): Container {
     : undefined;
   // Announces changes made in Jira; started once the Wire client is ready (see getWireClient).
   const watchSeconds = jira.watchSeconds;
+  // Questions to the requester after a desk reply or resolve; sent also with passive help off,
+  // since they answer the bot's own question about the requester's request.
+  const questionHours = jira.updateQuestionHours ?? DESK_UPDATE_QUESTION_HOURS_DEFAULT;
+  const deskUpdateQuestions = questionHours > 0
+    ? new DeskUpdateQuestions({ offers: pendingOffers, wireOutbound, lifetimeMs: questionHours * 60 * 60 * 1000, logger })
+    : undefined;
   const watchSupportRequests = watchSeconds
     ? new WatchSupportRequests(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, channelConfigRepo, logger, undefined, {
       writes: supportRequestWrites,
       // The CLI's test conversations (domain "cli.local") have no Wire group to post to.
       skipConversation: (c) => c.domain === "cli.local",
       ...(openAgentConversation && agentHandles ? { agents: { handles: agentHandles, open: openAgentConversation } } : {}),
+      ...(deskUpdateQuestions ? { questions: deskUpdateQuestions } : {}),
     })
     : undefined;
   if (agentHandles && !watchSupportRequests) logger.warn("WIRE_SUPPORT_BOT_JIRA_AGENTS needs WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS; direct conversations are off");

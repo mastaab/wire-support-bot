@@ -198,6 +198,21 @@ describe("OfferAttachment", () => {
       expect(offers.take(convId, alice, now)).toEqual(existing);
     });
 
+    it("replaces a question after a desk update instead of asking the requester to answer it first", async () => {
+      const { offers, wire, useCase } = setup([makeRequest()]);
+      offers.put({
+        command: { kind: "resolve", issueKey: "SD-6" }, conversationId: convId, requesterId: alice, createdAt: now,
+        expiresAt: new Date(now.getTime() + 4 * 60 * 60 * 1000), id: "desk-offer-1", messageId: "desk-msg-1", question: "Alice, is **SD-6** solved for you?",
+        choices: [], deskUpdate: { issueKey: "SD-6", summary: "VPN drops every ten minutes" },
+      });
+
+      expect(await useCase.execute(input)).toBe(true);
+
+      expect(wire.sendPlainText).not.toHaveBeenCalled();
+      expect(offers.find(convId, alice, now)?.command).toMatchObject({ kind: "attach", issueKey: "SD-6" });
+      expect(offers.takeEndedPrompts()).toEqual([expect.objectContaining({ messageId: "desk-msg-1", reason: "replaced" })]);
+    });
+
     it("replaces the sender's pending file offer, so a yes attaches the file posted last", async () => {
       const { offers, useCase } = setup([makeRequest()]);
       expect(await useCase.execute(input)).toBe(true);

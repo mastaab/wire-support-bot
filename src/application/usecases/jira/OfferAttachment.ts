@@ -43,9 +43,11 @@ export class OfferAttachment {
 
   async execute(input: OfferAttachmentInput): Promise<boolean> {
     // A pending question to the sender is not replaced by a file: they answer it first. A pending
-    // file offer is replaced, so a yes always attaches the file they posted last.
-    const pending = this.offers.peek(input.conversationId, input.senderId, this.now());
-    if (pending && pending.kind !== "attach") {
+    // file offer is replaced, so a yes always attaches the file they posted last, and so is a
+    // question after a desk update, which never holds up the requester's other questions.
+    const live = this.offers.find(input.conversationId, input.senderId, this.now());
+    const pending = live?.command ?? null;
+    if (live && pending && pending.kind !== "attach" && !live.deskUpdate) {
       try {
         await this.wireOutbound.sendPlainText(input.conversationId, ANSWER_FIRST, { replyToMessageId: input.messageId });
       } catch (err) {

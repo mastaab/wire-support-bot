@@ -92,6 +92,16 @@ Supported are JPEG, PNG, HEIC, HEIF and WebP images, and PDF, plain text, CSV, W
 
 With `WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS` set, the bot checks open requests at that interval. New public replies from the service desk (up to three per update) and status changes are posted in the request's conversation, quoting the bot's last message about that request. Button questions do not count as that message, since they are edited when they close; results such as "Raised …", "Added …" or "Resolved …" do. Replies the bot itself sent from Wire are not announced again.
 
+After posting an update, the bot asks the request's requester what to do next, in a separate short message with buttons:
+
+- After a desk reply: "Alice, would you like to reply to the service desk about **SD-42**, or is it solved so I can close it?" [Reply] [Solved, close it].
+- After the desk resolved the request (its status moved to a done status), or after a reply on a resolved request: "Alice, is **SD-42** solved for you, or is it still broken?" [Solved] [Still broken].
+- After other status changes the bot asks nothing: it only knows the status category (to do, in progress, done), not status names such as "Waiting for customer".
+
+[Reply] and [Still broken] ask for the text ("What shall I send to the service desk?" or "What is still wrong?"); the requester's next message becomes the text, and the bot offers it as a reply to the request with [Yes] [No], as for any other reply. Nothing reaches Jira before that yes; "no" or "cancel" instead of the text cancels, and a command addressed to the bot (such as `status of SD-42`) still runs as a command. [Solved, close it] resolves the request, like the command `resolve SD-42`: choosing the labeled button is the requester's decision. [Solved] and "no" only close the question. The bot does not reopen a request: Jira workflows differ and the bot has no reopen transition, so after [Still broken] the reply goes to the resolved request and the service desk decides whether to reopen it.
+
+The question goes only to the requester; the usual button rules apply (only they can answer, their first click decides, text answers "reply", "solved", "still broken" or "no" work too). It is never the request's last message, so the next update still quotes the update itself. It can be answered for `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` (4 hours by default), since an update may be read hours later, and is closed as expired after that. It never gets in the way of the requester's other questions: it is not asked while the requester has another open question in the conversation, a newer question to them replaces it (closed with "This question was replaced by a newer one."), a file they post (with passive help on) replaces it, and their next message that is not an answer closes it and is handled as usual. It is asked with passive help on or off: it is the bot's own question about the requester's request, and mentioning the bot with a command keeps working either way.
+
 ### Direct conversation with the assigned agent
 
 With `WIRE_SUPPORT_BOT_JIRA_AGENTS` mapping Jira account IDs to Wire handles, and the watch on, the bot reacts once per request when a mapped agent is assigned to an open request: it creates a group named after the request with the requester and the agent, posts a short introduction, makes both of them admins and leaves. The original conversation gets a notice that contact with the agent has been initiated. The direct conversation is not recorded in the ticket.
@@ -112,7 +122,7 @@ The explicit commands (`support:`, `reply to`, `resolve`) are themselves the mem
 
 ### Buttons
 
-Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other".
+Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update.
 
 The click rules:
 
@@ -169,6 +179,7 @@ One gap remains: if the process stops between creating the group and storing its
 - It does not act on edited messages, and buttons only answer the bot's own offer questions.
 - It does not raise anything from an unaddressed message without an explicit yes.
 - It does not watch requests raised from the CLI.
+- It does not reopen requests; after [Still broken] the service desk decides.
 
 ## Architecture
 
@@ -187,6 +198,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/application/usecases/general/AnswerQuestion.ts` | The answer path: builds the model's context, parses and validates an offer, sends the answer or the question. |
 | `src/application/services/offers.ts` | Offer marker parsing, bounds and the code-written questions. |
 | `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
+| `src/application/services/deskUpdateQuestions.ts` | The requester's question after a desk reply or resolve: texts, options, lifetime, and not asking over another open question. |
 | `src/application/services/offerPromptClosing.ts` | Closes ended button questions: the closing lines, one edit per message, the expiry sweep. |
 | `src/application/services/partOrderSteps.ts` | A part order's questions, one step at a time: free-text essentials, quantity and delivery location buttons, the complete order. |
 | `src/application/usecases/jira/ConfirmOffer.ts` | Classifies a yes, no or choice, by text or button, and runs the confirmed use case. |
@@ -363,6 +375,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 |---|---|---|---|
 | `WIRE_SUPPORT_BOT_JIRA_PASSIVE` | no | `off` | `on` lets the bot read unaddressed messages, offer to raise, add to or resolve requests, and offer to attach files. |
 | `WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS` | no | unset (no watch) | Seconds between checks for desk replies, status and assignee changes; a whole number, at least 15. |
+| `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` | no | `4` | Hours the requester can answer the question after a desk reply or resolve; a whole number from 0 to 72, `0` asks no such questions. Needs the watch. |
 
 ### Logging and conversations
 

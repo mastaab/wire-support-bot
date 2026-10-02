@@ -98,11 +98,20 @@ export interface JiraConfig {
    */
   watchSeconds?: number;
   /**
+   * Hours a question after a desk update ([Reply] [Solved, close it], [Solved] [Still broken]) can
+   * be answered (WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS); 0 asks none. Absent: the default
+   * (`DESK_UPDATE_QUESTION_HOURS_DEFAULT`). Only used with the watch.
+   */
+  updateQuestionHours?: number;
+  /**
    * Desk agents who get a direct Wire conversation with the requester when assigned: Jira account
    * ID to Wire handle (on the bot's own domain). Absent: no direct conversations.
    */
   agents?: ReadonlyMap<string, string>;
 }
+
+/** Longest lifetime of a question after a desk update, in hours. */
+export const UPDATE_QUESTION_HOURS_MAX = 72;
 
 const JIRA_REQUIRED_KEYS = [
   "WIRE_SUPPORT_BOT_JIRA_BASE_URL",
@@ -154,6 +163,10 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
   if (watchRaw !== undefined && (!/^\d+$/.test(watchRaw) || parseInt(watchRaw, 10) < 15)) {
     throw new Error("WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS must be a whole number of seconds, at least 15");
   }
+  const questionHoursRaw = value("WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS");
+  if (questionHoursRaw !== undefined && (!/^\d+$/.test(questionHoursRaw) || parseInt(questionHoursRaw, 10) > UPDATE_QUESTION_HOURS_MAX)) {
+    throw new Error(`WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS must be a whole number of hours from 0 to ${UPDATE_QUESTION_HOURS_MAX}`);
+  }
 
   return {
     baseUrl: httpsUrl("WIRE_SUPPORT_BOT_JIRA_BASE_URL"),
@@ -168,6 +181,7 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
     requestTypes,
     ...(serviceScope ? { serviceScope } : {}),
     ...(watchRaw !== undefined ? { watchSeconds: parseInt(watchRaw, 10) } : {}),
+    ...(questionHoursRaw !== undefined ? { updateQuestionHours: parseInt(questionHoursRaw, 10) } : {}),
     ...(agents ? { agents } : {}),
   };
 }
