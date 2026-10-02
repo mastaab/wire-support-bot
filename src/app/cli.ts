@@ -165,7 +165,7 @@ async function main() {
       jiraProjectKey: jira.projectKey, jiraShareWithModel: jira.shareWithModel, jiraServiceScope: jira.serviceScope, partAsset: config.partAsset,
     }),
     wireOutbound,
-    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations },
+    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage },
     undefined,
     logger,
   );

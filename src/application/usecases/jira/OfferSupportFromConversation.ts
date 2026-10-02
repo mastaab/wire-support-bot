@@ -20,7 +20,7 @@ import {
 } from "../../services/offerButtons";
 import type { GetIssueStatus } from "./GetIssueStatus";
 import { rememberLastMessage } from "./supportRequestMarkers";
-import { statedPartDetails } from "../../services/partDetails";
+import { fillMissingPartDetails, statedPartDetails } from "../../services/partDetails";
 import { partOrderStep } from "../../services/partOrderSteps";
 
 /** Classifier confidence required before passive help acts on a message. */
@@ -214,7 +214,11 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
     const duplicateOf = typeof draft.duplicateOf === "string" ? draft.duplicateOf.trim().toUpperCase() : "";
     const covering = duplicateOf ? open.find((r) => r.key === duplicateOf) : undefined;
     const addition = typeof draft.addition === "string" ? draft.addition.trim() : "";
-    const command = additionOnly ? null : toSupportCommand(draft, input.text);
+    const drafted = additionOnly ? null : toSupportCommand(draft, input.text);
+    // A part order that lacks essentials gets those the narrow extraction finds in the message.
+    const command = drafted ? await fillMissingPartDetails(drafted, input.text, this.triage, (err) => {
+      this.logger?.warn("OfferSupportFromConversation: extractPartDetails failed", { err: errorName(err) });
+    }) : null;
 
     // A new problem that may be one of the conversation's requests: the speaker picks between
     // adding to one of them and raising a new one, instead of the model guessing.

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { statedPartDetails } from "../../src/application/services/partDetails";
+import { fillMissingPartDetails, isPartPlaceholder, statedPartDetails } from "../../src/application/services/partDetails";
+import type { OfferCommand } from "../../src/application/services/offers";
 
 describe("statedPartDetails", () => {
   it("drops a quantity the requester did not state, such as 1 for \"a new tray\"", () => {
@@ -50,5 +51,49 @@ describe("statedPartDetails: every significant word must be stated", () => {
   it("drops a value made of filler words only, or with any unstated word", () => {
     expect(statedPartDetails({ deliverTo: "the" }, "the printer is broken")).toEqual({});
     expect(statedPartDetails({ part: "replacement toner cartridge" }, "we need toner")).toEqual({});
+  });
+
+  it("drops template slots and placeholder words even when the message has their words", () => {
+    expect(statedPartDetails({ part: "<part>", quantity: "[quantity]", deliverTo: "{deliverTo}", asset: "unknown" }, "order a part, any quantity, deliver to the unknown depot"))
+      .toEqual({});
+  });
+});
+
+describe("isPartPlaceholder", () => {
+  it.each(["<part name or number>", "[delivery location]", "{quantity}", " N/A ", "unknown", "TBD"])("treats %j as a placeholder", (value) => {
+    expect(isPartPlaceholder(value)).toBe(true);
+  });
+
+  it.each(["air filter", "Depot <North>", "truck 12"])("treats %j as a value", (value) => {
+    expect(isPartPlaceholder(value)).toBe(false);
+  });
+});
+
+describe("fillMissingPartDetails", () => {
+  const order = (part?: Record<string, string>): Extract<OfferCommand, { kind: "support" }> =>
+    ({ kind: "support", requestKind: "part", summary: "Air filter", description: "Air filter.", ...(part ? { part } : {}) });
+  const MESSAGE = "please order two air filters for truck 12 to Depot North";
+
+  it("merges only stated values into the missing essentials", async () => {
+    const extractor = { extractPartDetails: async () => ({ asset: "truck 7", part: "air filters", quantity: "2", deliverTo: "Depot South" }) };
+    expect((await fillMissingPartDetails(order({ asset: "truck 12" }), MESSAGE, extractor)).part)
+      .toEqual({ asset: "truck 12", part: "air filters", quantity: "2" });
+  });
+
+  it("returns the command unchanged without an extractor, for another kind and for a complete order", async () => {
+    const extractPartDetails = async () => { throw new Error("not called"); };
+    const fault: OfferCommand = { kind: "support", requestKind: "fault", summary: "s", description: "d" };
+    const complete = order({ asset: "truck 12", part: "air filters", quantity: "2", deliverTo: "Depot North" });
+    expect(await fillMissingPartDetails(order(), MESSAGE, undefined)).toEqual(order());
+    expect(await fillMissingPartDetails(fault, MESSAGE, { extractPartDetails })).toBe(fault);
+    expect(await fillMissingPartDetails(complete, MESSAGE, { extractPartDetails })).toBe(complete);
+  });
+
+  it("reports a failed extraction and returns the command unchanged; a non-object result changes nothing", async () => {
+    const errors: unknown[] = [];
+    const command = order({ asset: "truck 12" });
+    expect(await fillMissingPartDetails(command, MESSAGE, { extractPartDetails: async () => { throw new TypeError("x"); } }, (err) => errors.push(err))).toBe(command);
+    expect(errors).toHaveLength(1);
+    expect(await fillMissingPartDetails(command, MESSAGE, { extractPartDetails: async () => null as never })).toBe(command);
   });
 });

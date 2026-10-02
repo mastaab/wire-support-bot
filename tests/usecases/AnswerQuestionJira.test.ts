@@ -9,7 +9,7 @@ import { withoutAnswerHint } from "../../src/application/services/offerButtons";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../src/application/services/offers";
 import type { SupportRequestListOptions, SupportRequestRepository } from "../../src/domain/repositories/SupportRequestRepository";
 import type { AuditLogEntry, AuditLogRepository } from "../../src/domain/repositories/AuditLogRepository";
-import type { SupportRequest, SupportRequestStatusCategory } from "../../src/domain/entities/SupportRequest";
+import type { PartDetails, SupportRequest, SupportRequestStatusCategory } from "../../src/domain/entities/SupportRequest";
 import { sameQualifiedId } from "../../src/domain/ids/QualifiedId";
 import type { QualifiedId } from "../../src/domain/ids/QualifiedId";
 import type { CompositeButton, CompositePromptOptions, SentMessageRef } from "../../src/application/ports/WireOutboundPort";
@@ -57,6 +57,8 @@ interface SetupOptions {
   shareWithModel?: boolean;
   passive?: boolean;
   partDeliveryLocations?: string[];
+  /** The narrow part-details extraction; absent unless given. */
+  partDetails?: { extractPartDetails: (message: string) => Promise<PartDetails> };
   tracker?: Partial<IssueTrackerPort>;
   repo?: Partial<SupportRequestRepository>;
   sendFails?: boolean;
@@ -144,7 +146,8 @@ function setup(options: SetupOptions = {}) {
   const retrieval = { retrieve: vi.fn().mockResolvedValue(options.results ?? []) };
   const logger = { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn() };
   const jira = { tracker, requests: repo, auditLog, offers, shareWithModel: options.shareWithModel ?? false, passive: options.passive, now: () => NOW,
-    ...(options.partDeliveryLocations ? { partDeliveryLocations: options.partDeliveryLocations } : {}) };
+    ...(options.partDeliveryLocations ? { partDeliveryLocations: options.partDeliveryLocations } : {}),
+    ...(options.partDetails ? { partDetails: options.partDetails } : {}) };
   const useCase = new AnswerQuestion(general, wire as never, jira, retrieval, logger);
   const run = (question: string, overrides: Partial<AnswerQuestionInput> = {}) => useCase.execute({
     question, conversationContext: [], conversationId: convId, replyToMessageId: "q", requester,
@@ -1174,6 +1177,66 @@ describe("AnswerQuestion with Jira: request kinds and part orders", () => {
     const { stored, run } = setup({ modelAnswer: offer({ requestKind: "part", part: PART }) });
     await run(question);
     expect(stored).toHaveLength(0);
+  });
+
+  describe("essentials from the original message", () => {
+    const ORDER = "please order an air filter for truck 12";
+    const airFilter = (part?: Record<string, unknown>): string =>
+      `OFFER: ${JSON.stringify({ kind: "support", requestKind: "part", summary: "Air filter for truck 12", description: "Air filter for truck 12.", ...(part ? { part } : {}) })}`;
+    const extractor = (result: Promise<PartDetails>) => ({ extractPartDetails: vi.fn((_message: string) => result) });
+
+    it("fills the part and asset the offer left out from the narrow extraction of the original message", async () => {
+      const partDetails = extractor(Promise.resolve({ asset: "truck 12", part: "air filter" }));
+      const { stored, sent, run } = setup({ modelAnswer: airFilter(), partDetails });
+      await run(ORDER);
+      expect(partDetails.extractPartDetails).toHaveBeenCalledTimes(1);
+      expect(partDetails.extractPartDetails).toHaveBeenCalledWith(ORDER);
+      expect(stored[0]!.command).toMatchObject({ part: { asset: "truck 12", part: "air filter" } });
+      expect(sent[0]).toMatch(/^How many shall I order\?/);
+    });
+
+    it("replaces template placeholders of the offer with the stated values", async () => {
+      const partDetails = extractor(Promise.resolve({ asset: "truck 12", part: "air filter" }));
+      const { stored, run } = setup({ modelAnswer: airFilter({ asset: "<the item the part is for>", part: "<part name or number>", quantity: "<how many>", deliverTo: "[delivery location]" }), partDetails });
+      await run(ORDER);
+      expect((stored[0]!.command as { part?: unknown }).part).toEqual({ asset: "truck 12", part: "air filter" });
+    });
+
+    it("never overwrites a value the offer has and drops an invented quantity", async () => {
+      const partDetails = extractor(Promise.resolve({ asset: "truck", part: "filter", quantity: "1", deliverTo: "Depot North" }));
+      const { stored, run } = setup({ modelAnswer: airFilter({ asset: "truck 12" }), partDetails });
+      await run(ORDER);
+      expect((stored[0]!.command as { part?: unknown }).part).toEqual({ asset: "truck 12", part: "filter" });
+    });
+
+    it("does not take the asset's number for a quantity", async () => {
+      const partDetails = extractor(Promise.resolve({ part: "air filter", quantity: "12" }));
+      const { stored, run } = setup({ modelAnswer: airFilter({ asset: "truck 12" }), partDetails });
+      await run(ORDER);
+      expect((stored[0]!.command as { part?: unknown }).part).toEqual({ asset: "truck 12", part: "air filter" });
+    });
+
+    it("changes nothing when the extraction fails or finds nothing, and logs only the error name", async () => {
+      const failing = extractor(Promise.reject(new RangeError(`bad ${ORDER}`)));
+      const failed = setup({ modelAnswer: airFilter({ asset: "truck 12" }), partDetails: failing });
+      await failed.run(ORDER);
+      expect((failed.stored[0]!.command as { part?: unknown }).part).toEqual({ asset: "truck 12" });
+      expect(failed.logger.warn).toHaveBeenCalledWith("AnswerQuestion: extractPartDetails failed", { err: "RangeError" });
+      expect(JSON.stringify(failed.logger.warn.mock.calls)).not.toContain("air filter");
+
+      const empty = setup({ modelAnswer: airFilter({ asset: "truck 12" }), partDetails: extractor(Promise.resolve({})) });
+      await empty.run(ORDER);
+      expect((empty.stored[0]!.command as { part?: unknown }).part).toEqual({ asset: "truck 12" });
+    });
+
+    it("does not call the extraction for a complete order or another kind", async () => {
+      const partDetails = extractor(Promise.resolve({}));
+      const complete = setup({ modelAnswer: offer({ requestKind: "part", part: PART }), partDetails });
+      await complete.run("Please order two black toner cartridges for printer 17, deliver to Depot North");
+      const fault = setup({ modelAnswer: offer({ requestKind: "fault" }), partDetails });
+      await fault.run("Please raise it with the service desk");
+      expect(partDetails.extractPartDetails).not.toHaveBeenCalled();
+    });
   });
 
   it("shows the kind of each stored request to the model", async () => {

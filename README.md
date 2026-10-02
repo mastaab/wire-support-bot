@@ -73,7 +73,7 @@ Every offer follows the same rules as above. With passive help off, the bot only
 
 ### Part orders
 
-A request is a question, a part order or a fault, and each kind can have its own Jira request type. A part order needs four essentials: the item the part is for (the asset, with a configurable label and question), the part, the quantity and the delivery location. When some are missing, the bot asks for them one step at a time:
+A request is a question, a part order or a fault, and each kind can have its own Jira request type. A part order needs four essentials: the item the part is for (the asset, with a configurable label and question), the part, the quantity and the delivery location. When the first offer (from a mentioned message or from passive help) lacks some, the bot first reads the requester's original message once more with the narrow part-details extraction and adds what it states to the missing essentials, never replacing a value the offer already has; a failed or empty extraction changes nothing. Placeholders such as `<part name>` or "unknown" never count as values. When some are still missing, the bot asks for them one step at a time:
 
 1. The asset and the part, which need free text, first and together, in text ("To order it I need the vehicle (fleet or chassis number) and the part (name or number). What are they?").
 2. The quantity, with buttons: "How many shall I order?" [1] [2] [5] [Other].

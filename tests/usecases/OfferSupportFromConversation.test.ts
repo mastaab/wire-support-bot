@@ -549,6 +549,49 @@ describe("OfferSupportFromConversation", () => {
         expect(offer.choices![0]!.command).toEqual({ kind: "reply", issueKey: "SD-6", body: "It happened again." });
         expect(offer.choices![1]!.command).toMatchObject({ kind: "support", requestKind: "part" });
       });
+
+      describe("essentials from the original message", () => {
+        const ORDER = "please order an air filter for truck 12";
+        const AIR_FILTER: SupportDraft = { ...PART_DRAFT, summary: "Air filter for truck 12", description: "Please order an air filter for truck 12.", part: { asset: "truck 12" } };
+
+        it("fills the part the draft left out from the narrow extraction of the message, then asks for the quantity", async () => {
+          const { triage, offers, sent, useCase } = setup([], AIR_FILTER);
+          triage.extractPartDetails.mockResolvedValue({ asset: "truck 12", part: "air filter" });
+
+          await useCase.execute(input({ text: ORDER }));
+
+          expect(triage.extractPartDetails).toHaveBeenCalledTimes(1);
+          expect(triage.extractPartDetails).toHaveBeenCalledWith(ORDER);
+          expect(offers.put.mock.calls[0]![0].command.part).toEqual({ asset: "truck 12", part: "air filter" });
+          expect(sent[0]).toMatch(/^How many shall I order\?/);
+        });
+
+        it("does not call the extraction when the draft already has every essential", async () => {
+          const { triage, useCase } = setup([], PART_DRAFT);
+          await useCase.execute(input({ text: "two paper tray rollers for printer 17 to Depot North" }));
+          expect(triage.extractPartDetails).not.toHaveBeenCalled();
+        });
+
+        it("changes nothing when the extraction fails, and logs only the error name", async () => {
+          const { triage, offers, logger, useCase } = setup([], AIR_FILTER);
+          triage.extractPartDetails.mockRejectedValue(new RangeError(`bad ${ORDER}`));
+
+          await useCase.execute(input({ text: ORDER }));
+
+          expect(offers.put.mock.calls[0]![0].command.part).toEqual({ asset: "truck 12" });
+          expect(logger.warn).toHaveBeenCalledWith("OfferSupportFromConversation: extractPartDetails failed", { err: "RangeError" });
+          expect(loggedText(logger)).not.toContain("air filter");
+        });
+
+        it("keeps only what the message states: no invented quantity, no placeholder", async () => {
+          const { triage, offers, useCase } = setup([], { ...AIR_FILTER, part: { asset: "truck 12", part: "<part name>" } });
+          triage.extractPartDetails.mockResolvedValue({ part: "air filter", quantity: "1", deliverTo: "the depot" });
+
+          await useCase.execute(input({ text: ORDER }));
+
+          expect(offers.put.mock.calls[0]![0].command.part).toEqual({ asset: "truck 12", part: "air filter" });
+        });
+      });
     });
 
     it("never offers while the speaker has a live offer", async () => {

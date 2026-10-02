@@ -1,5 +1,8 @@
+import { PART_DETAIL_MAX } from "../../domain/entities/SupportRequest";
 import type { PartDetails } from "../../domain/entities/SupportRequest";
-import { PART_DETAIL_KEYS } from "./offers";
+import type { OfferCommand } from "../ports/PendingOfferPort";
+import type { SupportTriagePort } from "../ports/SupportTriagePort";
+import { PART_DETAIL_KEYS, missingPartDetails } from "./offers";
 
 /** Number words a requester may use for a quantity, in English and German. */
 const NUMBER_WORDS: Readonly<Record<string, number>> = {
@@ -42,6 +45,7 @@ function statedNumbers(text: string): Set<number> {
  * matches 2); an article such as "a" never counts, so the bot asks instead of assuming one.
  */
 export function statedPartDetails(details: PartDetails | undefined, message: string): PartDetails {
+  details = withoutPlaceholders(details);
   const messageWords = new Set(words(message));
   // A number that belongs to the asset ("pump 7", "serial 4411") is not a quantity.
   const asset = details?.asset?.trim();
@@ -59,6 +63,80 @@ export function statedPartDetails(details: PartDetails | undefined, message: str
     if (significant.length > 0 && significant.every((word) => inMessage(word, messageWords))) stated[key] = value;
   }
   return stated;
+}
+
+/** Words a small model may write instead of JSON null; never a real value. */
+const PLACEHOLDERS = new Set(["null", "none", "unknown", "not stated", "not given", "not specified", "n/a", "na", "-", "?", "tbd"]);
+
+/** A template slot the model copied instead of a value: "<part name>", "[quantity]", "{deliverTo}". */
+const TEMPLATE_SLOT = /^(?:<[^<>]*>|\[[^[\]]*\]|\{[^{}]*\})$/;
+
+/** True when the value is a placeholder or a template slot rather than a stated value. */
+export function isPartPlaceholder(value: string): boolean {
+  const text = value.trim();
+  return PLACEHOLDERS.has(text.toLowerCase()) || TEMPLATE_SLOT.test(text);
+}
+
+/** The details without placeholder or template values. */
+function withoutPlaceholders(details: PartDetails | undefined): PartDetails | undefined {
+  if (!details) return details;
+  const kept: PartDetails = {};
+  for (const key of PART_DETAIL_KEYS) {
+    const value = details[key];
+    if (typeof value === "string" && !isPartPlaceholder(value)) kept[key] = value;
+  }
+  return kept;
+}
+
+/**
+ * The essentials a model reported, each collapsed to one line. A value that is empty, not
+ * text, longer than `PART_DETAIL_MAX` or a placeholder is left out, so it never replaces an
+ * earlier value.
+ */
+export function boundedPartDetails(details: PartDetails | null | undefined): PartDetails {
+  const bounded: PartDetails = {};
+  if (!details || typeof details !== "object") return bounded;
+  for (const key of PART_DETAIL_KEYS) {
+    const raw: unknown = details[key];
+    const value = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+    if (value && value.length <= PART_DETAIL_MAX && !isPartPlaceholder(value)) bounded[key] = value;
+  }
+  return bounded;
+}
+
+/**
+ * A part order whose offer lacks essentials gets those the requester's original message states,
+ * read by the narrow part-details extraction once: only values that `statedPartDetails` accepts
+ * from the message, and only for essentials the offer is missing, so a value the offer already
+ * has is never overwritten. Any other command, a complete order or no extractor returns the
+ * command unchanged; so does a failed or empty extraction (`onError` hears of a failure).
+ */
+export async function fillMissingPartDetails<C extends OfferCommand>(
+  command: C, message: string, extractor: Pick<SupportTriagePort, "extractPartDetails"> | undefined,
+  onError?: (err: unknown) => void,
+): Promise<C> {
+  const order: OfferCommand = command;
+  if (!extractor || order.kind !== "support" || order.requestKind !== "part") return command;
+  const missing = missingPartDetails(order);
+  if (missing.length === 0) return command;
+  const given: PartDetails = {};
+  for (const key of PART_DETAIL_KEYS) {
+    if (order.part?.[key]?.trim()) given[key] = order.part[key];
+  }
+  let stated: PartDetails;
+  try {
+    // The offer's own values take part in the check, so its asset's number is never a quantity.
+    stated = statedPartDetails({ ...boundedPartDetails(await extractor.extractPartDetails(message)), ...given }, message);
+  } catch (err) {
+    onError?.(err);
+    return command;
+  }
+  const added: PartDetails = {};
+  for (const key of missing) {
+    if (stated[key]) added[key] = stated[key];
+  }
+  if (Object.keys(added).length === 0) return command;
+  return { ...order, part: { ...order.part, ...added } } as C;
 }
 
 function escapeRegExp(text: string): string {

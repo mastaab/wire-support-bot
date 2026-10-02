@@ -103,7 +103,7 @@ export function createContainer(config: Config, logger: Logger): Container {
   const answerQuestion = new AnswerQuestion(
     generalAnswerAdapter,
     wireOutbound,
-    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations },
+    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage },
     undefined,
     logger,
   );

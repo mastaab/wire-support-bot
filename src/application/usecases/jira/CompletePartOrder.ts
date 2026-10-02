@@ -1,12 +1,12 @@
 import type { QualifiedId } from "../../../domain/ids/QualifiedId";
-import { DEFAULT_PART_ASSET, PART_DETAIL_MAX } from "../../../domain/entities/SupportRequest";
+import { DEFAULT_PART_ASSET } from "../../../domain/entities/SupportRequest";
 import type { PartAssetWording, PartDetails } from "../../../domain/entities/SupportRequest";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../ports/PendingOfferPort";
 import type { SupportTriagePort } from "../../ports/SupportTriagePort";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
 import { PART_DETAIL_KEYS, missingPartDetails } from "../../services/offers";
-import { statedPartDetails } from "../../services/partDetails";
+import { boundedPartDetails, statedPartDetails } from "../../services/partDetails";
 import { askPartOrderStep } from "../../services/partOrderSteps";
 import { answeredLine, closeOfferPrompt } from "../../services/offerPromptClosing";
 
@@ -56,7 +56,7 @@ export class CompletePartOrder {
 
     let extracted: PartDetails;
     try {
-      extracted = statedPartDetails(boundedDetails(await this.triage.extractPartDetails(input.text)), input.text);
+      extracted = statedPartDetails(boundedPartDetails(await this.triage.extractPartDetails(input.text)), input.text);
     } catch (err) {
       this.logger?.warn("CompletePartOrder: extractPartDetails failed", { err: errorName(err) });
       return false;
@@ -106,26 +106,6 @@ function answeredValue(extracted: PartDetails, pending: Extract<OfferCommand, { 
   if (asked && extracted[asked]) return extracted[asked]!;
   return PART_DETAIL_KEYS.filter((key) => extracted[key] && extracted[key] !== pending.part?.[key]).map((key) => extracted[key]!).join(", ");
 }
-
-/** Words a small model may write instead of JSON null; never a real value. */
-const PLACEHOLDERS = new Set(["null", "none", "unknown", "not stated", "not given", "not specified", "n/a", "na", "-", "?", "tbd"]);
-
-/**
- * The essentials the model reported, each collapsed to one line. A value that is empty, not
- * text, longer than `PART_DETAIL_MAX` or a placeholder is left out, so it never replaces an
- * earlier value.
- */
-function boundedDetails(details: PartDetails | null | undefined): PartDetails {
-  const bounded: PartDetails = {};
-  if (!details || typeof details !== "object") return bounded;
-  for (const key of PART_DETAIL_KEYS) {
-    const raw: unknown = details[key];
-    const value = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
-    if (value && value.length <= PART_DETAIL_MAX && !PLACEHOLDERS.has(value.toLowerCase())) bounded[key] = value;
-  }
-  return bounded;
-}
-
 
 function errorName(err: unknown): string {
   return err instanceof Error ? err.name : "UnknownError";

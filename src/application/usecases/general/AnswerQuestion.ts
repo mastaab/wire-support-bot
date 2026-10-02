@@ -9,6 +9,7 @@ import type { PartAssetWording, SupportRequest, SupportRequestKind } from "../..
 import type { SupportRequestRepository } from "../../../domain/repositories/SupportRequestRepository";
 import type { AuditLogRepository } from "../../../domain/repositories/AuditLogRepository";
 import type { Logger } from "../../ports/Logger";
+import type { SupportTriagePort } from "../../ports/SupportTriagePort";
 import { trackerErrorFields } from "../../ports/IssueTrackerPort";
 import type { IssueReply, IssueSnapshot, IssueTrackerPort } from "../../ports/IssueTrackerPort";
 import {
@@ -21,7 +22,7 @@ import { formatSla, statusLabel } from "../jira/formatIssue";
 import { findSupportRequestInConversation } from "../jira/supportRequestScope";
 import { markRepliesSeen, rememberLastMessage } from "../jira/supportRequestMarkers";
 import { formatTimeInZone } from "../../services/formatTimeInZone";
-import { statedPartDetails } from "../../services/partDetails";
+import { fillMissingPartDetails, statedPartDetails } from "../../services/partDetails";
 import { newOfferId, offerPromptFields, sendOfferPrompt } from "../../services/offerButtons";
 import { partOrderStep } from "../../services/partOrderSteps";
 import type { PartOrderStep } from "../../services/partOrderSteps";
@@ -92,6 +93,11 @@ export interface AnswerQuestionJira {
   partAsset?: PartAssetWording;
   /** Delivery locations of part orders offered as buttons; the location is asked in text when absent or empty. */
   partDeliveryLocations?: readonly string[];
+  /**
+   * The narrow part-details extraction (the triage port): run once on the requester's message
+   * when a proposed part order lacks essentials; without it the bot asks for them.
+   */
+  partDetails?: Pick<SupportTriagePort, "extractPartDetails">;
   now?: () => Date;
 }
 
@@ -228,8 +234,7 @@ export class AnswerQuestion {
     // The raw marker is never sent, whether or not the offer is valid.
     const parsed = parseOfferMarker(modelAnswer);
     const text = parsed.text || FALLBACK_ANSWER;
-    // Part essentials the model proposes must be stated in this message; earlier ones come from the pending draft.
-    const command = parsed.command ? withPendingDetails(input.pendingOffer, withStatedPart(parsed.command, input.question)) : null;
+    const command = parsed.command ? await this.proposedCommand(parsed.command, input) : null;
     const prepared = command ? await this.prepareOffer(this.jira, input, command) : null;
     if (input.amendOnly && !(prepared && command && isRevision(input.pendingOffer, command)
         && !sameCommand(input.pendingOffer, command))) {
@@ -270,6 +275,18 @@ export class AnswerQuestion {
       await rememberLastMessage(this.jira.requests, prepared.requestKey, sent, "AnswerQuestion", this.logger);
     }
     return prepared.question;
+  }
+
+  /**
+   * The model's command with the part essentials it may keep: those stated in this message, the
+   * pending draft's earlier ones, and, when the order still lacks some, those the narrow
+   * extraction finds in this message (never replacing a value the offer has).
+   */
+  private async proposedCommand(proposed: OfferCommand, input: AnswerQuestionInput): Promise<OfferCommand> {
+    const command = withPendingDetails(input.pendingOffer, withStatedPart(proposed, input.question));
+    return fillMissingPartDetails(command, input.question, this.jira.partDetails, (err) => {
+      this.logger?.warn("AnswerQuestion: extractPartDetails failed", { err: err instanceof Error ? err.name : "UnknownError" });
+    });
   }
 
   private async send(input: AnswerQuestionInput, text: string, withMentions: boolean): Promise<SentMessageRef | undefined> {
