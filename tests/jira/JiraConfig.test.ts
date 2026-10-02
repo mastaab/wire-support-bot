@@ -106,6 +106,22 @@ describe("resolveJiraConfig", () => {
     }
   });
 
+  it("reads the agent conversation mode as ask, auto or off, ask by default", () => {
+    expect(resolveJiraConfig(full)!.agentChat).toBe("ask");
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: "auto" })!.agentChat).toBe("auto");
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: " OFF " })!.agentChat).toBe("off");
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: "ask" })!.agentChat).toBe("ask");
+    // Off leaves the mapping out, so neither a question nor a group can follow; a malformed one still fails.
+    const mapped = { ...full, WIRE_SUPPORT_BOT_JIRA_AGENTS: "5b10a2=dana.desk" };
+    expect(resolveJiraConfig({ ...mapped, WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: "off" })!.agents).toBeUndefined();
+    expect([...resolveJiraConfig({ ...mapped, WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: "auto" })!.agents!]).toEqual([["5b10a2", "dana.desk"]]);
+    expect([...resolveJiraConfig(mapped)!.agents!]).toEqual([["5b10a2", "dana.desk"]]);
+    expect(() => resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_AGENTS: "bad", WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: "off" })).toThrow(/WIRE_SUPPORT_BOT_JIRA_AGENTS/);
+    for (const bad of ["on", "yes", "manual"]) {
+      expect(() => resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: bad })).toThrow("WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT must be ask, auto or off");
+    }
+  });
+
   it("switches to Basic auth when an email is configured", () => {
     expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_EMAIL: "bot@example.com" })!.email).toBe("bot@example.com");
   });

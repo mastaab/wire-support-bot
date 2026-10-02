@@ -684,8 +684,8 @@ export class WireEventRouter extends WireEventsHandler {
       const run = () => this.deps.confirmOffer.choose({
         conversationId: convId, requesterId: sender, requesterName: senderName, offerId: parsed.offerId, index: parsed.index,
       });
-      // An option that writes is work the requester waits for; declining is not.
-      const chosen = decision?.command ? await this.typing(convId, run) : await run();
+      // An option that writes or opens a conversation is work the requester waits for; declining is not.
+      const chosen = decision?.command || live.choices?.[parsed.index]?.then ? await this.typing(convId, run) : await run();
       log.info("Button: click accepted", { chosen });
       // Like a text answer: the requester's next interaction, which closes the offer for the
       // answer model and ends the question as the bot's latest.

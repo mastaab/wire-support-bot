@@ -12,6 +12,7 @@ import type { Logger } from "../../ports/Logger";
 import { SupportRequestWrites } from "../../services/SupportRequestWrites";
 import type { DeskUpdateKind, DeskUpdateQuestions } from "../../services/deskUpdateQuestions";
 import type { OpenAgentConversation } from "./OpenAgentConversation";
+import type { AskForAgentConversation } from "./AskForAgentConversation";
 import { formatReplies, formatSla, type RepliesHeading } from "./formatIssue";
 import { botActor, refreshStatusCategory } from "./supportRequestStatus";
 
@@ -48,8 +49,12 @@ export interface WatchGuards {
   writes?: SupportRequestWrites;
   /** Conversations never posted to, such as the CLI's test conversations; their requests are not watched. */
   skipConversation?: (conversationId: QualifiedId) => boolean;
-  /** Direct conversations with the desk agent: Jira account ID to Wire handle, and the use case. */
-  agents?: { handles: ReadonlyMap<string, string>; open: OpenAgentConversation };
+  /**
+   * Direct conversations with the desk agent: Jira account ID to Wire handle, and the use case.
+   * With `ask`, the requester is asked first ([Open direct chat] [Not now]) instead of the group
+   * being opened at once. Absent: no direct conversations.
+   */
+  agents?: { handles: ReadonlyMap<string, string>; open: OpenAgentConversation; ask?: AskForAgentConversation };
   /**
    * Asks the requester what to do after a posted desk reply or resolve, in a separate button
    * message that is never stored as the request's last message. Absent: no such questions.
@@ -79,6 +84,11 @@ export class WatchSupportRequests {
   private readonly pending = new Map<string, IssueChange>();
   /** Consecutive failed attempts per pending key. */
   private readonly failures = new Map<string, number>();
+  /**
+   * Keys whose agent-conversation question waits for the requester's question slot, with when it
+   * first had to wait. Asked again at each check until the question's lifetime has passed.
+   */
+  private readonly agentQuestionWaiting = new Map<string, Date>();
 
   constructor(
     private readonly requests: SupportRequestRepository,
@@ -110,6 +120,9 @@ export class WatchSupportRequests {
         this.failures.delete(key);
       }
     }
+    for (const key of [...this.agentQuestionWaiting.keys()]) {
+      if (!byKey.has(key)) this.agentQuestionWaiting.delete(key);
+    }
 
     const checkTime = this.now();
     if (watched.length === 0) {
@@ -139,6 +152,13 @@ export class WatchSupportRequests {
       const request = byKey.get(key)!;
       try {
         const outcome = await this.examine(request, change);
+        if (outcome === "announcedWaiting") {
+          // Posted, but the agent question still waits for the requester's question slot.
+          this.pending.set(key, change);
+          this.failures.delete(key);
+          announced++;
+          continue;
+        }
         if (outcome === "pending") {
           this.pending.set(key, change);
           continue;
@@ -180,7 +200,9 @@ export class WatchSupportRequests {
   }
 
   /** Posts the update for one request when there is one and stores the new markers. */
-  private async examine(listed: SupportRequest, change: IssueChange): Promise<"announced" | "silent" | "pending" | "failed"> {
+  private async examine(
+    listed: SupportRequest, change: IssueChange,
+  ): Promise<"announced" | "announcedWaiting" | "silent" | "pending" | "failed"> {
     if (this.guards.writes?.has(listed.key)) return "pending";
     // Re-read: a resolve, `status of` or answer during this check may have moved the markers.
     const request = await this.requests.findByKey(listed.key);
@@ -218,19 +240,24 @@ export class WatchSupportRequests {
       status = snapshot.statusCategory;
     }
 
-    // A newly assigned mapped agent gets the direct conversation, once, before the other update.
+    // A newly assigned mapped agent gets the direct conversation, once: opened at once before the
+    // other update, or (with `ask`) offered to the requester after it.
     let lastMessage = request.lastMessage;
     let openFailed = false;
     const agentHandle = assignee !== null ? this.guards.agents?.handles.get(assignee) : undefined;
-    if (!assigneeBaseline && assigneeChanged && agentHandle && status !== "done" && !request.agentConversationAt) {
+    const agentDue = !assigneeBaseline && assigneeChanged && !!agentHandle && status !== "done" && !request.agentConversationAt;
+    const askAgent = agentDue ? this.guards.agents?.ask : undefined;
+    if (!agentDue) this.agentQuestionWaiting.delete(request.key);
+    if (agentDue && !askAgent) {
       // Checked again: a resolve may have started during the reads.
       if (this.guards.writes?.has(request.key)) return "pending";
-      const opened = await this.openAgentConversation(request, agentHandle);
+      const opened = await this.openAgentConversation(request, agentHandle!);
       lastMessage = opened.lastMessage;
       openFailed = opened.failed;
     }
-    // Stored only now, and not after a failed open, so a failed read or open is retried with the change.
-    if ((assigneeBaseline || assigneeChanged) && !openFailed) await this.storeAssignee(request.key, assignee);
+    // Stored only now, and not after a failed open, so a failed read or open is retried with the
+    // change. With `ask`, it is stored after the question below.
+    if ((assigneeBaseline || assigneeChanged) && !openFailed && !askAgent) await this.storeAssignee(request.key, assignee);
 
     const statusLines = baseline ? [] : statusChangeLines(request.statusCategory, status, snapshot);
     const announce = statusLines.length > 0 || newReplies.length > 0;
@@ -258,6 +285,22 @@ export class WatchSupportRequests {
           this.logger?.warn("WatchSupportRequests: setLastMessage failed", { key: request.key, ...trackerErrorFields(err) });
         }
       }
+    }
+
+    // With `ask`, the question about the agent conversation follows the update. It takes the
+    // requester's question slot, so no desk-update question is asked in the same check.
+    let agentAsked = false;
+    let agentWaiting = false;
+    if (askAgent) {
+      if (!announce && this.guards.writes?.has(request.key)) return "pending";
+      const asked = await this.askAgentConversation(askAgent, request, agentHandle!);
+      agentAsked = asked === "asked";
+      agentWaiting = asked === "waiting";
+      openFailed = asked === "failed";
+      if ((assigneeBaseline || assigneeChanged) && !openFailed && !agentWaiting) await this.storeAssignee(request.key, assignee);
+    }
+
+    if (announce && !agentAsked) {
       const question = followUpKind(status, newReplies.length > 0);
       // Never fails: the update is posted and must not be posted again.
       if (question) await this.guards.questions?.ask(request, question);
@@ -275,7 +318,39 @@ export class WatchSupportRequests {
       }
     }
     if (openFailed) return "failed";
+    if (agentWaiting) return announce ? "announcedWaiting" : "pending";
     return announce ? "announced" : "silent";
+  }
+
+  /**
+   * Asks the requester about the agent conversation. "waiting" when their question slot is taken:
+   * the change is kept and asked about again at the next check, until the question's lifetime has
+   * passed since the first wait; then it is given up ("skipped") and the assignee is stored, so
+   * nothing is asked about it later. A failure is logged and retried like a failed open.
+   */
+  private async askAgentConversation(
+    ask: AskForAgentConversation, request: SupportRequest, agentHandle: string,
+  ): Promise<"asked" | "skipped" | "waiting" | "failed"> {
+    let outcome;
+    try {
+      outcome = await ask.ask(request, agentHandle);
+    } catch (err) {
+      this.logger?.warn("WatchSupportRequests: asking about the agent conversation failed", { key: request.key, ...trackerErrorFields(err) });
+      outcome = "failed" as const;
+    }
+    if (outcome !== "busy") {
+      this.agentQuestionWaiting.delete(request.key);
+      return outcome;
+    }
+    const now = this.now();
+    const since = this.agentQuestionWaiting.get(request.key) ?? now;
+    if (now.getTime() - since.getTime() >= ask.lifetimeMs) {
+      this.logger?.info("WatchSupportRequests: the requester stayed busy; not asking about the agent conversation", { key: request.key });
+      this.agentQuestionWaiting.delete(request.key);
+      return "skipped";
+    }
+    this.agentQuestionWaiting.set(request.key, since);
+    return "waiting";
   }
 
   /** Stores the assignee last seen; bookkeeping, so a failure is logged and never stops the check. */

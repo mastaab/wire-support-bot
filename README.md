@@ -104,7 +104,15 @@ The question goes only to the requester; the usual button rules apply (only they
 
 ### Direct conversation with the assigned agent
 
-With `WIRE_SUPPORT_BOT_JIRA_AGENTS` mapping Jira account IDs to Wire handles, and the watch on, the bot reacts once per request when a mapped agent is assigned to an open request: it creates a group named after the request with the requester and the agent, posts a short introduction, makes both of them admins and leaves. The original conversation gets a notice that contact with the agent has been initiated. The direct conversation is not recorded in the ticket.
+With `WIRE_SUPPORT_BOT_JIRA_AGENTS` mapping Jira account IDs to Wire handles, and the watch on, the bot reacts once per request when a mapped agent is assigned to an open request. What it does depends on `WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT`:
+
+- `ask` (the default): the bot asks the requester in the request's conversation, after the request's other update if there is one: "Alice, the service desk assigned Kim Desk to **SD-42**. Would you like a direct conversation with them?" [Open direct chat] [Not now]. [Open direct chat] (or the text answer "open" or "yes") opens the direct conversation as described below; [Not now] (or "not now", "no") only closes the question. The usual button rules apply: only the requester can answer, their first click decides, and the question is closed with "Answered by <name>: <option>". The bot asks once per request, also when the requester answers [Not now] or does not answer.
+- `auto`: the bot opens the direct conversation at once, without asking.
+- `off`: neither a question nor a group; the mapping is not used.
+
+Opening the direct conversation: the bot creates a group named after the request with the requester and the agent, posts a short introduction, makes both of them admins and leaves. The original conversation gets a notice that contact with the agent has been initiated. If the group cannot be created after [Open direct chat] (for example the agent's handle no longer resolves), or the request was resolved meanwhile, the bot says so in one short message. The direct conversation is not recorded in the ticket.
+
+The question uses the requester's question slot like the questions after a desk update. It is not asked while the requester has another open question in the conversation: the bot asks again at each watch check until that question is answered or gone, and gives up after the question's lifetime (`WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS`, 4 hours by default; with that setting at `0` it keeps the default 4 hours). Waiting is held in memory, so after a restart the bot asks at its first check. Once asked, it replaces an open question after a desk update, a later question after a desk update is not asked while it is open, and a question, file or message of the requester replaces or closes it like any other. It expires after the same lifetime.
 
 ### Typing indicator
 
@@ -122,7 +130,7 @@ The explicit commands (`support:`, `reply to`, `resolve`) are themselves the mem
 
 ### Buttons
 
-Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered and ranked by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update.
+Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered and ranked by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update or about the agent conversation.
 
 The click rules:
 
@@ -164,7 +172,7 @@ Sent to Jira: only what a member wrote in a command or confirmed in an offer, pl
 
 ### The watch
 
-The watch polls rather than receiving webhooks, so the bot needs no inbound connection. Each check asks Jira which watched requests changed since the previous check (with a two-minute overlap, since Jira's search is eventually consistent) and examines only those. Watched requests are the open ones plus those resolved in the last 24 hours, to catch a reopen. A request the bot raises starts with its markers set at creation: replies and the assignee count as seen up to that moment, and the status is stored as "to do". So a desk reply, an assignment to a mapped agent or a status change after creation is acted on at the next check, even if that is the first check that sees the request. Only a request stored without these markers (no reply marker, or no assignee marker) gets a baseline when it is first examined: without a reply marker the bot records its replies and status and announces nothing, and without an assignee marker it records the assignee without opening a direct conversation, so old activity is never posted. The markers only move forward and are stored, so an update is not repeated after a restart. A request being resolved from Wire at that moment is skipped, so the bot never announces its own resolve as the desk's. A request whose update keeps failing is given up after 10 attempts.
+The watch polls rather than receiving webhooks, so the bot needs no inbound connection. Each check asks Jira which watched requests changed since the previous check (with a two-minute overlap, since Jira's search is eventually consistent) and examines only those. Watched requests are the open ones plus those resolved in the last 24 hours, to catch a reopen. A request the bot raises starts with its markers set at creation: replies and the assignee count as seen up to that moment, and the status is stored as "to do". So a desk reply, an assignment to a mapped agent or a status change after creation is acted on at the next check, even if that is the first check that sees the request. Only a request stored without these markers (no reply marker, or no assignee marker) gets a baseline when it is first examined: without a reply marker the bot records its replies and status and announces nothing, and without an assignee marker it records the assignee without opening or offering a direct conversation, so old activity is never posted. The markers only move forward and are stored, so an update is not repeated after a restart. A request being resolved from Wire at that moment is skipped, so the bot never announces its own resolve as the desk's. A request whose update keeps failing is given up after 10 attempts.
 
 ### The agent group
 
@@ -209,7 +217,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/application/usecases/jira/CompletePartOrder.ts` | Fills a part order's missing essentials from the requester's next message. |
 | `src/application/usecases/jira/OfferAttachment.ts`, `AttachFileToRequest.ts` | Photos and documents to a request. |
 | `src/application/usecases/jira/WatchSupportRequests.ts` | The watch. |
-| `src/application/usecases/jira/OpenAgentConversation.ts`, `LeavePendingAgentGroups.ts` | The direct conversation with the agent, and leaving it. |
+| `src/application/usecases/jira/OpenAgentConversation.ts`, `AskForAgentConversation.ts`, `LeavePendingAgentGroups.ts` | The direct conversation with the agent, the question that offers it, and leaving it. |
 | `src/infrastructure/pipeline/ProcessingPipeline.ts` | Classifies an unaddressed message and hands service-desk matters to passive help. |
 | `src/infrastructure/jira/JiraServiceManagementAdapter.ts` | `IssueTrackerPort` for Jira Service Management. |
 | `src/infrastructure/llm/` | Model adapters for answers, classification and triage, and the shared OpenAI-compatible client. |
@@ -362,6 +370,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 | `WIRE_SUPPORT_BOT_JIRA_SHARE_WITH_MODEL` | no | `off` | `on` lets live ticket status, SLAs and desk replies reach the answer model. |
 | `WIRE_SUPPORT_BOT_JIRA_SERVICE_SCOPE` | no | generic wording | What the service desk handles, in plain words, for the model prompts; at most 500 characters. |
 | `WIRE_SUPPORT_BOT_JIRA_AGENTS` | no | | Desk agents who get a direct conversation with the requester when assigned: `<jira account id>=<wire handle>`, comma-separated. Needs the watch. |
+| `WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT` | no | `ask` | What a newly assigned mapped agent gets: `ask` asks the requester first ([Open direct chat] [Not now]), `auto` opens the direct conversation at once, `off` neither. |
 
 ### Part orders
 

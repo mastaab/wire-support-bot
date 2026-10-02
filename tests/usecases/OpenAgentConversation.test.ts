@@ -333,3 +333,26 @@ describe("OpenAgentConversation: leaving", () => {
     expect(requests.markAgentConversationLeft).toHaveBeenCalledExactlyOnceWith("SD-6", T0);
   });
 });
+
+describe("OpenAgentConversation: a request the caller already claimed", () => {
+  it("opens without claiming again, with the same checks and steps", async () => {
+    const { request, requests, conversations, wire, sent, audit } = setup();
+    const useCase = new OpenAgentConversation(requests, conversations, wire, audit, makeLogger(), () => T0, async () => undefined);
+    // The fakes' claim would refuse a second claim; with `claimed` it is not asked at all.
+    requests.markAgentConversation.mockResolvedValue(false);
+    expect(await useCase.execute({ request, agentHandle: "kim.desk", claimed: true })).toBe("opened");
+    expect(requests.markAgentConversation).not.toHaveBeenCalled();
+    expect(conversations.createGroup).toHaveBeenCalledWith("SD-6 VPN drops every ten minutes", [alice, agentId]);
+    expect(conversations.leave).toHaveBeenCalledOnce();
+    expect(requests.setAgentConversation).toHaveBeenCalledWith("SD-6", groupId);
+    expect(audit.append).toHaveBeenCalledWith(expect.objectContaining({ entityId: "SD-6", details: { agentConversation: "opened" } }));
+    expect(sent).toEqual([INTRO, NOTICE]);
+  });
+
+  it("still skips an agent who is the requester, without creating a group", async () => {
+    const { request, requests, conversations, wire, audit } = setup({ agent: { id: alice, name: "Alice" } });
+    const useCase = new OpenAgentConversation(requests, conversations, wire, audit, makeLogger(), () => T0, async () => undefined);
+    expect(await useCase.execute({ request, agentHandle: "kim.desk", claimed: true })).toBe("skipped");
+    expect(conversations.createGroup).not.toHaveBeenCalled();
+  });
+});

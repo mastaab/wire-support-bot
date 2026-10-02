@@ -94,7 +94,7 @@ export class DeskUpdateQuestions {
   /**
    * Sends the question for `kind` to the request's conversation and stores it for the requester.
    * Nothing is asked when the requester has another open question there (one that is not itself a
-   * desk-update question): that question is answered first and the update stands on its own. A
+   * desk-update question, or is the question about the agent conversation): that question is answered first and the update stands on its own. A
    * failure is logged by error name and never affects the update. True when the question was stored.
    */
   async ask(request: SupportRequest, kind: DeskUpdateKind): Promise<boolean> {
@@ -142,10 +142,13 @@ export class DeskUpdateQuestions {
     return true;
   }
 
-  /** True when the requester has an open question other than a desk-update question. */
+  /**
+   * True when the requester has an open question other than a desk-update question; the question
+   * about the agent conversation (`keepsSlot`) also counts, since it is asked once per request.
+   */
   private busy(conversationId: QualifiedId, requesterId: QualifiedId): boolean {
     const live = this.deps.offers.find(conversationId, requesterId, this.now());
-    return !!live && !live.deskUpdate;
+    return !!live && (!live.deskUpdate || !!live.keepsSlot);
   }
 
   private async closeUnstored(conversationId: QualifiedId, messageId: string, question: string): Promise<void> {

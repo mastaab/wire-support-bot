@@ -55,7 +55,20 @@ export interface OfferChoice {
    * then taken as the text and offered as a reply with [Yes] [No].
    */
   asksReplyText?: ReplyTextPrompt;
+  /**
+   * Set on an option that runs a step other than an offer command once picked, such as opening
+   * the direct conversation with the desk agent; its `command` is null.
+   */
+  then?: ChoiceAction;
 }
+
+/**
+ * A step an option runs instead of an offer command. Built by code from validated data (a stored
+ * request's key, a configured agent handle), never from the click or model output.
+ */
+export type ChoiceAction =
+  /** Open the direct conversation between the requester and the assigned desk agent. */
+  | { kind: "openAgentChat"; issueKey: string; agentHandle: string };
 
 /** Which question asks for the reply text: after [Reply], or after [Still broken]. */
 export type ReplyTextPrompt = "reply" | "stillBroken";
@@ -99,12 +112,18 @@ export interface PendingOffer {
    */
   fillsPart?: ChoosablePartDetail;
   /**
-   * Set on a question the watch asks the requester after posting a desk update ([Reply] [Solved,
-   * close it], or [Solved] [Still broken]). It lives longer than other offers, is never asked over
-   * another open question, and a newer question replaces it. A text answer picks an option or says
-   * "no"; any other message is not an answer.
+   * Set on a question the watch asks the requester about a request: after posting a desk update
+   * ([Reply] [Solved, close it], or [Solved] [Still broken]), or about the direct conversation with
+   * a newly assigned agent ([Open direct chat] [Not now]). It lives longer than other offers, is
+   * never asked over another open question, and a newer question replaces it. A text answer picks
+   * an option or says "no"; any other message is not an answer.
    */
   deskUpdate?: DeskUpdateTarget;
+  /**
+   * Set on a watch question that a later desk-update question does not replace: the question about
+   * the agent conversation, which is asked once per request. Other questions still replace it.
+   */
+  keepsSlot?: boolean;
   /**
    * Set while the bot waits for the text of a reply to this request, after [Reply] or [Still
    * broken]: the requester's next message is the text, offered as a reply with [Yes] [No]. Its

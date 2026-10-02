@@ -33,6 +33,7 @@ import { CreatedConversations } from "../infrastructure/wire/CreatedConversation
 import { createWireConversationAdapter } from "../infrastructure/wire/WireConversationAdapter";
 import { OpenAgentConversation } from "../application/usecases/jira/OpenAgentConversation";
 import { LeavePendingAgentGroups } from "../application/usecases/jira/LeavePendingAgentGroups";
+import { AskForAgentConversation } from "../application/usecases/jira/AskForAgentConversation";
 import { startIntervalRunner, type IntervalRunner } from "./intervalRunner";
 import { startOfferPromptSweep } from "./offerPromptSweep";
 import { getPrismaClient } from "../infrastructure/persistence/postgres/PrismaClient";
@@ -121,6 +122,7 @@ export function createContainer(config: Config, logger: Logger): Container {
   const createdConversations = new CreatedConversations();
   const wireConversations = createWireConversationAdapter(handlerRef, config.wire.appDomain, createdConversations);
   const leavePendingAgentGroups = new LeavePendingAgentGroups(supportRequestsRepo, wireConversations, logger);
+  // Absent with WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT=off, even when agents are mapped.
   const agentHandles = jira.agents;
   const openAgentConversation = agentHandles
     ? new OpenAgentConversation(supportRequestsRepo, wireConversations, wireOutbound, auditLogRepo, logger)
@@ -133,12 +135,23 @@ export function createContainer(config: Config, logger: Logger): Container {
   const deskUpdateQuestions = questionHours > 0
     ? new DeskUpdateQuestions({ offers: pendingOffers, wireOutbound, lifetimeMs: questionHours * 60 * 60 * 1000, logger })
     : undefined;
+  // With "ask" the requester is asked before the group is opened. The question lives as long as a
+  // desk-update question; with those turned off (0 hours) it keeps the default lifetime.
+  const agentQuestionHours = questionHours > 0 ? questionHours : DESK_UPDATE_QUESTION_HOURS_DEFAULT;
+  const askForAgentConversation = openAgentConversation && jira.agentChat === "ask"
+    ? new AskForAgentConversation({
+      requests: supportRequestsRepo, conversations: wireConversations, offers: pendingOffers, wireOutbound, open: openAgentConversation,
+      projectKey: issueTracker.projectKey, lifetimeMs: agentQuestionHours * 60 * 60 * 1000, logger,
+    })
+    : undefined;
   const watchSupportRequests = watchSeconds
     ? new WatchSupportRequests(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, channelConfigRepo, logger, undefined, {
       writes: supportRequestWrites,
       // The CLI's test conversations (domain "cli.local") have no Wire group to post to.
       skipConversation: (c) => c.domain === "cli.local",
-      ...(openAgentConversation && agentHandles ? { agents: { handles: agentHandles, open: openAgentConversation } } : {}),
+      ...(openAgentConversation && agentHandles
+        ? { agents: { handles: agentHandles, open: openAgentConversation, ...(askForAgentConversation ? { ask: askForAgentConversation } : {}) } }
+        : {}),
       ...(deskUpdateQuestions ? { questions: deskUpdateQuestions } : {}),
     })
     : undefined;
@@ -147,7 +160,12 @@ export function createContainer(config: Config, logger: Logger): Container {
   const attachFileToRequest = new AttachFileToRequest(supportRequestsRepo, issueTracker, createWireAssetAdapter(handlerRef), wireOutbound, auditLogRepo, logger);
   const offerAttachment = passiveOn ? new OfferAttachment(supportRequestsRepo, pendingOffers, wireOutbound, logger) : undefined;
   const confirmOffer = new ConfirmOffer(
-    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest, attachFileToRequest }, wireOutbound, undefined, config.partAsset, config.partDeliveryLocations, logger,
+    pendingOffers,
+    {
+      raiseSupportRequest, replyToServiceDesk, resolveSupportRequest, attachFileToRequest,
+      ...(askForAgentConversation ? { agentConversation: askForAgentConversation } : {}),
+    },
+    wireOutbound, undefined, config.partAsset, config.partDeliveryLocations, logger,
   );
 
   const router = new WireEventRouter({

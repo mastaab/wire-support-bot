@@ -7,7 +7,7 @@ const BASE = "https://api.test/ex/jira/cloud";
 const config: JiraConfig = {
   baseUrl: BASE, siteUrl: "https://site.test", apiToken: "synthetic-token",
   projectKey: "SD", serviceDeskId: "5", requestTypes: { fault: "101" }, timeoutMs: 1000,
-  shareWithModel: false, passive: false,
+  shareWithModel: false, passive: false, agentChat: "ask",
 };
 const MARKER = "PRIVATE_BODY_MARKER";
 

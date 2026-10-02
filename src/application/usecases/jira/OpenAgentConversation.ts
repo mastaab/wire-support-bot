@@ -21,6 +21,12 @@ export interface OpenAgentConversationInput {
   request: SupportRequest;
   /** Wire handle of the newly assigned agent, from the setting. */
   agentHandle: string;
+  /**
+   * True when the caller has already claimed the request with `markAgentConversation`: the
+   * question that asked the requester first ([Open direct chat] [Not now]) claims it when asked,
+   * so it is asked once per request. The claim is then not taken again here.
+   */
+  claimed?: boolean;
 }
 
 export type OpenAgentConversationOutcome = "opened" | "skipped" | "failed";
@@ -28,8 +34,8 @@ export type OpenAgentConversationOutcome = "opened" | "skipped" | "failed";
 /**
  * Opens the direct conversation for a request whose mapped agent was just assigned: resolves the
  * agent's handle, claims the request with `markAgentConversation` (false: already opened,
- * "skipped"), creates the group `<KEY> <summary>` with requester and agent, stores the group with
- * the request, posts the intro there, makes both admins (a failure is logged, the bot leaves
+ * "skipped"; not taken again when the caller has claimed it, see `claimed`), creates the group
+ * `<KEY> <summary>` with requester and agent, stores the group with the request, posts the intro there, makes both admins (a failure is logged, the bot leaves
  * anyway), leaves, then tells the original channel as a reply to the request's last message and
  * stores that reply as the last message. Audited as an update of the request
  * (`agentConversation: "opened"`), no names or IDs. The agent being the requester, or a handle
@@ -54,7 +60,7 @@ export class OpenAgentConversation {
   ) {}
 
   async execute(input: OpenAgentConversationInput): Promise<OpenAgentConversationOutcome> {
-    const { request, agentHandle } = input;
+    const { request, agentHandle, claimed: alreadyClaimed } = input;
     const key = request.key;
 
     let agent: WireUserRef | null;
@@ -74,14 +80,16 @@ export class OpenAgentConversation {
     }
 
     const now = this.now();
-    let claimed: boolean;
-    try {
-      claimed = await this.requests.markAgentConversation(key, now);
-    } catch (err) {
-      this.logger?.error(`${SOURCE}: claiming the request failed`, { key, err: errorName(err) });
-      return "failed";
+    if (!alreadyClaimed) {
+      let claimed: boolean;
+      try {
+        claimed = await this.requests.markAgentConversation(key, now);
+      } catch (err) {
+        this.logger?.error(`${SOURCE}: claiming the request failed`, { key, err: errorName(err) });
+        return "failed";
+      }
+      if (!claimed) return "skipped";
     }
-    if (!claimed) return "skipped";
 
     let groupId: QualifiedId;
     try {

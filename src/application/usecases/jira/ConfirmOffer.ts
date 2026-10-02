@@ -6,7 +6,7 @@ import {
   missingPartDetails, offerCommandLine,
 } from "../../services/offers";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
-import type { DeskUpdateTarget, OfferChoice, ReplyTextPrompt } from "../../ports/PendingOfferPort";
+import type { ChoiceAction, DeskUpdateTarget, OfferChoice, ReplyTextPrompt } from "../../ports/PendingOfferPort";
 import {
   YES_NO_LABELS, answerForms, choiceHint, decisionAt, matchChoice, newOfferId, offerPromptFields, sendOfferPrompt,
 } from "../../services/offerButtons";
@@ -19,6 +19,7 @@ import type { RaiseSupportRequest } from "./RaiseSupportRequest";
 import type { ReplyToServiceDesk } from "./ReplyToServiceDesk";
 import type { ResolveSupportRequest } from "./ResolveSupportRequest";
 import type { AttachFileToRequest } from "./AttachFileToRequest";
+import type { AskForAgentConversation } from "./AskForAgentConversation";
 import { describeFile } from "../../services/attachments";
 
 export type Confirmation = "yes" | "no";
@@ -30,6 +31,8 @@ export interface ConfirmOfferHandlers {
   resolveSupportRequest: ResolveSupportRequest;
   /** Absent when attachments are not wired; an attach offer is then never made. */
   attachFileToRequest?: AttachFileToRequest;
+  /** Opens the agent conversation for [Open direct chat]; absent when the question is never asked. */
+  agentConversation?: Pick<AskForAgentConversation, "accept">;
 }
 
 export interface ConfirmOfferInput {
@@ -175,7 +178,7 @@ export class ConfirmOffer {
     if (!offer) return false;
     const choice = offer.choices?.[input.index];
     const label = choice ? choice.label : YES_NO_LABELS[input.index]!;
-    await this.decide(offer, decision.command, input, !offer.choices, label, choice?.asksReplyText);
+    await this.decide(offer, decision.command, input, !offer.choices, label, choice);
     return true;
   }
 
@@ -198,7 +201,7 @@ export class ConfirmOffer {
     }
     const offer = this.offers.take(input.conversationId, input.requesterId, now);
     if (!offer) return false;
-    await this.decide(offer, choices[index]!.command, input, false, choices[index]!.label, choices[index]!.asksReplyText);
+    await this.decide(offer, choices[index]!.command, input, false, choices[index]!.label, choices[index]);
     return true;
   }
 
@@ -292,13 +295,15 @@ export class ConfirmOffer {
    * Runs `command` for the taken offer, or declines it when null, after recording the offer's
    * message as answered and closing it with "Answered by <name>: <answer>". `confirmed` is true
    * for a yes to a yes-or-no offer, whose incomplete part order is kept for amending; a chosen
-   * incomplete order is asked about afresh. `asksReplyText` is set for an option of a desk-update
-   * question that asks for the reply text instead.
+   * incomplete order is asked about afresh. `choice` is the picked option of a choice offer: one
+   * of a desk-update question may ask for the reply text instead, and one may run a step other
+   * than a command (`then`).
    */
   private async decide(
     offer: PendingOffer, command: OfferCommand | null, context: AnswerContext, confirmed: boolean, answer: string,
-    asksReplyText?: ReplyTextPrompt,
+    choice?: OfferChoice,
   ): Promise<void> {
+    const asksReplyText = choice?.asksReplyText;
     if (offer.id) this.offers.markAnswered(offer.conversationId, offer.id);
     const { conversationId, requesterId: actorId, replyToMessageId } = context;
     await closeOfferPrompt(
@@ -307,6 +312,10 @@ export class ConfirmOffer {
     );
     if (asksReplyText && offer.deskUpdate) {
       await this.askReplyText(offer, offer.deskUpdate, asksReplyText, context);
+      return;
+    }
+    if (choice?.then) {
+      await this.runAction(choice.then, context);
       return;
     }
     if (!command) {
@@ -364,6 +373,24 @@ export class ConfirmOffer {
           senderName: context.requesterName, replyToMessageId,
         });
         break;
+    }
+  }
+
+  /** Runs the step of a picked option that is not an offer command. */
+  private async runAction(action: ChoiceAction, context: AnswerContext): Promise<void> {
+    switch (action.kind) {
+      case "openAgentChat":
+        if (!this.handlers.agentConversation) {
+          await this.wireOutbound.sendPlainText(context.conversationId, "I'm afraid I can't open direct conversations here.", {
+            replyToMessageId: context.replyToMessageId,
+          });
+          return;
+        }
+        await this.handlers.agentConversation.accept({
+          issueKey: action.issueKey, agentHandle: action.agentHandle, conversationId: context.conversationId,
+          requesterId: context.requesterId, replyToMessageId: context.replyToMessageId,
+        });
+        return;
     }
   }
 

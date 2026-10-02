@@ -9,6 +9,7 @@ import {
 } from "../domain/entities/SupportRequest";
 import type { PartAssetWording, SupportRequestKind } from "../domain/entities/SupportRequest";
 import { canonicalTimeZone } from "../domain/services/timeZone";
+import { AGENT_CHAT_MODE_DEFAULT, type AgentChatMode } from "../application/usecases/jira/AskForAgentConversation";
 
 /**
  * Per-slot model config. Each slot has a primary model and a fallback; all share one
@@ -108,6 +109,12 @@ export interface JiraConfig {
    * ID to Wire handle (on the bot's own domain). Absent: no direct conversations.
    */
   agents?: ReadonlyMap<string, string>;
+  /**
+   * What a newly assigned mapped agent gets (WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT): "ask" asks the
+   * requester first ([Open direct chat] [Not now]), "auto" opens the group at once, "off" neither.
+   * Default "ask". Only used with `agents` and the watch; with "off", `agents` is left out.
+   */
+  agentChat: AgentChatMode;
 }
 
 /** Longest lifetime of a question after a desk update, in hours. */
@@ -163,6 +170,10 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
   if (watchRaw !== undefined && (!/^\d+$/.test(watchRaw) || parseInt(watchRaw, 10) < 15)) {
     throw new Error("WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS must be a whole number of seconds, at least 15");
   }
+  const agentChat = (value("WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT") ?? AGENT_CHAT_MODE_DEFAULT).toLowerCase();
+  if (agentChat !== "ask" && agentChat !== "auto" && agentChat !== "off") {
+    throw new Error("WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT must be ask, auto or off");
+  }
   const questionHoursRaw = value("WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS");
   if (questionHoursRaw !== undefined && (!/^\d+$/.test(questionHoursRaw) || parseInt(questionHoursRaw, 10) > UPDATE_QUESTION_HOURS_MAX)) {
     throw new Error(`WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS must be a whole number of hours from 0 to ${UPDATE_QUESTION_HOURS_MAX}`);
@@ -182,7 +193,9 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
     ...(serviceScope ? { serviceScope } : {}),
     ...(watchRaw !== undefined ? { watchSeconds: parseInt(watchRaw, 10) } : {}),
     ...(questionHoursRaw !== undefined ? { updateQuestionHours: parseInt(questionHoursRaw, 10) } : {}),
-    ...(agents ? { agents } : {}),
+    // With the agent conversation off, the mapping is not used at all.
+    ...(agents && agentChat !== "off" ? { agents } : {}),
+    agentChat,
   };
 }
 
