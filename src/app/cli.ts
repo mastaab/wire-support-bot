@@ -177,7 +177,7 @@ async function main() {
   const replyToServiceDesk = new ReplyToServiceDesk(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger);
   // The CLI has no file transport, so no attachments.
   const confirmOffer = new ConfirmOffer(
-    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest }, wireOutbound, undefined, config.partAsset, config.partDeliveryLocations,
+    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest }, wireOutbound, undefined, config.partAsset, config.partDeliveryLocations, logger,
   );
   const router = new WireEventRouter({
     logger,

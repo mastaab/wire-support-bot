@@ -121,7 +121,7 @@ function makeDeps(overrides: Partial<WireEventRouterDeps> = {}): WireEventRouter
     getIssueStatus: { execute: vi.fn().mockResolvedValue(null), projectKey: "SD" },
     pendingOffers: {
       put: vi.fn(), find: vi.fn(() => null), take: vi.fn(() => null), has: vi.fn(() => false), clearConversation: vi.fn(),
-      drop: vi.fn(() => null), recentlyDropped: vi.fn(() => null), forgetDropped: vi.fn(),
+      drop: vi.fn(() => null), recentlyDropped: vi.fn(() => null), forgetDropped: vi.fn(), takeEndedPrompts: vi.fn(() => []),
     },
     confirmOffer: { execute: vi.fn().mockResolvedValue(false), choose: vi.fn().mockResolvedValue(false) },
     supportWelcome: { projectKey: "SD", passive: false, watching: false },
@@ -185,13 +185,14 @@ function makeButtonAction(buttonId: string, referenceMessageId = "msg-1", id = "
 }
 
 describe("WireEventRouter contract: button action handling", () => {
-  it("a click on a message the bot does not know → one short text answer, no confirmation", async () => {
+  it("a click on a message the bot does not know → no text, no confirmation, nothing run", async () => {
     const deps = makeDeps();
     deps.pendingOffers.prompt = vi.fn(() => null);
     deps.pendingOffers.claimNotice = vi.fn(() => true);
     const router = new WireEventRouter(deps);
     await router.onButtonClicked(makeButtonAction("unknown_button"));
-    expect(deps.wireOutbound.sendPlainText).toHaveBeenCalledWith(convId, "This question has expired; ask me again.");
+    expect(deps.wireOutbound.sendPlainText).not.toHaveBeenCalled();
+    expect(deps.pendingOffers.claimNotice).not.toHaveBeenCalled();
     expect(deps.wireOutbound.sendButtonConfirmation).not.toHaveBeenCalled();
     expect(deps.confirmOffer.choose).not.toHaveBeenCalled();
   });

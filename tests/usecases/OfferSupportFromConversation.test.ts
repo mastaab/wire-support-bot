@@ -55,7 +55,7 @@ function setup(
   const getIssueStatus = { projectKey: "SD", execute: vi.fn().mockResolvedValue(null) };
   const offers = {
     put: vi.fn(), take: vi.fn(), has: vi.fn().mockReturnValue(false), peek: vi.fn(), clearConversation: vi.fn(),
-    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
+    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(), claimClose: vi.fn(() => null), takeEndedPrompts: vi.fn(() => []), sweepExpired: vi.fn(),
   };
   const { wire, sent } = makeWire();
   const logger = makeLogger();
@@ -887,7 +887,7 @@ describe("OfferSupportFromConversation", () => {
       const triage = { draftRequest: vi.fn(), matchStatusQuestion: vi.fn().mockResolvedValue("SD-6"), extractPartDetails: vi.fn() };
       const offers = {
       put: vi.fn(), take: vi.fn(), has: vi.fn(), peek: vi.fn(), clearConversation: vi.fn(),
-      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
+      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(), claimClose: vi.fn(() => null), takeEndedPrompts: vi.fn(() => []), sweepExpired: vi.fn(),
     };
       const useCase = new OfferSupportFromConversation(requests, triage, getIssueStatus, offers, wire, makeLogger());
 
@@ -1009,16 +1009,15 @@ describe("OfferSupportFromConversation: last message reference", () => {
   it.each<[string, SupportDraft]>([
     ["an addition offer", ADDITION],
     ["a resolve offer", RESOLVE],
-  ])("stores the reference of %s, which names an open request of this conversation", async (_label, draft) => {
-    const { requests, offers, useCase } = setup(undefined, draft);
+  ])("does not store %s, sent with buttons, as the request's last message", async (_label, draft) => {
+    // The question is edited when it closes, so the request keeps its previous last message.
+    const { requests, offers, sent, useCase } = setup(undefined, draft);
 
     await expect(useCase.execute(input({ categories: ["update"] }))).resolves.toBe(true);
 
-    expect(requests.setLastMessage).toHaveBeenCalledTimes(1);
-    expect(requests.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
+    expect(requests.setLastMessage).not.toHaveBeenCalled();
     expect(offers.put).toHaveBeenCalledTimes(1);
-    // The offer is stored as soon as the question was sent; the bookkeeping comes after.
-    expect(offers.put.mock.invocationCallOrder[0]).toBeLessThan(requests.setLastMessage.mock.invocationCallOrder[0]!);
+    expect(offers.put).toHaveBeenCalledWith(expect.objectContaining({ messageId: sentRefFor(1).messageId, question: sent[0] }));
   });
 
   it("stores no reference for an offer to raise a new request or a missing-details question", async () => {
@@ -1046,7 +1045,7 @@ describe("OfferSupportFromConversation: last message reference", () => {
     expect(none.offers.put).toHaveBeenCalledTimes(1);
   });
 
-  it("stores the reference but not the offer when the work is cancelled while the question is being sent", async () => {
+  it("stores neither the offer nor a reference when the work is cancelled while the question is being sent", async () => {
     const controller = new AbortController();
     const { requests, wire, offers, sent, useCase } = setup(undefined, ADDITION);
     wire.sendCompositePrompt.mockImplementation(async (_conv: QualifiedId, text: string) => {
@@ -1058,19 +1057,7 @@ describe("OfferSupportFromConversation: last message reference", () => {
     await expect(useCase.execute(input({ signal: controller.signal, categories: ["update"] }))).resolves.toBe(true);
 
     expect(offers.put).not.toHaveBeenCalled();
-    expect(requests.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
-  });
-
-  it("keeps the offer and the result when storing the reference fails, logging the error name only", async () => {
-    const { requests, offers, sent, logger, useCase } = setup(undefined, ADDITION);
-    requests.setLastMessage.mockRejectedValueOnce(new Error("SECRET-DB-DETAIL"));
-
-    await expect(useCase.execute(input({ categories: ["update"] }))).resolves.toBe(true);
-
-    expect(sent).toHaveLength(1);
-    expect(offers.put).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenCalledWith("OfferSupportFromConversation: storing the last message failed", { key: "SD-6", err: "Error" });
-    expect(loggedText(logger)).not.toContain("SECRET-DB-DETAIL");
+    expect(requests.setLastMessage).not.toHaveBeenCalled();
   });
 
   it("stores the reference of a passive status answer through the real GetIssueStatus", async () => {
@@ -1080,7 +1067,7 @@ describe("OfferSupportFromConversation: last message reference", () => {
     const triage = { draftRequest: vi.fn(), matchStatusQuestion: vi.fn().mockResolvedValue("SD-6"), extractPartDetails: vi.fn() };
     const offers = {
       put: vi.fn(), take: vi.fn(), has: vi.fn(), peek: vi.fn(), clearConversation: vi.fn(),
-      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
+      drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(), claimClose: vi.fn(() => null), takeEndedPrompts: vi.fn(() => []), sweepExpired: vi.fn(),
     };
     const useCase = new OfferSupportFromConversation(requests, triage, getIssueStatus, offers, wire, makeLogger());
 

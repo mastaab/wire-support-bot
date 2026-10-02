@@ -184,6 +184,32 @@ describe("WireOutboundAdapter contract", () => {
     expect(arg).toMatchObject({ conversationId: convId });
   });
 
+  it("closeButtonPrompt replaces the button message with a composite edit holding one text item and no buttons", async () => {
+    const sendMessage = vi.fn().mockResolvedValue("edit-1");
+    const adapter = createWireOutboundAdapter(makeRef(sendMessage), mockLogger);
+    await adapter.closeButtonPrompt(convId, "prompt-msg-1", "Shall I resolve **SD-6**?\n\nAnswered by Alice: Yes");
+    expect(sendMessage).toHaveBeenCalledOnce();
+    const edit = sendMessage.mock.calls[0]![0] as { type: string; replacingMessageId: string; conversationId: QualifiedId; items: Array<{ type: string; text?: string }> };
+    expect(edit.type).toBe("composite-edited");
+    expect(edit.replacingMessageId).toBe("prompt-msg-1");
+    expect(edit.conversationId).toEqual(convId);
+    expect(edit.items).toHaveLength(1);
+    expect(edit.items[0]).toMatchObject({ type: "text", text: "Shall I resolve **SD-6**?\n\nAnswered by Alice: Yes" });
+  });
+
+  it("closeButtonPrompt uses the bot's display name and is a no-op without a connection", async () => {
+    const sendMessage = vi.fn().mockResolvedValue("edit-2");
+    const getUsers = vi.fn().mockResolvedValue([{ id: { id: "bot", domain: "example.com" }, name: "Help Desk" }]);
+    const adapter = createWireOutboundAdapter(
+      { current: { manager: { sendMessage, sendAsset: vi.fn(), getUsers } } }, mockLogger, undefined, { id: "bot", domain: "example.com" },
+    );
+    await adapter.closeButtonPrompt(convId, "prompt-msg-2", "Ask @Wire Support Bot again.\n\nThis question has expired.");
+    expect((sendMessage.mock.calls[0]![0] as { items: Array<{ text?: string }> }).items[0]!.text).toBe("Ask @Help Desk again.\n\nThis question has expired.");
+
+    const offline = createWireOutboundAdapter({ current: null }, mockLogger);
+    await expect(offline.closeButtonPrompt(convId, "prompt-msg-3", "Closed")).resolves.toBeUndefined();
+  });
+
   it("getUserProfile resolves via manager.getUsers and maps the first result", async () => {
     const getUsers = vi.fn().mockResolvedValue([
       { id: { id: "user-1", domain: "example.com" }, name: "Ada", handle: "ada" },

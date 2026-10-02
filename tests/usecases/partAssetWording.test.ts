@@ -27,7 +27,7 @@ const COMPLETE = { asset: "Printer 17", part: "Toner cartridges, black", quantit
 function offers() {
   return {
     put: vi.fn(), take: vi.fn(), has: vi.fn().mockReturnValue(false), clearConversation: vi.fn(),
-    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(), peek: vi.fn(),
+    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(), claimClose: vi.fn(() => null), takeEndedPrompts: vi.fn(() => []), sweepExpired: vi.fn(), peek: vi.fn(),
   };
 }
 

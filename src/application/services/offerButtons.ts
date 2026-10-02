@@ -169,3 +169,15 @@ export function sendOfferPrompt(
 ): Promise<SentMessageRef | undefined> {
   return wireOutbound.sendCompositePrompt(conversationId, withoutAnswerHint(question), offerButtons(offerId, choices), { replyToMessageId });
 }
+
+/**
+ * What a stored offer keeps about its button question: the offer ID, and with a sent message its
+ * ID and the question as sent (without the answer hint), so the message can be closed later.
+ * Empty for a question asked without buttons.
+ */
+export function offerPromptFields(
+  offerId: string | undefined, sent: SentMessageRef | undefined, question: string,
+): Pick<PendingOffer, "id" | "messageId" | "question"> {
+  if (!offerId) return {};
+  return sent ? { id: offerId, messageId: sent.messageId, question: withoutAnswerHint(question) } : { id: offerId };
+}

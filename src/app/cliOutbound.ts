@@ -24,7 +24,8 @@ export interface CliOutbound {
 /**
  * The outbound port of the CLI: bot replies go to `write` (stdout) prefixed with
  * "[Wire Support Bot]". A button question is printed with its options numbered under it; the CLI
- * has no message IDs, so synthetic ones are returned, and no button confirmations.
+ * has no message IDs, so synthetic ones are returned, and no button confirmations. A closed
+ * question is shown by its closing line, for example "(Question closed: Answered by Alice: No)".
  */
 export function createCliOutbound(members: readonly CliMember[], write: (text: string) => void): CliOutbound {
   let latest: CliPrompt | undefined;
@@ -44,6 +45,12 @@ export function createCliOutbound(members: readonly CliMember[], write: (text: s
     },
     // The CLI shows no confirmation: the result is printed as text.
     async sendButtonConfirmation() {},
+    // The question stays in the scrollback; only the closing line (the text's last line) is printed.
+    async closeButtonPrompt(_convId: QualifiedId, messageId: string, text: string) {
+      const line = text.trimEnd().split("\n").pop() ?? "";
+      write(`[Wire Support Bot] (Question closed: ${line})\n`);
+      if (latest?.messageId === messageId) latest = undefined;
+    },
     async sendReaction(_conversationId, _messageId, emoji) {
       const emojis = typeof emoji === "string" ? [emoji] : [...emoji];
       write(`[Wire Support Bot reaction] ${emojis.join(" ")}\n`);

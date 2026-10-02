@@ -107,7 +107,7 @@ describe("askPartOrderStep", () => {
     ], { replyToMessageId: "msg-9" });
     expect(stored).toMatchObject({ command: draft, fillsPart: "quantity", messageId: sentRefFor(1).messageId });
     expect(stored.expiresAt.getTime() - stored.createdAt.getTime()).toBe(OFFER_TTL_MS);
-    expect(offers.prompt(convId, sentRefFor(1).messageId)).toEqual({ offerId: stored.id, requesterId: alice, answered: false });
+    expect(offers.prompt(convId, sentRefFor(1).messageId)).toEqual({ offerId: stored.id, requesterId: alice, answered: false, closed: false });
   });
 
   it("sends a text question as plain text and stores the draft without buttons", async () => {

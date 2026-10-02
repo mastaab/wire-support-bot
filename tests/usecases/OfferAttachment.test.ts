@@ -46,7 +46,7 @@ function setup(records: SupportRequest[], options: { scoped?: boolean } = {}) {
 const input = { conversationId: convId, senderId: alice, messageId: "file-msg-1", file: PHOTO };
 
 describe("OfferAttachment", () => {
-  it("replies to the file with the question, stores an attach offer for the sender and stores the sent ref", async () => {
+  it("replies to the file with the question and stores an attach offer for the sender, but not as the request's last message", async () => {
     const { requests, offers, wire, sent, useCase } = setup([makeRequest({ key: "SD-16", summary: "Error light on printer 12" })]);
 
     expect(await useCase.execute(input)).toBe(true);
@@ -66,9 +66,10 @@ describe("OfferAttachment", () => {
       expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
       id: offerId,
       messageId: sentRefFor(1).messageId,
+      question: sent[0],
     });
-    expect(requests.setLastMessage).toHaveBeenCalledTimes(1);
-    expect(requests.setLastMessage).toHaveBeenCalledWith("SD-16", sentRefFor(1));
+    // The question is edited when it closes, so the request keeps its previous last message.
+    expect(requests.setLastMessage).not.toHaveBeenCalled();
   });
 
   it("names a document with its file name", async () => {
@@ -270,14 +271,15 @@ describe("OfferAttachment", () => {
     expect(requests.setLastMessage).not.toHaveBeenCalled();
   });
 
-  it("keeps the offer when storing the ref fails", async () => {
-    const { requests, offers, logger, useCase } = setup([makeRequest()]);
-    requests.setLastMessage.mockRejectedValueOnce(new RangeError("write failed"));
+  it("stores neither a single-target nor a choice question as a request's last message", async () => {
+    const single = setup([makeRequest()]);
+    expect(await single.useCase.execute(input)).toBe(true);
+    expect(single.requests.setLastMessage).not.toHaveBeenCalled();
 
-    expect(await useCase.execute(input)).toBe(true);
-
-    expect(offers.has(convId, alice, now)).toBe(true);
-    expect(logger.warn).toHaveBeenCalledWith("OfferAttachment: storing the last message failed", { key: "SD-6", err: "RangeError" });
+    const choice = setup([makeRequest({ key: "SD-16", requesterId: alice }), makeRequest({ key: "SD-17", requesterId: alice })]);
+    expect(await choice.useCase.execute(input)).toBe(true);
+    expect(choice.offers.find(convId, alice, now)?.choices).toHaveLength(3);
+    expect(choice.requests.setLastMessage).not.toHaveBeenCalled();
   });
 
   it("never logs the file name, summary or download reference", async () => {

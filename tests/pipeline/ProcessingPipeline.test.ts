@@ -37,6 +37,7 @@ function makeDeps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
       sendPlainText: vi.fn().mockResolvedValue(undefined),
       sendCompositePrompt: vi.fn(),
       sendButtonConfirmation: vi.fn(),
+      closeButtonPrompt: vi.fn(),
       sendReaction: vi.fn(),
       sendFile: vi.fn(),
       withTyping: vi.fn((_conversationId: unknown, work: () => Promise<unknown>) => work()),

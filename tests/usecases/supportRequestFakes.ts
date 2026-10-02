@@ -98,6 +98,7 @@ export function makeWire() {
       return sentRefFor(sent.length);
     }),
     sendButtonConfirmation: vi.fn().mockResolvedValue(undefined),
+    closeButtonPrompt: vi.fn().mockResolvedValue(undefined),
     sendReaction: vi.fn(),
     sendFile: vi.fn(),
     withTyping: <T>(_c: QualifiedId, work: () => Promise<T>): Promise<T> => work(),

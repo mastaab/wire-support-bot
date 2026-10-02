@@ -1,13 +1,14 @@
 import type { QualifiedId } from "../../../domain/ids/QualifiedId";
 import { DEFAULT_PART_ASSET, PART_DETAIL_MAX } from "../../../domain/entities/SupportRequest";
 import type { PartAssetWording, PartDetails } from "../../../domain/entities/SupportRequest";
-import type { OfferCommand, PendingOfferStore } from "../../ports/PendingOfferPort";
+import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../ports/PendingOfferPort";
 import type { SupportTriagePort } from "../../ports/SupportTriagePort";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
 import { PART_DETAIL_KEYS, missingPartDetails } from "../../services/offers";
 import { statedPartDetails } from "../../services/partDetails";
 import { askPartOrderStep } from "../../services/partOrderSteps";
+import { answeredLine, closeOfferPrompt } from "../../services/offerPromptClosing";
 
 /** Input of `CompletePartOrder`. */
 export interface CompletePartOrderInput {
@@ -17,6 +18,13 @@ export interface CompletePartOrderInput {
   requesterId: QualifiedId;
   /** The part-order draft the router just took from the requester's pending offers. */
   pending: OfferCommand;
+  /**
+   * The question the draft was asked with, when it had buttons: once this message moves the order
+   * on, its message is closed with "Answered by <name>: <value>".
+   */
+  answering?: Pick<PendingOffer, "messageId" | "fillsPart">;
+  /** Wire display name of the requester, for the closing line. */
+  requesterName?: string;
   replyToMessageId?: string;
 }
 
@@ -79,9 +87,24 @@ export class CompletePartOrder {
       this.logger?.warn("CompletePartOrder: sending the reply failed", { err: errorName(err) });
       return false;
     }
+    if (input.answering?.messageId) {
+      await closeOfferPrompt(
+        { offers: this.offers, wireOutbound: this.wireOutbound, logger: this.logger },
+        input.conversationId, input.answering.messageId, answeredLine(input.requesterName, answeredValue(extracted, pending, input.answering.fillsPart)),
+      );
+    }
     this.logger?.debug("CompletePartOrder: part order updated", { missing: missingPartDetails(command).length });
     return true;
   }
+}
+
+/**
+ * The value shown as the answer to the old question: the essential it asked for when this message
+ * states it, otherwise the values this message changed, in the usual order.
+ */
+function answeredValue(extracted: PartDetails, pending: Extract<OfferCommand, { kind: "support" }>, asked: PendingOffer["fillsPart"]): string {
+  if (asked && extracted[asked]) return extracted[asked]!;
+  return PART_DETAIL_KEYS.filter((key) => extracted[key] && extracted[key] !== pending.part?.[key]).map((key) => extracted[key]!).join(", ");
 }
 
 /** Words a small model may write instead of JSON null; never a real value. */

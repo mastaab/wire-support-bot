@@ -31,14 +31,10 @@ import { ATTACHMENT_MAX_BYTES, attachableKind } from "../../application/services
 import type { WireReplyContext } from "./WireReplyContext";
 import { classifyConfirmation } from "../../application/usecases/jira/ConfirmOffer";
 import { YES_NO_LABELS, decisionAt, parseOfferButtonId } from "../../application/services/offerButtons";
+import { NOT_AN_ANSWER_LINE, closeEndedOfferPrompts, closeOfferPrompt, type OfferPromptClosing } from "../../application/services/offerPromptClosing";
 
 const CONTEXT_WINDOW = 10;
 const NAME_TTL_MS = 24 * 60 * 60 * 1000; // re-fetch display names after 24 h to catch renames
-
-/** The text for a click on a question that was already answered, once per message. */
-export const ANSWERED_QUESTION = "This question has already been answered.";
-/** The text for a click on a question that expired, was replaced or is unknown (for example after a restart), once per message. */
-export const EXPIRED_QUESTION = "This question has expired; ask me again.";
 
 /** True for a support offer that orders a replacement part, complete or not. */
 function isPartOrder(command: OfferCommand): boolean {
@@ -116,11 +112,14 @@ export class WireEventRouter extends WireEventsHandler {
     });
   }
 
-  /** Runs `work` after the conversation's earlier messages, files and clicks, one at a time. */
+  /**
+   * Runs `work` after the conversation's earlier messages, files and clicks, one at a time. Then
+   * closes the button questions the offer store noticed as expired or replaced meanwhile.
+   */
   private async inOrder(conversationId: QualifiedId, work: () => Promise<void>): Promise<void> {
     const channelId = toChannelId(conversationId);
     const previous = this.handlers.get(channelId) ?? Promise.resolve();
-    const current = previous.catch(() => {}).then(work);
+    const current = previous.catch(() => {}).then(work).finally(() => this.closeEndedPrompts());
     this.handlers.set(channelId, current);
     try { await current; } finally {
       if (this.handlers.get(channelId) === current) this.handlers.delete(channelId);
@@ -264,14 +263,18 @@ export class WireEventRouter extends WireEventsHandler {
         const draft = droppedOffer;
         const completed = await this.typing(convId, () => this.deps.completePartOrder.execute({
           text: commandText, conversationId: convId, requesterId: sender, pending: draft, replyToMessageId: wireMessage.id,
+          ...(live ? { answering: live } : {}), requesterName: senderDisplayName,
         }));
         if (completed) {
-          // The typed answer decided the question, so a later click on its buttons is told so.
+          // The typed answer decided the question (CompletePartOrder closed its message as
+          // answered), so a later click on its buttons changes nothing.
           if (live?.id) pendingOffers.markAnswered(convId, live.id);
           this.recordHandled(convId, wireMessage.id, sender, senderDisplayName, text, "(Updated the part order draft.)");
           return;
         }
       }
+      // The requester's next message was not an answer, so their button question is closed.
+      if (live?.messageId) await closeOfferPrompt(this.promptClosing(log), convId, live.messageId, NOT_AN_ANSWER_LINE);
     }
 
     // A message that displaced the requester's offer is about that offer, even when the offer
@@ -610,9 +613,11 @@ export class WireEventRouter extends WireEventsHandler {
    * member who was asked; the button's ID must name that offer and one of its options. The first
    * accepted click of the asked member decides: only that click is confirmed (the confirmation
    * marks the answer for everyone) and runs the option through `ConfirmOffer`, which posts the
-   * result as text. A click by another member changes nothing and gets one text answer per
-   * message ("Only <requester> can answer this."); a click on an answered, expired or unknown
-   * message gets one short text answer per message. Repeats stay silent.
+   * result as text; the question's message is closed with the answer. A click by another member
+   * on an open question changes nothing and gets one text answer per message ("Only <requester>
+   * can answer this."). A click on an answered, closed, expired, replaced or unknown question
+   * (clients may send one shortly after the message was closed) changes nothing and gets no
+   * answer. Repeats stay silent.
    */
   async onButtonClicked(wireMessage: CompositeButtonAction): Promise<void> {
     const convId = wireMessage.conversationId as QualifiedId;
@@ -629,7 +634,7 @@ export class WireEventRouter extends WireEventsHandler {
     try {
       const prompt = offers.prompt(convId, referenceMessageId);
       const live = prompt ? offers.find(convId, prompt.requesterId) : null;
-      const open = !!prompt && !prompt.answered && !!live && live.id === prompt.offerId && live.messageId === referenceMessageId;
+      const open = !!prompt && !prompt.answered && !prompt.closed && !!live && live.id === prompt.offerId && live.messageId === referenceMessageId;
 
       if (prompt && open && !sameQualifiedId(sender, prompt.requesterId)) {
         log.info("Button: click by a member who was not asked");
@@ -639,10 +644,8 @@ export class WireEventRouter extends WireEventsHandler {
         return;
       }
       if (!prompt || !open || !live) {
+        // Silent: the message is closed or about to be, and a client may not have applied the edit yet.
         log.info("Button: click on a question that is no longer open", { known: !!prompt, answered: prompt?.answered ?? false });
-        if (offers.claimNotice(convId, referenceMessageId, "stale")) {
-          await this.deps.wireOutbound.sendPlainText(convId, prompt?.answered ? ANSWERED_QUESTION : EXPIRED_QUESTION);
-        }
         return;
       }
 
@@ -680,6 +683,20 @@ export class WireEventRouter extends WireEventsHandler {
         log.error("Failed to send error reply", { err: sendErr instanceof Error ? sendErr.name : "UnknownError" });
       }
     }
+  }
+
+  /** Closes the button questions that expired or were replaced; never fails the handler it follows. */
+  private async closeEndedPrompts(): Promise<void> {
+    try {
+      await closeEndedOfferPrompts(this.promptClosing());
+    } catch (err) {
+      this.deps.logger.warn("Closing ended button questions failed", { err: err instanceof Error ? err.name : "UnknownError" });
+    }
+  }
+
+  /** What closing a button question needs. */
+  private promptClosing(logger: Logger = this.deps.logger): OfferPromptClosing {
+    return { offers: this.deps.pendingOffers, wireOutbound: this.deps.wireOutbound, logger };
   }
 
   /** The member's cached display name in the conversation, or undefined. */

@@ -69,6 +69,11 @@ export interface PendingOffer {
   id?: string;
   /** The bot's button message for this offer; a click is matched by it. Absent when the transport returned none. */
   messageId?: string;
+  /**
+   * The question as sent with the buttons (without its text answer hint). When the question ends,
+   * its message is replaced by this text and a closing line, without buttons.
+   */
+  question?: string;
   /** A choice between options (targets, new, cancel); absent for a yes-or-no offer. */
   choices?: OfferChoice[];
   /**
@@ -86,13 +91,24 @@ export interface OfferPrompt {
   requesterId: QualifiedId;
   /** The offer was decided, by a click or a text answer. */
   answered: boolean;
+  /** The message was closed (or is queued to be): replaced by its question and a closing line, without buttons. */
+  closed: boolean;
 }
 
-/**
- * The one-off texts a button message can get: "others" tells another member who may answer,
- * "stale" says that the question is answered or expired.
- */
-export type OfferPromptNotice = "others" | "stale";
+/** The one-off text a button message can get: "others" tells another member who may answer. */
+export type OfferPromptNotice = "others";
+
+/** Why a button question ended without an answer, noticed by the store. */
+export type OfferPromptEnding = "expired" | "replaced";
+
+/** A button message whose question ended without an answer and is to be closed. */
+export interface EndedOfferPrompt {
+  conversationId: QualifiedId;
+  messageId: string;
+  /** The question as sent; absent when the offer was stored without it. */
+  question?: string;
+  reason: OfferPromptEnding;
+}
 
 export interface PendingOfferStore {
   /** Stores the offer, replacing any pending one for the same requester in the conversation. */
@@ -110,8 +126,21 @@ export interface PendingOfferStore {
    * remembered (bounded, also after the offer was taken, dropped or expired); null otherwise.
    */
   prompt(conversationId: QualifiedId, messageId: string): OfferPrompt | null;
-  /** Records that the offer with this ID was decided, so a later click on its message is answered as stale. */
+  /** Records that the offer with this ID was decided, so a later click on its message changes nothing. */
   markAnswered(conversationId: QualifiedId, offerId: string): void;
+  /**
+   * Claims the closing of the button message `messageId`: the first time, it is marked closed and
+   * its question is returned (`question` absent when the offer was stored without it); null for
+   * a message the store does not know or one already closed, so each message is closed at most once.
+   */
+  claimClose(conversationId: QualifiedId, messageId: string): { question?: string } | null;
+  /**
+   * Removes and returns the button messages whose question expired or was replaced by a newer
+   * question to the same requester, as noticed so far; each is already marked closed.
+   */
+  takeEndedPrompts(): EndedOfferPrompt[];
+  /** Notices every offer expired at `now` (in any conversation), so its button message can be closed. */
+  sweepExpired(now: Date): void;
   /**
    * True the first time a notice of this kind is claimed for the message, also for a message
    * the store does not know; false afterwards, so each notice is sent at most once per message.

@@ -31,7 +31,7 @@ function setup(extracted: PartDetails = { deliverTo: "depot north" }, deliveryLo
   };
   const offers = {
     put: vi.fn(), take: vi.fn(), has: vi.fn().mockReturnValue(false), peek: vi.fn(), clearConversation: vi.fn(),
-    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
+    drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(), find: vi.fn(), prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(), claimClose: vi.fn(() => null), takeEndedPrompts: vi.fn(() => []), sweepExpired: vi.fn(),
   };
   const { wire, sent } = makeWire();
   const logger = makeLogger();
@@ -278,3 +278,49 @@ describe("CompletePartOrder: buttons", () => {
     expect(partial.offers.put.mock.calls[0]![0].id).toBeUndefined();
   });
 });
+
+describe("CompletePartOrder: closing the question it answers", () => {
+  it("closes the asked essential's button question with the typed value once the order moves on", async () => {
+    const { offers, wire, useCase } = setup({ deliverTo: "depot north" });
+    offers.claimClose.mockReturnValueOnce({ question: "Where shall I deliver it?" } as never);
+
+    await expect(useCase.execute(input({ answering: { messageId: "q-1", fillsPart: "deliverTo" }, requesterName: "Alice" }))).resolves.toBe(true);
+
+    expect(offers.claimClose).toHaveBeenCalledWith(convId, "q-1");
+    expect(wire.closeButtonPrompt).toHaveBeenCalledWith(convId, "q-1", "Where shall I deliver it?\n\nAnswered by Alice: depot north");
+  });
+
+  it("closes a complete order's question with the values a correction changed", async () => {
+    const complete: OfferCommand = { ...DRAFT, part: { ...DRAFT.part, deliverTo: "depot south" } };
+    const { offers, wire, useCase } = setup({ quantity: "3" });
+    offers.claimClose.mockReturnValueOnce({ question: "Shall I order this part?" } as never);
+
+    await expect(useCase.execute(input({ pending: complete, text: "actually three", answering: { messageId: "q-2" }, requesterName: "Alice" }))).resolves.toBe(true);
+
+    expect(wire.closeButtonPrompt).toHaveBeenCalledWith(convId, "q-2", "Shall I order this part?\n\nAnswered by Alice: 3");
+  });
+
+  it("closes nothing when the message does not move the order on, or the draft had no button question", async () => {
+    const unchanged = setup({});
+    await expect(unchanged.useCase.execute(input({ answering: { messageId: "q-1", fillsPart: "deliverTo" } }))).resolves.toBe(false);
+    expect(unchanged.offers.claimClose).not.toHaveBeenCalled();
+
+    const plain = setup({ deliverTo: "depot north" });
+    await expect(plain.useCase.execute(input())).resolves.toBe(true);
+    expect(plain.offers.claimClose).not.toHaveBeenCalled();
+    expect(plain.wire.closeButtonPrompt).not.toHaveBeenCalled();
+  });
+
+  it("keeps the updated order when closing the old question fails, logging the error name only", async () => {
+    const { offers, wire, logger, useCase } = setup({ deliverTo: "depot north" });
+    offers.claimClose.mockReturnValueOnce({ question: "Where shall I deliver it?" } as never);
+    wire.closeButtonPrompt.mockRejectedValueOnce(new TypeError("PRIVATE_EDIT_DETAIL"));
+
+    await expect(useCase.execute(input({ answering: { messageId: "q-1", fillsPart: "deliverTo" }, requesterName: "Alice" }))).resolves.toBe(true);
+
+    expect(offers.put).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith("Closing a button question failed", { err: "TypeError" });
+    expect(loggedText(logger)).not.toContain("PRIVATE_EDIT_DETAIL");
+  });
+});
+

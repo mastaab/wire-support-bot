@@ -6,7 +6,9 @@ import {
 } from "../../services/offers";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
 import type { OfferChoice } from "../../ports/PendingOfferPort";
-import { answerForms, choiceHint, decisionAt, matchChoice } from "../../services/offerButtons";
+import { YES_NO_LABELS, answerForms, choiceHint, decisionAt, matchChoice } from "../../services/offerButtons";
+import { answeredLine, closeOfferPrompt } from "../../services/offerPromptClosing";
+import type { Logger } from "../../ports/Logger";
 import { askPartOrderStep, partOrderTextQuestion } from "../../services/partOrderSteps";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { RaiseSupportRequest } from "./RaiseSupportRequest";
@@ -123,6 +125,7 @@ export class ConfirmOffer {
     private readonly partAsset: PartAssetWording = DEFAULT_PART_ASSET,
     /** Delivery locations of part orders offered as buttons; empty asks for the location in text. */
     private readonly deliveryLocations: readonly string[] = [],
+    private readonly logger?: Logger,
   ) {}
 
   /**
@@ -149,7 +152,7 @@ export class ConfirmOffer {
 
     const offer = live ? this.offers.take(input.conversationId, input.requesterId, now) : null;
     if (!offer) return answer === "yes" ? this.nothingToConfirm(input, now) : false;
-    await this.decide(offer, answer === "yes" ? offer.command : null, input, true);
+    await this.decide(offer, answer === "yes" ? offer.command : null, input, true, answer === "yes" ? YES_NO_LABELS[0] : YES_NO_LABELS[1]);
     return true;
   }
 
@@ -165,7 +168,8 @@ export class ConfirmOffer {
     if (!decision) return false;
     const offer = this.offers.take(input.conversationId, input.requesterId, now);
     if (!offer) return false;
-    await this.decide(offer, decision.command, input, !offer.choices);
+    const label = offer.choices ? offer.choices[input.index]!.label : YES_NO_LABELS[input.index]!;
+    await this.decide(offer, decision.command, input, !offer.choices, label);
     return true;
   }
 
@@ -179,7 +183,7 @@ export class ConfirmOffer {
     }
     const offer = this.offers.take(input.conversationId, input.requesterId, now);
     if (!offer) return false;
-    await this.decide(offer, choices[index]!.command, input, false);
+    await this.decide(offer, choices[index]!.command, input, false, choices[index]!.label);
     return true;
   }
 
@@ -204,20 +208,34 @@ export class ConfirmOffer {
     const offer = this.offers.take(input.conversationId, input.requesterId, now);
     if (!offer) return false;
     let command: OfferCommand | null = null;
-    if (index !== null) command = choices[index]!.command;
-    else if (quantity && offer.command.kind === "support") command = { ...offer.command, part: { ...offer.command.part, quantity: String(Number(quantity)) } };
-    await this.decide(offer, command, input, false);
+    // The answer shown when the question closes: the option, the typed quantity, or a decline.
+    let answer: string = YES_NO_LABELS[1];
+    if (index !== null) {
+      command = choices[index]!.command;
+      answer = choices[index]!.label;
+    } else if (quantity && offer.command.kind === "support") {
+      command = { ...offer.command, part: { ...offer.command.part, quantity: String(Number(quantity)) } };
+      answer = String(Number(quantity));
+    }
+    await this.decide(offer, command, input, false, answer);
     return true;
   }
 
   /**
-   * Runs `command` for the taken offer, or declines it when null, and records the offer's
-   * message as answered. `confirmed` is true for a yes to a yes-or-no offer, whose incomplete
-   * part order is kept for amending; a chosen incomplete order is asked about afresh.
+   * Runs `command` for the taken offer, or declines it when null, after recording the offer's
+   * message as answered and closing it with "Answered by <name>: <answer>". `confirmed` is true
+   * for a yes to a yes-or-no offer, whose incomplete part order is kept for amending; a chosen
+   * incomplete order is asked about afresh.
    */
-  private async decide(offer: PendingOffer, command: OfferCommand | null, context: AnswerContext, confirmed: boolean): Promise<void> {
+  private async decide(
+    offer: PendingOffer, command: OfferCommand | null, context: AnswerContext, confirmed: boolean, answer: string,
+  ): Promise<void> {
     if (offer.id) this.offers.markAnswered(offer.conversationId, offer.id);
     const { conversationId, requesterId: actorId, replyToMessageId } = context;
+    await closeOfferPrompt(
+      { offers: this.offers, wireOutbound: this.wireOutbound, logger: this.logger },
+      conversationId, offer.messageId, answeredLine(context.requesterName, answer),
+    );
     if (!command) {
       await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
       return;

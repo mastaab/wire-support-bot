@@ -74,6 +74,7 @@ function setup(options: { store?: PendingOfferStore; clock?: () => Date; deliver
       return { messageId: `bot-msg-${sent.length}`, sha256: "" };
     }),
     sendButtonConfirmation: vi.fn(),
+    closeButtonPrompt: vi.fn().mockResolvedValue(undefined),
     sendReaction: vi.fn(),
     sendFile: vi.fn(),
     withTyping: <T>(_c: QualifiedId, work: () => Promise<T>): Promise<T> => work(),
@@ -97,7 +98,7 @@ describe("ConfirmOffer", () => {
     const store = {
       put: vi.fn(), take: vi.fn(), has: vi.fn(), peek: vi.fn(), find: vi.fn(), clearConversation: vi.fn(),
       drop: vi.fn(), recentlyDropped: vi.fn(), forgetDropped: vi.fn(),
-      prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(),
+      prompt: vi.fn(), markAnswered: vi.fn(), claimNotice: vi.fn(), claimClose: vi.fn(() => null), takeEndedPrompts: vi.fn(() => []), sweepExpired: vi.fn(),
     };
     const { handlers, wire, useCase } = setup({ store });
 

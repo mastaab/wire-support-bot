@@ -10,7 +10,7 @@ import type {
 } from "../../application/ports/WireOutboundPort";
 import type { Logger } from "../../application/ports/Logger";
 import { randomUUID } from "node:crypto";
-import { TextMessage, CompositeMessage, CompositeButton, Reaction, QualifiedId as SdkQualifiedId } from "@wireapp/wire-apps-js-sdk";
+import { TextMessage, CompositeMessage, CompositeEditedMessage, CompositeButton, Reaction, QualifiedId as SdkQualifiedId } from "@wireapp/wire-apps-js-sdk";
 import type { WireMessage, WireUser } from "@wireapp/wire-apps-js-sdk";
 import type { WireReplyContext } from "./WireReplyContext";
 import { renameBot, usableBotName } from "./renameBot";
@@ -164,6 +164,20 @@ export function createWireOutboundAdapter(
         buttonId,
       };
       await h.manager.sendMessage(confirmation);
+    },
+
+    async closeButtonPrompt(conversationId: QualifiedId, messageId: string, text: string): Promise<void> {
+      const h = handlerRef.current;
+      if (!h?.manager) return;
+      logger.debug("closeButtonPrompt", { conversationId: conversationId.id, messageId, textLength: text.length });
+      const out = await renamed(h.manager, text);
+      // A composite edit with a text item only: clients drop the buttons. A text edit of a
+      // composite message is not honoured by the clients.
+      await h.manager.sendMessage(CompositeEditedMessage.create({
+        conversationId,
+        replacingMessageId: messageId,
+        itemList: [TextMessage.create({ conversationId, text: out.text })],
+      }));
     },
 
     async withTyping<T>(conversationId: QualifiedId, work: () => Promise<T>): Promise<T> {

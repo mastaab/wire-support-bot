@@ -44,7 +44,8 @@ The rules for an offer:
 - Only the member the offer was made to can confirm it, and only with their next message in the conversation. Any other message from them drops the offer; a correction ("the description should mention the third floor") gets a revised offer.
 - Only explicit answers count: "yes", "yes please", "go ahead", "do it", "confirm" and similar, or "no", "cancel", "stop" and similar. "ok", "sure" or "thanks" approve nothing; the bot asks again and keeps the offer.
 - An offer expires after 10 minutes.
-- The buttons follow the same rules: only the member who was asked can answer, and their first click decides. Clicks by other members change nothing; the bot answers the first of them with "Only <name> can answer this." A click on a question that was already answered, has expired or was replaced gets one short answer ("This question has already been answered." or "This question has expired; ask me again."). The result is always posted as text as well.
+- The buttons follow the same rules: only the member who was asked can answer, and their first click decides. Clicks by other members change nothing; the bot answers the first of them with "Only <name> can answer this." The result is always posted as text as well.
+- When a question ends, the bot edits its message: the buttons disappear for everyone and a last line says how it ended, for example "Answered by Alice: Yes" (also for a text answer, with the matching option), "This question has expired.", "This question was replaced by a newer one." or "Closed, as the next message was not an answer.". A click that still arrives on an ended question (a client may not have applied the edit yet) changes nothing and gets no answer.
 
 #### Choosing instead of guessing
 
@@ -89,7 +90,7 @@ Supported are JPEG, PNG, HEIC, HEIF and WebP images, and PDF, plain text, CSV, W
 
 ### Desk replies and status changes
 
-With `WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS` set, the bot checks open requests at that interval. New public replies from the service desk (up to three per update) and status changes are posted in the request's conversation, quoting the bot's last message about that request. Replies the bot itself sent from Wire are not announced again.
+With `WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS` set, the bot checks open requests at that interval. New public replies from the service desk (up to three per update) and status changes are posted in the request's conversation, quoting the bot's last message about that request. Button questions do not count as that message, since they are edited when they close; results such as "Raised …", "Added …" or "Resolved …" do. Replies the bot itself sent from Wire are not announced again.
 
 ### Direct conversation with the assigned agent
 
@@ -118,7 +119,8 @@ The click rules:
 - The first accepted click of the member who was asked decides. Only that click gets a confirmation, and Wire clients apply the confirmation to the message for everyone, so all members see the decision.
 - Later clicks on the same message, also the same member changing their choice, change nothing and get no confirmation.
 - A click by another member changes nothing. Their client still marks their choice locally, so the bot answers once per message in text ("Only <name> can answer this.") and stays silent for repeats.
-- A click on an answered, expired, replaced or unknown question (for example after a restart) gets one short text answer per message, no write and no confirmation.
+- When a question ends, its message is edited (a composite edit with a text item only) into the question as sent and a closing line, without buttons, once per message: "Answered by <name>: <option>" when the asked member's click or text answer is accepted (a typed answer shows the matching option, or the typed value of a part order's step), "This question has expired." (noticed on the next access to the member's offers, and by a sweep once a minute so that quiet conversations are closed too), "This question was replaced by a newer one." (a newer question to the same member), and "Closed, as the next message was not an answer.". A failed edit is logged by error name and changes nothing else.
+- A click on an answered, closed, expired, replaced or unknown question (for example after a restart, or shortly after an edit from a client that has not applied it yet) changes nothing and gets no answer and no confirmation.
 - A click counts as the member's next interaction, like a text answer: it consumes the offer, and the confirmed use case runs with all its checks, as for a text "yes".
 - The result is always posted as text as well, so clients that show no buttons or no confirmation show what happened. Text answers keep working everywhere.
 
@@ -134,7 +136,7 @@ Stored in Postgres:
 - An audit log of creates and updates: actor ID, conversation ID, action, entity and the changed fields (for example a status category or a timezone). It holds no message text and no names.
 - Per-conversation settings: the timezone.
 
-Held in memory only, and lost on restart: the recent messages of each conversation (`MESSAGE_BUFFER_SIZE`), pending offers, the IDs of the bot's button messages with who was asked, and the member cache.
+Held in memory only, and lost on restart: the recent messages of each conversation (`MESSAGE_BUFFER_SIZE`), pending offers, the IDs of the bot's button messages with who was asked and the question as sent (so the message can be closed), and the member cache.
 
 Logs are structured JSON on stderr. Fields named `text`, `preview`, `raw`, `context`, `prompt`, `response` and `stack` are removed, and the use cases log error names and ticket keys rather than content. Log lines can carry conversation and user IDs and the sender's display name.
 
@@ -185,6 +187,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/application/usecases/general/AnswerQuestion.ts` | The answer path: builds the model's context, parses and validates an offer, sends the answer or the question. |
 | `src/application/services/offers.ts` | Offer marker parsing, bounds and the code-written questions. |
 | `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
+| `src/application/services/offerPromptClosing.ts` | Closes ended button questions: the closing lines, one edit per message, the expiry sweep. |
 | `src/application/services/partOrderSteps.ts` | A part order's questions, one step at a time: free-text essentials, quantity and delivery location buttons, the complete order. |
 | `src/application/usecases/jira/ConfirmOffer.ts` | Classifies a yes, no or choice, by text or button, and runs the confirmed use case. |
 | `src/application/usecases/jira/RaiseSupportRequest.ts`, `ReplyToServiceDesk.ts`, `ResolveSupportRequest.ts`, `GetIssueStatus.ts`, `ListSupportRequests.ts` | The support request use cases, scoped to the conversation; writes are audited. |
@@ -283,7 +286,7 @@ The container's entry point applies the migrations (`prisma migrate deploy`) and
 
 ### The CLI for local testing
 
-The CLI drives the real router and use cases from the terminal, without Wire. It simulates one conversation with four members, Alice (the default), Bob, Carol and Dave; prefix a line with `Bob: ` to send it as Bob. Start a line with `@Wire Support Bot` to mention the bot. Bot replies go to stdout and logs to stderr (level `warn` unless `LOG_LEVEL` is set). A question with buttons is printed with its options numbered under it; a line with only an option's number (`2`, or `Bob: 2`) clicks that option of the latest question, and any other line is a text answer. When the buttons are numbers themselves (the quantities [1] [2] [5]), a number clicks only the button with that label and any other number (`3`) is a typed quantity. The CLI shows no confirmation. End with `exit`, `quit` or Ctrl-D.
+The CLI drives the real router and use cases from the terminal, without Wire. It simulates one conversation with four members, Alice (the default), Bob, Carol and Dave; prefix a line with `Bob: ` to send it as Bob. Start a line with `@Wire Support Bot` to mention the bot. Bot replies go to stdout and logs to stderr (level `warn` unless `LOG_LEVEL` is set). A question with buttons is printed with its options numbered under it; a line with only an option's number (`2`, or `Bob: 2`) clicks that option of the latest question, and any other line is a text answer. When the buttons are numbers themselves (the quantities [1] [2] [5]), a number clicks only the button with that label and any other number (`3`) is a typed quantity. The CLI shows no confirmation; a closed question is shown by its closing line, for example "(Question closed: Answered by Alice: No)", and a number no longer clicks it. End with `exit`, `quit` or Ctrl-D.
 
 ```bash
 npm run build
@@ -413,7 +416,7 @@ dropdb wire_support_bot_test
 - The watch looks at up to 500 requests per check, oldest first, and the bot retries leaving up to 500 pending agent groups per run.
 - Edited messages are ignored.
 - Buttons were checked on Wire web and iOS; Android was not tested. On every client the result is also posted as text, and every question can be answered in text.
-- Offers live in memory, so after a restart a click on an earlier question only gets "This question has expired; ask me again.".
+- Offers live in memory, so after a restart a click on an earlier question does nothing, and a question still open at the restart keeps its buttons (it is not closed).
 - Only photos and documents of the listed types, up to 10 MB, are offered for attaching.
 - With a remote model provider and sharing on, ticket content leaves your infrastructure; see "What is stored and what is sent where".
 

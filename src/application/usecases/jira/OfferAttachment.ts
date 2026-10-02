@@ -7,8 +7,7 @@ import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundP
 import type { Logger } from "../../ports/Logger";
 import { describeFile, formatAttachQuestion } from "../../services/attachments";
 import { OFFER_TTL_MS, formatAttachTargetQuestion } from "../../services/offers";
-import { OFFER_CANDIDATES_MAX, choiceHint, doNotAttachChoice, keyChoice, newOfferId, sendOfferPrompt } from "../../services/offerButtons";
-import { rememberLastMessage } from "./supportRequestMarkers";
+import { OFFER_CANDIDATES_MAX, choiceHint, doNotAttachChoice, keyChoice, newOfferId, offerPromptFields, sendOfferPrompt } from "../../services/offerButtons";
 
 /** Input of `OfferAttachment`. */
 export interface OfferAttachmentInput {
@@ -26,7 +25,7 @@ export interface OfferAttachmentInput {
  * more than one open request of their own in the conversation, they choose between them (at most
  * three, likeliest first) or decline; otherwise the offer names the request the file most likely
  * belongs to: the one with the latest bot message about it (`lastMessageAt`), else the newest open
- * one, and that question is stored as the request's last message. Stores an `attach` offer for the
+ * one. Stores an `attach` offer for the
  * sender and replies to the file with the question and its buttons. Does nothing without an open
  * request, or while the sender already has a pending offer. True when it offered.
  */
@@ -96,13 +95,11 @@ export class OfferAttachment {
       requesterId: input.senderId,
       createdAt: now,
       expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
-      id: offerId,
-      ...(sent ? { messageId: sent.messageId } : {}),
+      ...offerPromptFields(offerId, sent, question),
       ...(choices ? { choices } : {}),
     });
-    // A yes-or-no question names the request, so the next watch update quotes it; only its ID and
-    // hash are kept. A choice names several requests and is no one's last message.
-    if (!choices) await rememberLastMessage(this.requests, target.key, sent, "OfferAttachment", this.logger);
+    // The question is edited when it closes, so it is no request's last message: the next watch
+    // update quotes the request's previous last message.
     return true;
   }
 }

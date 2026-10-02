@@ -4,7 +4,7 @@ import type { PartAssetWording, PartDetails } from "../../domain/entities/Suppor
 import type { ChoosablePartDetail, OfferChoice, OfferCommand, PendingOfferStore } from "../ports/PendingOfferPort";
 import type { SentMessageRef, WireOutboundPort } from "../ports/WireOutboundPort";
 import { OFFER_TTL_MS, formatMissingPartsQuestion, formatPartSoFar, formatSupportQuestion, missingPartDetails } from "./offers";
-import { newOfferId, sendOfferPrompt } from "./offerButtons";
+import { newOfferId, offerPromptFields, sendOfferPrompt } from "./offerButtons";
 
 /**
  * The questions of a part order, one step at a time. Essentials that need free text (the asset
@@ -120,8 +120,7 @@ export async function askPartOrderStep(
     requesterId: target.requesterId,
     createdAt: now,
     expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
-    ...(offerId ? { id: offerId } : {}),
-    ...(offerId && sent ? { messageId: sent.messageId } : {}),
+    ...offerPromptFields(offerId, sent, step.question),
     ...(step.choices ? { choices: step.choices } : {}),
     ...(step.fillsPart ? { fillsPart: step.fillsPart } : {}),
   });

@@ -16,7 +16,7 @@ import {
 } from "../../services/offers";
 import type { CandidateRequest } from "../../services/offers";
 import {
-  OFFER_CANDIDATES_MAX, addToChoice, cancelChoice, choiceHint, keyChoice, newOfferId, raiseNewChoice, sendOfferPrompt,
+  OFFER_CANDIDATES_MAX, addToChoice, cancelChoice, choiceHint, keyChoice, newOfferId, offerPromptFields, raiseNewChoice, sendOfferPrompt,
 } from "../../services/offerButtons";
 import type { GetIssueStatus } from "./GetIssueStatus";
 import { rememberLastMessage } from "./supportRequestMarkers";
@@ -305,9 +305,8 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
    * a choice, or the options for a part order's essential named by `fillsPart`); `withButtons`
    * is false for a question that asks for free-text details instead. True when the
    * question was sent, even if the work was cancelled during the send and the offer is not stored.
-   * A yes-or-no reply or resolve offer names an open request of this conversation, so it becomes
-   * that request's last message, quoted by the next watch update; a choice names several and is
-   * not stored as any one's last message.
+   * A button question is not stored as a request's last message: it is edited when it closes, so
+   * the next watch update quotes the request's previous last message instead.
    */
   private async offer(
     input: OfferSupportInput, question: string, command: OfferCommand, choices?: OfferChoice[], withButtons = true,
@@ -334,14 +333,14 @@ export class OfferSupportFromConversation implements OfferSupportFromConversatio
         requesterId: input.senderId,
         createdAt: now,
         expiresAt: new Date(now.getTime() + OFFER_TTL_MS),
-        ...(offerId ? { id: offerId } : {}),
-        ...(offerId && sent ? { messageId: sent.messageId } : {}),
+        ...offerPromptFields(offerId, sent, question),
         ...(choices ? { choices } : {}),
         ...(fillsPart ? { fillsPart } : {}),
       });
     }
-    // The question is in the channel either way; only its ID and hash are kept.
-    if (command.kind !== "support" && !choices) {
+    // The question is in the channel either way; only its ID and hash are kept. A button
+    // question is edited when it closes, so it is no request's last message.
+    if (command.kind !== "support" && !choices && !offerId) {
       await rememberLastMessage(this.requests, command.issueKey, sent, "OfferSupportFromConversation", this.logger);
     }
     return true;

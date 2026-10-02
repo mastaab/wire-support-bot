@@ -28,7 +28,7 @@ Keep one concern per module, use explicit types, and match the existing style. A
 ## Rules that protect users
 
 - The model proposes, code validates, a person confirms. Never let model output reach the service desk without validation and an explicit yes, and never let the bot claim a write it has not done.
-- Buttons follow the same rule. Build every option in code from validated data (never from model output alone), keep button IDs opaque (offer ID and option index, checked against the stored offer), accept only the first click of the member who was asked, confirm only that click, and always post the result as text. Every button question must stay answerable in text, but is sent without a text answer hint such as "(yes or no)?": the buttons show the choices (`withoutAnswerHint` in `offerButtons.ts`).
+- Buttons follow the same rule. Build every option in code from validated data (never from model output alone), keep button IDs opaque (offer ID and option index, checked against the stored offer), accept only the first click of the member who was asked, confirm only that click, and always post the result as text. Close every button question when it ends (answered, expired, replaced or dropped) through `closeOfferPrompt` or the store's ended prompts in `offerPromptClosing.ts`, at most once per message, and never make the offer logic depend on the edit succeeding; a click on an ended question changes nothing and gets no answer. Do not store a button question as a request's last message: it is edited later. Every button question must stay answerable in text, but is sent without a text answer hint such as "(yes or no)?": the buttons show the choices (`withoutAnswerHint` in `offerButtons.ts`).
 - Scope every read and write to the qualified conversation (ID and domain), also when a record is looked up by its key.
 - Validate bounds, identities and state transitions before a write, and audit domain creates, updates and deletes through `AuditLogRepository`.
 - Do not store or log message text, ticket content or file contents. Log error names and keys, not bodies.
@@ -36,7 +36,7 @@ Keep one concern per module, use explicit types, and match the existing style. A
 ## Tests
 
 - New use cases and non-trivial logic need tests. Unit tests use mocked ports and need no database, network or Wire connection; follow `tests/usecases/` and `tests/pipeline/`.
-- Changes to Wire event routing or outbound mapping need contract tests in `tests/contract/`, including button clicks (the asked member, other members, repeated and stale clicks, and clicks together with text answers).
+- Changes to Wire event routing or outbound mapping need contract tests in `tests/contract/`, including button clicks (the asked member, other members, repeated and late clicks, and clicks together with text answers) and how each question is closed.
 - Repository changes need integration tests in `tests/integration/`, run with `INTEGRATION_TESTS=1` against a throwaway database. Never point tests at a shared or production database.
 - For behaviour that depends on the model, try it with the CLI (see the README) against a test project before you rely on it.
 

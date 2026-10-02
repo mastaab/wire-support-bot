@@ -303,9 +303,9 @@ describe("InMemoryPendingOfferStore: button messages", () => {
   it("remembers who was asked by a button message, also after the offer was taken, dropped or expired", () => {
     const store = new InMemoryPendingOfferStore();
     store.put(offer({ id: "offer-1", messageId: "msg-1" }));
-    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-1", requesterId: alice, answered: false });
+    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-1", requesterId: alice, answered: false, closed: false });
     store.take(convA, alice, live);
-    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-1", requesterId: alice, answered: false });
+    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-1", requesterId: alice, answered: false, closed: false });
 
     store.put(offer({ id: "offer-2", messageId: "msg-2", requesterId: bob }));
     store.drop(convA, bob, live);
@@ -338,19 +338,17 @@ describe("InMemoryPendingOfferStore: button messages", () => {
     store.put(o);
     expect(store.prompt(convA, "msg-1")?.answered).toBe(true);
     store.put(offer({ id: "offer-2", messageId: "msg-1" }));
-    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-2", requesterId: alice, answered: false });
+    expect(store.prompt(convA, "msg-1")).toEqual({ offerId: "offer-2", requesterId: alice, answered: false, closed: false });
   });
 
-  it("lets each notice be claimed once per message, also for an unknown message", () => {
+  it("lets the notice be claimed once per message, also for an unknown message", () => {
     const store = new InMemoryPendingOfferStore();
     store.put(offer({ id: "offer-1", messageId: "msg-1" }));
     expect(store.claimNotice(convA, "msg-1", "others")).toBe(true);
     expect(store.claimNotice(convA, "msg-1", "others")).toBe(false);
-    expect(store.claimNotice(convA, "msg-1", "stale")).toBe(true);
-    expect(store.claimNotice(convA, "msg-1", "stale")).toBe(false);
-    expect(store.claimNotice(convA, "unknown", "stale")).toBe(true);
-    expect(store.claimNotice(convA, "unknown", "stale")).toBe(false);
-    expect(store.claimNotice(convB, "unknown", "stale")).toBe(true);
+    expect(store.claimNotice(convA, "unknown", "others")).toBe(true);
+    expect(store.claimNotice(convA, "unknown", "others")).toBe(false);
+    expect(store.claimNotice(convB, "unknown", "others")).toBe(true);
     // Claiming a notice for an unknown message does not make it known.
     expect(store.prompt(convA, "unknown")).toBeNull();
   });
@@ -358,10 +356,10 @@ describe("InMemoryPendingOfferStore: button messages", () => {
   it("forgets the conversation's button messages when it is cleared", () => {
     const store = new InMemoryPendingOfferStore();
     store.put(offer({ id: "offer-1", messageId: "msg-1" }));
-    store.claimNotice(convA, "msg-1", "stale");
+    store.claimNotice(convA, "msg-1", "others");
     store.clearConversation(convA);
     expect(store.prompt(convA, "msg-1")).toBeNull();
-    expect(store.claimNotice(convA, "msg-1", "stale")).toBe(true);
+    expect(store.claimNotice(convA, "msg-1", "others")).toBe(true);
   });
 
   it("remembers a bounded number of button messages per conversation, forgetting the oldest", () => {
@@ -370,5 +368,108 @@ describe("InMemoryPendingOfferStore: button messages", () => {
     expect(store.prompt(convA, "msg-0")).toBeNull();
     expect(store.prompt(convA, "msg-1")?.offerId).toBe("offer-1");
     expect(store.prompt(convA, "msg-200")?.offerId).toBe("offer-200");
+  });
+});
+
+describe("InMemoryPendingOfferStore: closing button messages", () => {
+  const live = new Date("2026-09-25T10:05:00Z");
+  const question = "Shall I resolve **SD-1**?";
+
+  it("lets the closing of a button message be claimed once, with its question", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1", question }));
+    expect(store.claimClose(convA, "msg-1")).toEqual({ question });
+    expect(store.prompt(convA, "msg-1")?.closed).toBe(true);
+    expect(store.claimClose(convA, "msg-1")).toBeNull();
+    expect(store.claimClose(convB, "msg-1")).toBeNull();
+    expect(store.claimClose(convA, "unknown")).toBeNull();
+  });
+
+  it("claims a message stored without its question, with no question", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1" }));
+    expect(store.claimClose(convA, "msg-1")).toEqual({});
+  });
+
+  it("keeps the closed mark when the same offer is stored again", () => {
+    const store = new InMemoryPendingOfferStore();
+    const o = offer({ id: "offer-1", messageId: "msg-1", question });
+    store.put(o);
+    store.claimClose(convA, "msg-1");
+    store.take(convA, alice, live);
+    store.put(o);
+    expect(store.claimClose(convA, "msg-1")).toBeNull();
+    expect(store.takeEndedPrompts()).toEqual([]);
+  });
+
+  it("queues an expired question for closing when the requester's offer is next accessed", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1", question }));
+    expect(store.find(convA, alice, live)).not.toBeNull();
+    expect(store.takeEndedPrompts()).toEqual([]);
+
+    expect(store.find(convA, alice, expires)).toBeNull();
+    expect(store.takeEndedPrompts()).toEqual([{ conversationId: convA, messageId: "msg-1", question, reason: "expired" }]);
+    // Queued once, and the message counts as closed.
+    expect(store.has(convA, alice, expires)).toBe(false);
+    expect(store.takeEndedPrompts()).toEqual([]);
+    expect(store.prompt(convA, "msg-1")?.closed).toBe(true);
+  });
+
+  it("queues every expired question in any conversation on a sweep", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1", question }));
+    store.put(offer({ id: "offer-2", messageId: "msg-2", conversationId: convB, requesterId: bob, question: "Shall I add it?" }));
+    store.put(offer({ id: "offer-3", messageId: "msg-3", requesterId: bob, expiresAt: new Date(expires.getTime() + 60_000) }));
+    store.sweepExpired(live);
+    expect(store.takeEndedPrompts()).toEqual([]);
+
+    store.sweepExpired(expires);
+    expect(store.takeEndedPrompts()).toEqual([
+      { conversationId: convA, messageId: "msg-1", question, reason: "expired" },
+      { conversationId: convB, messageId: "msg-2", question: "Shall I add it?", reason: "expired" },
+    ]);
+    store.sweepExpired(expires);
+    expect(store.takeEndedPrompts()).toEqual([]);
+    expect(store.has(convA, bob, expires)).toBe(true);
+  });
+
+  it("queues the open question of a requester replaced by a newer one, but not a re-stored or answered one", () => {
+    const store = new InMemoryPendingOfferStore();
+    const first = offer({ id: "offer-1", messageId: "msg-1", question });
+    store.put(first);
+    store.put(first);
+    expect(store.takeEndedPrompts()).toEqual([]);
+
+    store.put(offer({ id: "offer-2", messageId: "msg-2", question: "Shall I add it?" }));
+    expect(store.takeEndedPrompts()).toEqual([{ conversationId: convA, messageId: "msg-1", question, reason: "replaced" }]);
+
+    // A question already closed (answered and kept for amending) is not closed again.
+    store.claimClose(convA, "msg-2");
+    store.put(offer({ id: "offer-3", messageId: "msg-3" }));
+    expect(store.takeEndedPrompts()).toEqual([]);
+    // Another requester's question is not replaced.
+    store.put(offer({ id: "offer-4", messageId: "msg-4", requesterId: bob }));
+    expect(store.takeEndedPrompts()).toEqual([]);
+  });
+
+  it("does not queue a taken or dropped question, nor one without a message", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1" }));
+    store.take(convA, alice, live);
+    store.put(offer({ id: "offer-2", messageId: "msg-2", requesterId: bob }));
+    store.drop(convA, bob, live);
+    store.put(offer({ id: "offer-3", conversationId: convB }));
+    store.sweepExpired(expires);
+    expect(store.takeEndedPrompts()).toEqual([]);
+  });
+
+  it("forgets queued closings of a conversation it clears", () => {
+    const store = new InMemoryPendingOfferStore();
+    store.put(offer({ id: "offer-1", messageId: "msg-1" }));
+    store.put(offer({ id: "offer-2", messageId: "msg-2", conversationId: convB }));
+    store.sweepExpired(expires);
+    store.clearConversation(convA);
+    expect(store.takeEndedPrompts().map((p) => p.messageId)).toEqual(["msg-2"]);
   });
 });

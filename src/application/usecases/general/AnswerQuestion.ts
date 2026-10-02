@@ -22,7 +22,7 @@ import { findSupportRequestInConversation } from "../jira/supportRequestScope";
 import { markRepliesSeen, rememberLastMessage } from "../jira/supportRequestMarkers";
 import { formatTimeInZone } from "../../services/formatTimeInZone";
 import { statedPartDetails } from "../../services/partDetails";
-import { newOfferId, sendOfferPrompt } from "../../services/offerButtons";
+import { newOfferId, offerPromptFields, sendOfferPrompt } from "../../services/offerButtons";
 import { partOrderStep } from "../../services/partOrderSteps";
 import type { PartOrderStep } from "../../services/partOrderSteps";
 
@@ -261,14 +261,12 @@ export class AnswerQuestion {
     const sent = offerId
       ? await sendOfferPrompt(this.wireOutbound, input.conversationId, prepared.question, offerId, prepared.offer.choices, input.replyToMessageId)
       : await this.send(input, prepared.question, false);
-    this.jira.offers.put({
-      ...prepared.offer,
-      ...(offerId ? { id: offerId } : {}),
-      ...(offerId && sent ? { messageId: sent.messageId } : {}),
-    });
+    this.jira.offers.put({ ...prepared.offer, ...offerPromptFields(offerId, sent, prepared.question) });
     // A reply or resolve question names a request of this conversation (checked by the scope
-    // helper), so it becomes that request's last message, quoted by the next watch update.
-    if (prepared.requestKey) {
+    // helper). Asked without buttons, it becomes that request's last message, quoted by the next
+    // watch update; a button question is not, since it is edited when it closes, so the request
+    // keeps its previous last message.
+    if (prepared.requestKey && !offerId) {
       await rememberLastMessage(this.jira.requests, prepared.requestKey, sent, "AnswerQuestion", this.logger);
     }
     return prepared.question;

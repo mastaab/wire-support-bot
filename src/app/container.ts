@@ -33,6 +33,7 @@ import { createWireConversationAdapter } from "../infrastructure/wire/WireConver
 import { OpenAgentConversation } from "../application/usecases/jira/OpenAgentConversation";
 import { LeavePendingAgentGroups } from "../application/usecases/jira/LeavePendingAgentGroups";
 import { startIntervalRunner, type IntervalRunner } from "./intervalRunner";
+import { startOfferPromptSweep } from "./offerPromptSweep";
 import { getPrismaClient } from "../infrastructure/persistence/postgres/PrismaClient";
 import { OpenAIGeneralAnswerAdapter } from "../infrastructure/llm/OpenAIGeneralAnswerAdapter";
 import { LLMClientFactory } from "../infrastructure/llm/LLMClientFactory";
@@ -138,7 +139,7 @@ export function createContainer(config: Config, logger: Logger): Container {
   const attachFileToRequest = new AttachFileToRequest(supportRequestsRepo, issueTracker, createWireAssetAdapter(handlerRef), wireOutbound, auditLogRepo, logger);
   const offerAttachment = passiveOn ? new OfferAttachment(supportRequestsRepo, pendingOffers, wireOutbound, logger) : undefined;
   const confirmOffer = new ConfirmOffer(
-    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest, attachFileToRequest }, wireOutbound, undefined, config.partAsset, config.partDeliveryLocations,
+    pendingOffers, { raiseSupportRequest, replyToServiceDesk, resolveSupportRequest, attachFileToRequest }, wireOutbound, undefined, config.partAsset, config.partDeliveryLocations, logger,
   );
 
   const router = new WireEventRouter({
@@ -179,6 +180,7 @@ export function createContainer(config: Config, logger: Logger): Container {
 
   let sdkPromise: Promise<WireAppSdk> | null = null;
   let jiraWatch: IntervalRunner | undefined;
+  let offerSweep: IntervalRunner | undefined;
 
   return {
     async getWireClient(): Promise<WireAppSdk> {
@@ -212,6 +214,9 @@ export function createContainer(config: Config, logger: Logger): Container {
 
           await leavePendingSafely();
 
+          // Closes expired button questions, also in conversations where nobody writes.
+          offerSweep = startOfferPromptSweep({ offers: pendingOffers, wireOutbound, logger }, logger);
+
           if (watchSupportRequests && watchSeconds) {
             jiraWatch = startIntervalRunner("Jira watch", async () => {
               await leavePendingSafely();
@@ -227,6 +232,7 @@ export function createContainer(config: Config, logger: Logger): Container {
     },
     async shutdown(): Promise<void> {
       await jiraWatch?.stop();
+      await offerSweep?.stop();
       await getPrismaClient().$disconnect();
     },
   };

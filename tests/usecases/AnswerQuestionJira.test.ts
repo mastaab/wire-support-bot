@@ -117,6 +117,9 @@ function setup(options: SetupOptions = {}) {
     prompt: vi.fn(() => null),
     markAnswered: vi.fn(),
     claimNotice: vi.fn(() => true),
+    claimClose: vi.fn(() => null),
+    takeEndedPrompts: vi.fn(() => []),
+    sweepExpired: vi.fn(),
     clearConversation: vi.fn(),
     peek: vi.fn(() => null),
     drop: vi.fn(() => null),
@@ -499,6 +502,7 @@ describe("AnswerQuestion with Jira: offers", () => {
       expiresAt: new Date(NOW.getTime() + OFFER_TTL_MS),
       id: expect.any(String),
       messageId: sentRefFor(1).messageId,
+      question: withoutAnswerHint(supportQuestion),
     }]);
     expect(sent).toEqual([withoutAnswerHint(supportQuestion)]);
     expect(sent[0]).not.toContain("(yes or no)");
@@ -1294,11 +1298,19 @@ describe("AnswerQuestion with Jira: watch markers", () => {
   it.each([
     ["reply", 'OFFER: {"kind":"reply","issueKey":"sd-6","body":"It still drops."}', "Please tell the service desk on SD-6 that it still drops."],
     ["resolve", 'OFFER: {"kind":"resolve","issueKey":"SD-6"}', "SD-6 works again, please close it."],
-  ])("stores the reference of a %s offer question, which names a request of this conversation", async (_kind, marker, question) => {
+  ])("does not store a %s offer question, sent with buttons, as the request's last message", async (_kind, marker, question) => {
+    // The question is edited when it closes, so the next watch update quotes the request's previous last message.
     const { repo, stored, sent, run } = setup({ requests: [makeRequest("SD-6")], modelAnswer: marker });
     await run(question);
     expect(sent).toHaveLength(1);
     expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ messageId: expect.any(String), question: expect.stringContaining("SD-6") });
+    expect(repo.setLastMessage).not.toHaveBeenCalled();
+  });
+
+  it("still stores an answer that names the request as its last message", async () => {
+    const { repo, run } = setup({ requests: [makeRequest("SD-6")], modelAnswer: "SD-6 is with the service desk." });
+    await run("Any news on SD-6?");
     expect(repo.setLastMessage).toHaveBeenCalledTimes(1);
     expect(repo.setLastMessage).toHaveBeenCalledWith("SD-6", sentRefFor(1));
   });

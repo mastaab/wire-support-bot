@@ -32,6 +32,22 @@ describe("CLI fallback for buttons", () => {
     expect(cli.latestPrompt()).toBeUndefined();
   });
 
+  it("prints only the closing line of a closed question and stops treating a number as a click on it", async () => {
+    const { out, cli } = setup();
+    const ref = await cli.wireOutbound.sendCompositePrompt(convId, "Shall I resolve **SD-6**?", [
+      { id: "offer-1234:0", label: "Yes" }, { id: "offer-1234:1", label: "No" },
+    ]);
+    await cli.wireOutbound.closeButtonPrompt(convId, "cli-other", "Older question?\n\nThis question was replaced by a newer one.");
+    expect(cli.latestPrompt()?.messageId).toBe(ref!.messageId);
+    await cli.wireOutbound.closeButtonPrompt(convId, ref!.messageId, "Shall I resolve **SD-6**?\n\nAnswered by Alice: No");
+    expect(out.slice(1)).toEqual([
+      "[Wire Support Bot] (Question closed: This question was replaced by a newer one.)\n",
+      "[Wire Support Bot] (Question closed: Answered by Alice: No)\n",
+    ]);
+    expect(cli.latestPrompt()).toBeUndefined();
+    expect(cliButtonClick("1", alice, convId, cli.latestPrompt())).toBeNull();
+  });
+
   it("turns a bare option number into a click on the latest question by the sender", async () => {
     const { cli } = setup();
     const ref = await cli.wireOutbound.sendCompositePrompt(convId, "Which request (SD-40, SD-41 or cancel)?", [

@@ -1,6 +1,6 @@
 import type { QualifiedId } from "../../domain/ids/QualifiedId";
 import type {
-  OfferCommand, OfferPrompt, OfferPromptNotice, PendingOffer, PendingOfferStore,
+  EndedOfferPrompt, OfferCommand, OfferPrompt, OfferPromptEnding, OfferPromptNotice, PendingOffer, PendingOfferStore,
 } from "../../application/ports/PendingOfferPort";
 import { RECENT_DROP_MS } from "../../application/services/offers";
 
@@ -18,6 +18,8 @@ interface DroppedOffer {
 interface PromptEntry {
   /** Null for a message the store never knew (a notice was claimed for it). */
   prompt: OfferPrompt | null;
+  /** The question as sent with the buttons, for closing the message. */
+  question?: string;
   notices: Set<OfferPromptNotice>;
 }
 
@@ -29,8 +31,10 @@ const PROMPTS_PER_CONVERSATION = 200;
  * Offers are short-lived and a restart simply drops them, so nothing is persisted. A dropped
  * or expired offer is remembered for `RECENT_DROP_MS`, so a late "yes" can be answered; an
  * offer consumed by `take` is not remembered. The button message of an offer stored with an ID
- * and a message is remembered longer (bounded per conversation), with who was asked, whether the
- * offer was answered and which one-off notices it had, so a late click gets the right answer once.
+ * and a message is remembered longer (bounded per conversation), with who was asked, its question,
+ * whether the offer was answered or its message closed, and which one-off notices it had. A button
+ * question that expires or is replaced by a newer one to the same requester is queued for closing
+ * when the store notices it (`takeEndedPrompts`), marked closed so it is closed once.
  */
 export class InMemoryPendingOfferStore implements PendingOfferStore {
   /** Conversation key to (requester key to offer). */
@@ -39,6 +43,8 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
   private readonly dropped = new Map<string, Map<string, DroppedOffer>>();
   /** Conversation key to (button message ID to what is known about it). */
   private readonly prompts = new Map<string, Map<string, PromptEntry>>();
+  /** Button messages whose question ended without an answer, waiting to be closed. */
+  private ended: EndedOfferPrompt[] = [];
 
   put(offer: PendingOffer): void {
     // Measured by the caller's clock, like every other method, not the system clock.
@@ -46,12 +52,18 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     this.forget(offer.conversationId, offer.requesterId);
     const conversationKey = key(offer.conversationId);
     const byRequester = this.offers.get(conversationKey) ?? new Map<string, PendingOffer>();
+    // A newer question to the same requester replaces the open one, whose message is closed.
+    const replaced = byRequester.get(key(offer.requesterId));
+    if (replaced?.messageId && replaced.messageId !== offer.messageId) this.endPrompt(replaced, "replaced");
     byRequester.set(key(offer.requesterId), offer);
     this.offers.set(conversationKey, byRequester);
     if (offer.id && offer.messageId) {
       const entry = this.promptEntry(conversationKey, offer.messageId);
       // A re-stored offer (asked again after an acknowledgement) keeps what its message had.
-      if (entry.prompt?.offerId !== offer.id) entry.prompt = { offerId: offer.id, requesterId: offer.requesterId, answered: false };
+      if (entry.prompt?.offerId !== offer.id) {
+        entry.prompt = { offerId: offer.id, requesterId: offer.requesterId, answered: false, closed: false };
+        entry.question = offer.question;
+      }
     }
   }
 
@@ -69,6 +81,23 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     for (const entry of this.prompts.get(key(conversationId))?.values() ?? []) {
       if (entry.prompt?.offerId === offerId) entry.prompt.answered = true;
     }
+  }
+
+  claimClose(conversationId: QualifiedId, messageId: string): { question?: string } | null {
+    const entry = this.prompts.get(key(conversationId))?.get(messageId);
+    if (!entry?.prompt || entry.prompt.closed) return null;
+    entry.prompt.closed = true;
+    return entry.question !== undefined ? { question: entry.question } : {};
+  }
+
+  takeEndedPrompts(): EndedOfferPrompt[] {
+    const ended = this.ended;
+    this.ended = [];
+    return ended;
+  }
+
+  sweepExpired(now: Date): void {
+    this.purgeExpired(now);
   }
 
   claimNotice(conversationId: QualifiedId, messageId: string, notice: OfferPromptNotice): boolean {
@@ -99,6 +128,8 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     this.offers.delete(key(conversationId));
     this.dropped.delete(key(conversationId));
     this.prompts.delete(key(conversationId));
+    // The bot has left: its messages there can no longer be edited.
+    this.ended = this.ended.filter((prompt) => key(prompt.conversationId) !== key(conversationId));
   }
 
   drop(conversationId: QualifiedId, requesterId: QualifiedId, now: Date = new Date()): OfferCommand | null {
@@ -130,8 +161,17 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     if (!offer) return null;
     if (isLive(offer, now)) return offer;
     this.remove(conversationId, requesterId);
+    this.endPrompt(offer, "expired");
     this.remember(conversationId, requesterId, offer.command, offer.expiresAt);
     return null;
+  }
+
+  /** Queues the offer's button message for closing, unless it is unknown or already closed. */
+  private endPrompt(offer: PendingOffer, reason: OfferPromptEnding): void {
+    if (!offer.messageId) return;
+    const closing = this.claimClose(offer.conversationId, offer.messageId);
+    if (!closing) return;
+    this.ended.push({ conversationId: offer.conversationId, messageId: offer.messageId, ...closing, reason });
   }
 
   /** The entry for a button message, created when absent; bounded per conversation. */
@@ -170,12 +210,16 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     if (byRequester.size === 0) this.dropped.delete(conversationKey);
   }
 
-  /** Remembers expired offers as of their expiry and forgets drops older than `RECENT_DROP_MS`. */
+  /**
+   * Remembers expired offers as of their expiry, queues their button messages for closing and
+   * forgets drops older than `RECENT_DROP_MS`.
+   */
   private purgeExpired(now: Date): void {
     for (const [conversationKey, byRequester] of this.offers) {
       for (const [requesterKey, offer] of byRequester) {
         if (isLive(offer, now)) continue;
         byRequester.delete(requesterKey);
+        this.endPrompt(offer, "expired");
         const remembered = this.dropped.get(conversationKey) ?? new Map<string, DroppedOffer>();
         remembered.set(requesterKey, { command: withoutFileRef(offer.command), droppedAt: offer.expiresAt });
         this.dropped.set(conversationKey, remembered);

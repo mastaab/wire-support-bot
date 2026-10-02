@@ -74,6 +74,13 @@ export interface WireOutboundPort {
   sendButtonConfirmation(conversationId: QualifiedId, referenceMessageId: string, buttonId: string): Promise<void>;
 
   /**
+   * Replaces the bot's button message `messageId` with `text` and no buttons, for every member,
+   * so a question that has ended stops inviting clicks. The whole message is replaced: clients
+   * ignore a text-only edit of a button message.
+   */
+  closeButtonPrompt(conversationId: QualifiedId, messageId: string, text: string): Promise<void>;
+
+  /**
    * Runs `work` while the conversation shows the app as typing, and returns its result. The
    * indicator never delays, blocks or breaks the work, and it is cleared when the work ends,
    * however it ends; refreshing and overlapping work are the transport's concern.
