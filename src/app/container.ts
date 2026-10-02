@@ -116,7 +116,6 @@ export function createContainer(config: Config, logger: Logger): Container {
   const listSupportRequests = new ListSupportRequests(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger);
   // Shared by resolve and the watch, so a resolve from Wire is never announced as the desk's.
   const supportRequestWrites = new SupportRequestWrites();
-  const resolveSupportRequest = new ResolveSupportRequest(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, supportRequestWrites);
   const replyToServiceDesk = new ReplyToServiceDesk(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger);
   // Direct conversations between requester and desk agent: groups the app creates and leaves.
   // The router ignores a group until the app has left it; a leave still owed is retried at
@@ -158,8 +157,8 @@ export function createContainer(config: Config, logger: Logger): Container {
     })
     : undefined;
   if (agentHandles && !watchSupportRequests) logger.warn("WIRE_SUPPORT_BOT_JIRA_AGENTS needs WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS; direct conversations are off");
-  // Satisfaction ratings follow the [Solved] answers of the questions after a desk update, so they
-  // need those questions (and the watch that asks them); the rating question lives as long.
+  // Satisfaction ratings follow the [Solved] answer of the question after a desk update and every
+  // resolve from Wire; they need those questions (and the watch that asks them) and live as long.
   const feedbackOn = jira.feedback && !!deskUpdateQuestions && !!watchSupportRequests;
   if (jira.feedback && !feedbackOn) {
     logger.warn("WIRE_SUPPORT_BOT_JIRA_FEEDBACK needs the watch and WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS above 0; ratings are off");
@@ -170,6 +169,10 @@ export function createContainer(config: Config, logger: Logger): Container {
       submit: new SubmitFeedback(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger),
     }
     : undefined;
+  // Every resolve from Wire that reached done asks the requester for a rating, when ratings are on.
+  const resolveSupportRequest = new ResolveSupportRequest(
+    supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, supportRequestWrites, feedback?.questions,
+  );
   // Photos and documents to the service desk: offered only with passive help, since a file cannot carry a mention.
   const attachFileToRequest = new AttachFileToRequest(supportRequestsRepo, issueTracker, createWireAssetAdapter(handlerRef), wireOutbound, auditLogRepo, logger);
   const offerAttachment = passiveOn ? new OfferAttachment(supportRequestsRepo, pendingOffers, wireOutbound, logger) : undefined;

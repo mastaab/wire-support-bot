@@ -61,9 +61,9 @@ export interface OfferChoice {
    */
   then?: ChoiceAction;
   /**
-   * Set on an option of a desk-update question that means the requester is satisfied ([Solved],
-   * [Solved, close it]): with satisfaction ratings on, the bot asks for a rating afterwards (after
-   * [Solved, close it] only once the request was resolved).
+   * Set on an option of a desk-update question that means the requester is satisfied without a
+   * write ([Solved]): with satisfaction ratings on, the bot asks for a rating afterwards. [Solved,
+   * close it] does not need it: every resolve that reached done asks for a rating itself.
    */
   asksFeedback?: boolean;
 }
@@ -123,7 +123,7 @@ export interface PendingOffer {
    * Set on a question the bot asks the requester about a request on its own: after posting a desk
    * update ([Reply] [Solved, close it], or [Solved] [Still broken]), about the direct conversation
    * with a newly assigned agent ([Open direct chat] [Not now]), or for a satisfaction rating after
-   * [Solved] ([1] to [5]). It lives longer than other offers, is never asked over another open
+   * [Solved] or a resolve from Wire ([1] to [5]). It lives longer than other offers, is never asked over another open
    * question, and a newer question replaces it. A text answer picks an option or says "no"; any
    * other message is not an answer.
    */

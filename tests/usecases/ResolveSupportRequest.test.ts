@@ -1,10 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ResolveSupportRequest } from "../../src/application/usecases/jira/ResolveSupportRequest";
 import { REPLY_BODY_MAX } from "../../src/application/services/offers";
 import { SupportRequestWrites } from "../../src/application/services/SupportRequestWrites";
 import { IssueTrackerError } from "../../src/application/ports/IssueTrackerPort";
 import type { SupportRequest } from "../../src/domain/entities/SupportRequest";
-import { OUT_OF_SCOPE, bob, convId, makeAudit, makeLogger, makeRequest, makeRequests, makeSnapshot, makeTracker, makeWire, sentRefFor } from "./supportRequestFakes";
+import { OUT_OF_SCOPE, alice, bob, convId, makeAudit, makeLogger, makeRequest, makeRequests, makeSnapshot, makeTracker, makeWire, sentRefFor } from "./supportRequestFakes";
 
 const done = makeSnapshot({ statusCategory: "done", slas: [{ name: "Time to done", state: "met", elapsed: "3m", goal: "16h" }] });
 
@@ -358,5 +358,101 @@ describe("ResolveSupportRequest: last message reference", () => {
     expect(sent).toEqual(["Resolved **SD-6** with the service desk.\nTime to done: met in 3m (target 16h)"]);
     expect(logger.warn).toHaveBeenCalledWith("ResolveSupportRequest: storing the last message failed", { key: "SD-6", err: "Error" });
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("SECRET-DB-DETAIL");
+  });
+});
+
+describe("ResolveSupportRequest: the rating question", () => {
+  function withFeedback(records: SupportRequest[] = [makeRequest()]) {
+    const requests = makeRequests(records);
+    const tracker = makeTracker();
+    tracker.resolveIssue.mockResolvedValue(done);
+    const { wire, sent } = makeWire();
+    const logger = makeLogger();
+    const feedback = { ask: vi.fn().mockResolvedValue(true) };
+    const useCase = new ResolveSupportRequest(requests, tracker, wire, makeAudit(), logger, new SupportRequestWrites(), feedback);
+    return { requests, tracker, wire, sent, logger, feedback, useCase };
+  }
+  const askedRequester = {
+    target: { issueKey: "SD-6", summary: "VPN drops every ten minutes" }, conversationId: convId, requesterId: alice, requesterName: "Alice",
+  };
+
+  it("asks the request's requester after a resolve that reached done, also when another member resolved it, after the resolution reply", async () => {
+    const { wire, feedback, useCase } = withFeedback();
+
+    expect(await useCase.execute(base)).toEqual(done);
+
+    expect(feedback.ask).toHaveBeenCalledExactlyOnceWith(askedRequester);
+    expect(wire.sendPlainText.mock.invocationCallOrder[0]!).toBeLessThan(feedback.ask.mock.invocationCallOrder[0]!);
+  });
+
+  it("asks after a resolve with a closing comment", async () => {
+    const { feedback, useCase } = withFeedback();
+
+    await useCase.execute({ ...base, comment: "Works again." });
+
+    expect(feedback.ask).toHaveBeenCalledExactlyOnceWith(askedRequester);
+  });
+
+  it("asks without a name when the request has none", async () => {
+    const { feedback, useCase } = withFeedback([makeRequest({ requesterName: "" })]);
+
+    await useCase.execute(base);
+
+    expect(feedback.ask).toHaveBeenCalledExactlyOnceWith({ target: askedRequester.target, conversationId: convId, requesterId: alice });
+  });
+
+  it("asks after resolving a request the desk reopened", async () => {
+    const { tracker, feedback, useCase } = withFeedback([makeRequest({ statusCategory: "done" })]);
+    tracker.getIssue.mockResolvedValue(makeSnapshot({ statusCategory: "in_progress" }));
+
+    await useCase.execute(base);
+
+    expect(feedback.ask).toHaveBeenCalledOnce();
+  });
+
+  it("asks nothing when the request is already resolved", async () => {
+    const { tracker, feedback, useCase } = withFeedback([makeRequest({ statusCategory: "done" })]);
+    tracker.getIssue.mockResolvedValue(done);
+
+    expect(await useCase.execute(base)).toBeNull();
+
+    expect(feedback.ask).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing when the resolve failed or stopped short of done", async () => {
+    const failed = withFeedback();
+    failed.tracker.resolveIssue.mockRejectedValue(new IssueTrackerError("conflict", 409));
+    await failed.useCase.execute(base);
+    expect(failed.feedback.ask).not.toHaveBeenCalled();
+
+    const short = withFeedback();
+    short.tracker.resolveIssue.mockResolvedValue(makeSnapshot({ statusCategory: "in_progress" }));
+    await short.useCase.execute(base);
+    expect(short.feedback.ask).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing when the closing comment is refused, empty or the key is out of scope", async () => {
+    const refused = withFeedback();
+    refused.tracker.addCustomerReply.mockRejectedValue(new IssueTrackerError("bad request", 400));
+    await refused.useCase.execute({ ...base, comment: "Works again." });
+    expect(refused.feedback.ask).not.toHaveBeenCalled();
+
+    const empty = withFeedback();
+    await empty.useCase.execute({ ...base, comment: "   " });
+    expect(empty.feedback.ask).not.toHaveBeenCalled();
+
+    const outside = withFeedback();
+    await outside.useCase.execute({ ...base, issueKey: "SD-99" });
+    expect(outside.feedback.ask).not.toHaveBeenCalled();
+  });
+
+  it("keeps the resolve when asking fails, logging the error name only", async () => {
+    const { feedback, logger, sent, useCase } = withFeedback();
+    feedback.ask.mockRejectedValue(new TypeError("boom"));
+
+    expect(await useCase.execute(base)).toEqual(done);
+
+    expect(sent).toEqual(["Resolved **SD-6** with the service desk.\nTime to done: met in 3m (target 16h)"]);
+    expect(logger.warn).toHaveBeenCalledWith("ResolveSupportRequest: asking for a rating failed", { key: "SD-6", err: "TypeError" });
   });
 });

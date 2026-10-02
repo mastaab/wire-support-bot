@@ -405,12 +405,13 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
 
   /**
    * Rates the request through the experimental feedback endpoint (it needs the opt-in header),
-   * with the rating only and no comment. A rating outside 1 to 5 is refused without calling Jira.
+   * as a customer satisfaction rating (`type` "csat") with the rating only and no comment. A rating
+   * outside 1 to 5 is refused without calling Jira.
    */
   async submitFeedback(key: string, rating: number): Promise<void> {
     this.assertInProject(key);
     if (!isFeedbackRating(rating)) throw new IssueTrackerError("Feedback rating must be a whole number from 1 to 5");
-    await this.request("POST", `/rest/servicedeskapi/request/${key}/feedback`, { rating }, false, { "X-ExperimentalApi": "opt-in" });
+    await this.request("POST", `/rest/servicedeskapi/request/${key}/feedback`, { type: "csat", rating }, false, { "X-ExperimentalApi": "opt-in" });
   }
 
   private async requireIssue(key: string): Promise<IssueSnapshot> {

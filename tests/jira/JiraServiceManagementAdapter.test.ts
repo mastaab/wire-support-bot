@@ -460,7 +460,7 @@ describe("JiraServiceManagementAdapter.addCustomerReply", () => {
 describe("JiraServiceManagementAdapter.submitFeedback", () => {
   const POST_FEEDBACK = "POST /rest/servicedeskapi/request/SD-1/feedback";
 
-  it.each([1, 2, 3, 4, 5])("posts the rating %s to the experimental feedback endpoint with the opt-in header, without a comment", async (rating) => {
+  it.each([1, 2, 3, 4, 5])("posts the rating %s as a csat rating to the experimental feedback endpoint with the opt-in header, without a comment", async (rating) => {
     const fetch = stubJira({ [POST_FEEDBACK]: [json({ type: "csat", rating }, 200)] });
     await adapter().submitFeedback("SD-1", rating);
     expect(calls(fetch)).toEqual([POST_FEEDBACK]);
@@ -469,7 +469,8 @@ describe("JiraServiceManagementAdapter.submitFeedback", () => {
       Authorization: "Bearer synthetic-token", Accept: "application/json", "Accept-Language": "en-GB",
       "X-ExperimentalApi": "opt-in", "Content-Type": "application/json",
     });
-    expect(JSON.parse(init.body as string)).toEqual({ rating });
+    expect(JSON.parse(init.body as string)).toEqual({ type: "csat", rating });
+    expect(init.body as string).toContain('"type":"csat"');
   });
 
   it("accepts an empty success response", async () => {

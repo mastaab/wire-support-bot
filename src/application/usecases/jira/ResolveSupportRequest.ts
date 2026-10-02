@@ -7,6 +7,7 @@ import type { IssueSnapshot, IssueTrackerPort } from "../../ports/IssueTrackerPo
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
 import { REPLY_BODY_MAX } from "../../services/offers";
+import type { FeedbackQuestions } from "../../services/feedbackQuestions";
 import { SupportRequestWrites } from "../../services/SupportRequestWrites";
 import { REPLY_FOOTER, formatResolution } from "./formatIssue";
 import { findSupportRequestInConversation } from "./supportRequestScope";
@@ -35,6 +36,11 @@ export interface ResolveSupportRequestInput {
  * A closing comment is sent first, so the desk never sees a closed request without the
  * explanation: when it is refused or its delivery cannot be confirmed, nothing is resolved.
  * The comment is sent to the ticket only; it is never stored, logged or audited.
+ *
+ * With satisfaction ratings on, a resolve that reached done is followed by the rating question to
+ * the request's requester, whoever resolved it. Every resolve from Wire (the resolve command, a
+ * yes to a resolve offer, [Solved, close it]) runs here, so the question is asked once per resolve.
+ * A failed resolve, or a request found already resolved, asks nothing.
  */
 export class ResolveSupportRequest {
   constructor(
@@ -45,6 +51,8 @@ export class ResolveSupportRequest {
     private readonly logger?: Logger,
     /** Shared with the watch, which skips a request while it is being resolved here. */
     private readonly writes: SupportRequestWrites = new SupportRequestWrites(),
+    /** The rating question after a resolve (WIRE_SUPPORT_BOT_JIRA_FEEDBACK=on); absent asks nothing. */
+    private readonly feedback?: Pick<FeedbackQuestions, "ask">,
   ) {}
 
   /** The final snapshot, or null when nothing was resolved. Exactly one Wire message is sent. */
@@ -138,7 +146,27 @@ export class ResolveSupportRequest {
       await appendAuditSafely(this.auditLog, { ...entry, details: { statusCategory: snapshot.statusCategory } }, "ResolveSupportRequest", this.logger);
     }
     await replyAbout(resolutionReply(snapshot, comment));
+    if (snapshot.statusCategory === "done") await this.askFeedback(request);
     return snapshot;
+  }
+
+  /**
+   * Asks the request's requester for a satisfaction rating, when ratings are on. The question
+   * names them, since another member may have resolved it. A failure is logged by error name and
+   * never changes the resolve.
+   */
+  private async askFeedback(request: SupportRequest): Promise<void> {
+    if (!this.feedback) return;
+    try {
+      await this.feedback.ask({
+        target: { issueKey: request.key, summary: request.summary },
+        conversationId: request.conversationId,
+        requesterId: request.requesterId,
+        ...(request.requesterName.trim() ? { requesterName: request.requesterName } : {}),
+      });
+    } catch (err) {
+      this.logger?.warn("ResolveSupportRequest: asking for a rating failed", { key: request.key, err: err instanceof Error ? err.name : "UnknownError" });
+    }
   }
 
   /**

@@ -41,7 +41,6 @@ export function deskUpdateChoices(kind: DeskUpdateKind, issueKey: string): Offer
         label: "Solved, close it",
         answers: ["solved", "solved, close it", "close it", "close", "resolve it", "resolve"],
         command: { kind: "resolve", issueKey },
-        asksFeedback: true,
       },
     ];
   }

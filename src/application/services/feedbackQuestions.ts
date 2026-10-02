@@ -8,8 +8,10 @@ import { closeEndedOfferPrompts } from "./offerPromptClosing";
 
 /**
  * The satisfaction rating after a solved request (WIRE_SUPPORT_BOT_JIRA_FEEDBACK=on). When the
- * requester answers [Solved] to a desk-update question, or [Solved, close it] resolved the request,
- * the bot asks how the service desk did, [1] to [5]. A rating is sent to the request's feedback in
+ * requester answers [Solved] to a desk-update question, or any resolve from Wire reached done (the
+ * resolve command, a yes to a resolve offer, [Solved, close it]; asked by `ResolveSupportRequest`,
+ * also when another member resolved), the bot asks the request's requester how the service desk
+ * did, [1] to [5]. A rating is sent to the request's feedback in
  * Jira by `SubmitFeedback`; "no" or any other message only ends the question. Like a desk-update
  * question it goes only to the requester, lives as long as one, is not asked over another open
  * question of theirs, and a newer question replaces it.

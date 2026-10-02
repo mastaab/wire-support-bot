@@ -36,8 +36,9 @@ export interface ConfirmOfferHandlers {
   /** Opens the agent conversation for [Open direct chat]; absent when the question is never asked. */
   agentConversation?: Pick<AskForAgentConversation, "accept">;
   /**
-   * Satisfaction ratings (WIRE_SUPPORT_BOT_JIRA_FEEDBACK=on): the question asked after [Solved] or
-   * a resolving [Solved, close it], and sending the picked rating. Absent: no rating is asked.
+   * Satisfaction ratings (WIRE_SUPPORT_BOT_JIRA_FEEDBACK=on): the question asked after [Solved],
+   * and sending the picked rating. Absent: no rating is asked or sent. A resolve, also a resolving
+   * [Solved, close it], is followed by the question in `ResolveSupportRequest`.
    */
   feedback?: { questions: Pick<FeedbackQuestions, "ask">; submit: Pick<SubmitFeedback, "execute"> };
 }
@@ -367,12 +368,12 @@ export class ConfirmOffer {
         });
         break;
       case "resolve": {
-        const resolved = await this.handlers.resolveSupportRequest.execute({
+        // A resolve that reached done asks the request's requester for a rating itself, so a
+        // resolving [Solved, close it] is not asked about here as well.
+        await this.handlers.resolveSupportRequest.execute({
           issueKey: command.issueKey, conversationId, actorId, replyToMessageId,
           ...(command.comment ? { comment: command.comment } : {}),
         });
-        // [Solved, close it] that resolved the request: the requester is satisfied.
-        if (choice?.asksFeedback && offer.deskUpdate && resolved?.statusCategory === "done") await this.askFeedback(offer.deskUpdate, context);
         break;
       }
       case "attach":

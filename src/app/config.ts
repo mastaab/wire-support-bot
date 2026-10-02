@@ -117,7 +117,7 @@ export interface JiraConfig {
   agentChat: AgentChatMode;
   /**
    * Whether the bot asks the requester for a satisfaction rating (1 to 5) after they answered
-   * [Solved] or a resolving [Solved, close it], and sends it to the request's feedback in Jira
+   * [Solved] or after any resolve from Wire, and sends it to the request's feedback in Jira
    * (WIRE_SUPPORT_BOT_JIRA_FEEDBACK). Off by default. Needs the questions after a desk update.
    */
   feedback: boolean;
