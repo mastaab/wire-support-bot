@@ -122,6 +122,15 @@ describe("resolveJiraConfig", () => {
     }
   });
 
+  it("reads satisfaction ratings as on or off, off by default", () => {
+    expect(resolveJiraConfig(full)!.feedback).toBe(false);
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_FEEDBACK: "on" })!.feedback).toBe(true);
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_FEEDBACK: " OFF " })!.feedback).toBe(false);
+    for (const bad of ["yes", "1", "true"]) {
+      expect(() => resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_FEEDBACK: bad })).toThrow("WIRE_SUPPORT_BOT_JIRA_FEEDBACK must be on or off");
+    }
+  });
+
   it("switches to Basic auth when an email is configured", () => {
     expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_EMAIL: "bot@example.com" })!.email).toBe("bot@example.com");
   });

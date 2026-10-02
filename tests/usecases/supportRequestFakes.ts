@@ -76,6 +76,7 @@ export function makeTracker() {
     addCustomerReply: vi.fn().mockResolvedValue(undefined),
     listChangedSince: vi.fn().mockResolvedValue([]),
     addCustomerAttachment: vi.fn().mockResolvedValue(undefined),
+    submitFeedback: vi.fn().mockResolvedValue(undefined),
   };
 }
 

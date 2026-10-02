@@ -60,6 +60,12 @@ export interface OfferChoice {
    * the direct conversation with the desk agent; its `command` is null.
    */
   then?: ChoiceAction;
+  /**
+   * Set on an option of a desk-update question that means the requester is satisfied ([Solved],
+   * [Solved, close it]): with satisfaction ratings on, the bot asks for a rating afterwards (after
+   * [Solved, close it] only once the request was resolved).
+   */
+  asksFeedback?: boolean;
 }
 
 /**
@@ -68,7 +74,9 @@ export interface OfferChoice {
  */
 export type ChoiceAction =
   /** Open the direct conversation between the requester and the assigned desk agent. */
-  | { kind: "openAgentChat"; issueKey: string; agentHandle: string };
+  | { kind: "openAgentChat"; issueKey: string; agentHandle: string }
+  /** Send the requester's satisfaction rating (1 to 5) to the request's feedback. */
+  | { kind: "rate"; issueKey: string; rating: number };
 
 /** Which question asks for the reply text: after [Reply], or after [Still broken]. */
 export type ReplyTextPrompt = "reply" | "stillBroken";
@@ -112,11 +120,12 @@ export interface PendingOffer {
    */
   fillsPart?: ChoosablePartDetail;
   /**
-   * Set on a question the watch asks the requester about a request: after posting a desk update
-   * ([Reply] [Solved, close it], or [Solved] [Still broken]), or about the direct conversation with
-   * a newly assigned agent ([Open direct chat] [Not now]). It lives longer than other offers, is
-   * never asked over another open question, and a newer question replaces it. A text answer picks
-   * an option or says "no"; any other message is not an answer.
+   * Set on a question the bot asks the requester about a request on its own: after posting a desk
+   * update ([Reply] [Solved, close it], or [Solved] [Still broken]), about the direct conversation
+   * with a newly assigned agent ([Open direct chat] [Not now]), or for a satisfaction rating after
+   * [Solved] ([1] to [5]). It lives longer than other offers, is never asked over another open
+   * question, and a newer question replaces it. A text answer picks an option or says "no"; any
+   * other message is not an answer.
    */
   deskUpdate?: DeskUpdateTarget;
   /**

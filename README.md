@@ -102,6 +102,10 @@ After posting an update, the bot asks the request's requester what to do next, i
 
 The question goes only to the requester; the usual button rules apply (only they can answer, their first click decides, text answers "reply", "solved", "still broken" or "no" work too). It is never the request's last message, so the next update still quotes the update itself. It can be answered for `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` (4 hours by default), since an update may be read hours later, and is closed as expired after that. It never gets in the way of the requester's other questions: it is not asked while the requester has another open question in the conversation, a newer question to them replaces it (closed with "This question was replaced by a newer one."), a file they post (with passive help on) replaces it, and their next message that is not an answer closes it and is handled as usual. It is asked with passive help on or off: it is the bot's own question about the requester's request, and mentioning the bot with a command keeps working either way.
 
+### Satisfaction rating
+
+With `WIRE_SUPPORT_BOT_JIRA_FEEDBACK=on` (off by default), the bot asks for a rating when the requester answers [Solved] (or "solved") to the question after a resolve, and after a [Solved, close it] that resolved the request: "Alice, how did the service desk do on **SD-42**? 1 is poor, 5 is great." [1] [2] [3] [4] [5]. A click or a typed number sends the rating, without a comment, to the request's satisfaction feedback in Jira Service Management and closes the question with "Answered by Alice: 4"; nothing else is posted. "no" or any other message only ends the question. If Jira refuses or fails the rating (for example feedback is turned off in the project, or the bot's account may not rate), the bot posts "I couldn't send the rating to the service desk." and nothing else changes. The question follows the rules of the questions after a desk update: only the requester can answer, it lives `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS`, and it is not asked over another open question of the requester. Ratings need those questions (the watch on and that setting above 0). The bot uses Jira's experimental feedback endpoint (`/rest/servicedeskapi/request/{key}/feedback` with the header `X-ExperimentalApi: opt-in`), which Atlassian may change.
+
 ### Direct conversation with the assigned agent
 
 With `WIRE_SUPPORT_BOT_JIRA_AGENTS` mapping Jira account IDs to Wire handles, and the watch on, the bot reacts once per request when a mapped agent is assigned to an open request. What it does depends on `WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT`:
@@ -130,7 +134,7 @@ The explicit commands (`support:`, `reply to`, `resolve`) are themselves the mem
 
 ### Buttons
 
-Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered and ranked by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update or about the agent conversation.
+Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered and ranked by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update, about the agent conversation or for a rating.
 
 The click rules:
 
@@ -168,7 +172,7 @@ Sent to the model endpoint:
 
 With the default local endpoint nothing leaves the host. With a remote provider, all of the above goes to that provider.
 
-Sent to Jira: only what a member wrote in a command or confirmed in an offer, plus the requester's display name ("Requested by <name> via Wire."). New tickets carry the label `wire-support-bot`, and replies, closing comments and attachments carry the footer "Sent from Wire.". Internal notes are never read or written.
+Sent to Jira: only what a member wrote in a command or confirmed in an offer, plus the requester's display name ("Requested by <name> via Wire."), and with ratings on, the rating the requester picked. New tickets carry the label `wire-support-bot`, and replies, closing comments and attachments carry the footer "Sent from Wire.". Internal notes are never read or written.
 
 ### The watch
 
@@ -208,6 +212,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/application/services/botCommandLines.ts` | Replaces answer lines that suggest a bot command that does not exist with a supported command line. |
 | `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
 | `src/application/services/deskUpdateQuestions.ts` | The requester's question after a desk reply or resolve: texts, options, lifetime, and not asking over another open question. |
+| `src/application/services/feedbackQuestions.ts`, `src/application/usecases/jira/SubmitFeedback.ts` | The satisfaction rating after [Solved], and sending it to Jira. |
 | `src/application/services/offerPromptClosing.ts` | Closes ended button questions: the closing lines, one edit per message, the expiry sweep. |
 | `src/application/services/similarRequests.ts` | Ranks the conversation's requests that may describe the same problem as a new one. |
 | `src/application/services/partOrderSteps.ts` | A part order's questions, one step at a time: free-text essentials, quantity and delivery location buttons, the complete order. |
@@ -386,7 +391,8 @@ All settings are environment variables; `.env.example` lists them with comments.
 |---|---|---|---|
 | `WIRE_SUPPORT_BOT_JIRA_PASSIVE` | no | `off` | `on` lets the bot read unaddressed messages, offer to raise, add to or resolve requests, and offer to attach files. |
 | `WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS` | no | unset (no watch) | Seconds between checks for desk replies, status and assignee changes; a whole number, at least 15. |
-| `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` | no | `4` | Hours the requester can answer the question after a desk reply or resolve; a whole number from 0 to 72, `0` asks no such questions. Needs the watch. |
+| `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` | no | `4` | Hours the requester can answer the question after a desk reply or resolve, and the rating question; a whole number from 0 to 72, `0` asks no such questions. Needs the watch. |
+| `WIRE_SUPPORT_BOT_JIRA_FEEDBACK` | no | `off` | `on` asks the requester for a satisfaction rating (1 to 5) after [Solved] or a resolving [Solved, close it] and sends it to the request's feedback in Jira. Needs the watch and the questions after a desk update. |
 
 ### Logging and conversations
 

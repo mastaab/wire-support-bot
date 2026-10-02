@@ -34,6 +34,8 @@ import { createWireConversationAdapter } from "../infrastructure/wire/WireConver
 import { OpenAgentConversation } from "../application/usecases/jira/OpenAgentConversation";
 import { LeavePendingAgentGroups } from "../application/usecases/jira/LeavePendingAgentGroups";
 import { AskForAgentConversation } from "../application/usecases/jira/AskForAgentConversation";
+import { SubmitFeedback } from "../application/usecases/jira/SubmitFeedback";
+import { FeedbackQuestions } from "../application/services/feedbackQuestions";
 import { startIntervalRunner, type IntervalRunner } from "./intervalRunner";
 import { startOfferPromptSweep } from "./offerPromptSweep";
 import { getPrismaClient } from "../infrastructure/persistence/postgres/PrismaClient";
@@ -156,6 +158,18 @@ export function createContainer(config: Config, logger: Logger): Container {
     })
     : undefined;
   if (agentHandles && !watchSupportRequests) logger.warn("WIRE_SUPPORT_BOT_JIRA_AGENTS needs WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS; direct conversations are off");
+  // Satisfaction ratings follow the [Solved] answers of the questions after a desk update, so they
+  // need those questions (and the watch that asks them); the rating question lives as long.
+  const feedbackOn = jira.feedback && !!deskUpdateQuestions && !!watchSupportRequests;
+  if (jira.feedback && !feedbackOn) {
+    logger.warn("WIRE_SUPPORT_BOT_JIRA_FEEDBACK needs the watch and WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS above 0; ratings are off");
+  }
+  const feedback = feedbackOn
+    ? {
+      questions: new FeedbackQuestions({ offers: pendingOffers, wireOutbound, lifetimeMs: questionHours * 60 * 60 * 1000, logger }),
+      submit: new SubmitFeedback(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger),
+    }
+    : undefined;
   // Photos and documents to the service desk: offered only with passive help, since a file cannot carry a mention.
   const attachFileToRequest = new AttachFileToRequest(supportRequestsRepo, issueTracker, createWireAssetAdapter(handlerRef), wireOutbound, auditLogRepo, logger);
   const offerAttachment = passiveOn ? new OfferAttachment(supportRequestsRepo, pendingOffers, wireOutbound, logger) : undefined;
@@ -164,6 +178,7 @@ export function createContainer(config: Config, logger: Logger): Container {
     {
       raiseSupportRequest, replyToServiceDesk, resolveSupportRequest, attachFileToRequest,
       ...(askForAgentConversation ? { agentConversation: askForAgentConversation } : {}),
+      ...(feedback ? { feedback } : {}),
     },
     wireOutbound, undefined, config.partAsset, config.partDeliveryLocations, logger,
   );

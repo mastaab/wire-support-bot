@@ -115,6 +115,12 @@ export interface JiraConfig {
    * Default "ask". Only used with `agents` and the watch; with "off", `agents` is left out.
    */
   agentChat: AgentChatMode;
+  /**
+   * Whether the bot asks the requester for a satisfaction rating (1 to 5) after they answered
+   * [Solved] or a resolving [Solved, close it], and sends it to the request's feedback in Jira
+   * (WIRE_SUPPORT_BOT_JIRA_FEEDBACK). Off by default. Needs the questions after a desk update.
+   */
+  feedback: boolean;
 }
 
 /** Longest lifetime of a question after a desk update, in hours. */
@@ -174,6 +180,8 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
   if (agentChat !== "ask" && agentChat !== "auto" && agentChat !== "off") {
     throw new Error("WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT must be ask, auto or off");
   }
+  const feedback = (value("WIRE_SUPPORT_BOT_JIRA_FEEDBACK") ?? "off").toLowerCase();
+  if (feedback !== "on" && feedback !== "off") throw new Error("WIRE_SUPPORT_BOT_JIRA_FEEDBACK must be on or off");
   const questionHoursRaw = value("WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS");
   if (questionHoursRaw !== undefined && (!/^\d+$/.test(questionHoursRaw) || parseInt(questionHoursRaw, 10) > UPDATE_QUESTION_HOURS_MAX)) {
     throw new Error(`WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS must be a whole number of hours from 0 to ${UPDATE_QUESTION_HOURS_MAX}`);
@@ -196,6 +204,7 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
     // With the agent conversation off, the mapping is not used at all.
     ...(agents && agentChat !== "off" ? { agents } : {}),
     agentChat,
+    feedback: feedback === "on",
   };
 }
 

@@ -100,6 +100,20 @@ export interface IssueTrackerPort {
    * internal note). The bytes are sent and not kept; failures never include the file or body.
    */
   addCustomerAttachment(key: string, file: AttachmentFile, comment: string): Promise<void>;
+  /**
+   * Sends the requester's satisfaction rating (a whole number from 1 to 5, see `FEEDBACK_RATINGS`)
+   * to the request's feedback, without a comment. Rejected by the tracker when feedback is turned
+   * off for the project or not allowed for the bot's account.
+   */
+  submitFeedback(key: string, rating: number): Promise<void>;
+}
+
+/** The satisfaction ratings the service desk accepts, lowest first. */
+export const FEEDBACK_RATINGS: readonly number[] = [1, 2, 3, 4, 5];
+
+/** True for a rating the service desk accepts. */
+export function isFeedbackRating(rating: number): boolean {
+  return FEEDBACK_RATINGS.includes(rating);
 }
 
 /** A file to attach, held in memory only. */

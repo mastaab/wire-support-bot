@@ -20,6 +20,8 @@ import type { ReplyToServiceDesk } from "./ReplyToServiceDesk";
 import type { ResolveSupportRequest } from "./ResolveSupportRequest";
 import type { AttachFileToRequest } from "./AttachFileToRequest";
 import type { AskForAgentConversation } from "./AskForAgentConversation";
+import type { SubmitFeedback } from "./SubmitFeedback";
+import type { FeedbackQuestions } from "../../services/feedbackQuestions";
 import { describeFile } from "../../services/attachments";
 
 export type Confirmation = "yes" | "no";
@@ -33,6 +35,11 @@ export interface ConfirmOfferHandlers {
   attachFileToRequest?: AttachFileToRequest;
   /** Opens the agent conversation for [Open direct chat]; absent when the question is never asked. */
   agentConversation?: Pick<AskForAgentConversation, "accept">;
+  /**
+   * Satisfaction ratings (WIRE_SUPPORT_BOT_JIRA_FEEDBACK=on): the question asked after [Solved] or
+   * a resolving [Solved, close it], and sending the picked rating. Absent: no rating is asked.
+   */
+  feedback?: { questions: Pick<FeedbackQuestions, "ask">; submit: Pick<SubmitFeedback, "execute"> };
 }
 
 export interface ConfirmOfferInput {
@@ -321,6 +328,8 @@ export class ConfirmOffer {
     if (!command) {
       // A desk-update question's [Solved] or "no" changes nothing; its closing line says so.
       if (!offer.deskUpdate) await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
+      // [Solved]: the requester is satisfied, so the bot may ask for a rating.
+      if (choice?.asksFeedback && offer.deskUpdate) await this.askFeedback(offer.deskUpdate, context);
       return;
     }
 
@@ -357,12 +366,15 @@ export class ConfirmOffer {
           reference: command.issueKey, body: command.body, conversationId, actorId, replyToMessageId,
         });
         break;
-      case "resolve":
-        await this.handlers.resolveSupportRequest.execute({
+      case "resolve": {
+        const resolved = await this.handlers.resolveSupportRequest.execute({
           issueKey: command.issueKey, conversationId, actorId, replyToMessageId,
           ...(command.comment ? { comment: command.comment } : {}),
         });
+        // [Solved, close it] that resolved the request: the requester is satisfied.
+        if (choice?.asksFeedback && offer.deskUpdate && resolved?.statusCategory === "done") await this.askFeedback(offer.deskUpdate, context);
         break;
+      }
       case "attach":
         if (!this.handlers.attachFileToRequest) {
           await this.wireOutbound.sendPlainText(conversationId, "I'm afraid I can't add files to requests here, so nothing was sent.", { replyToMessageId });
@@ -391,6 +403,30 @@ export class ConfirmOffer {
           requesterId: context.requesterId, replyToMessageId: context.replyToMessageId,
         });
         return;
+      case "rate":
+        if (!this.handlers.feedback) {
+          await this.wireOutbound.sendPlainText(context.conversationId, "I'm afraid I can't send ratings to the service desk here.", {
+            replyToMessageId: context.replyToMessageId,
+          });
+          return;
+        }
+        await this.handlers.feedback.submit.execute({
+          issueKey: action.issueKey, rating: action.rating, conversationId: context.conversationId,
+          actorId: context.requesterId, replyToMessageId: context.replyToMessageId,
+        });
+        return;
+    }
+  }
+
+  /** Asks the requester for a satisfaction rating of the request, when ratings are on. Never fails the answer. */
+  private async askFeedback(target: DeskUpdateTarget, context: AnswerContext): Promise<void> {
+    if (!this.handlers.feedback) return;
+    try {
+      await this.handlers.feedback.questions.ask({
+        target, conversationId: context.conversationId, requesterId: context.requesterId, requesterName: context.requesterName,
+      });
+    } catch (err) {
+      this.logger?.warn("ConfirmOffer: asking for a rating failed", { err: err instanceof Error ? err.name : "UnknownError" });
     }
   }
 

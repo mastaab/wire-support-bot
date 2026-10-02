@@ -41,11 +41,15 @@ export function deskUpdateChoices(kind: DeskUpdateKind, issueKey: string): Offer
         label: "Solved, close it",
         answers: ["solved", "solved, close it", "close it", "close", "resolve it", "resolve"],
         command: { kind: "resolve", issueKey },
+        asksFeedback: true,
       },
     ];
   }
   return [
-    { label: "Solved", answers: ["solved", "yes", "fixed", "it's solved", "it is solved", "it's fixed", "it is fixed"], command: null },
+    {
+      label: "Solved", answers: ["solved", "yes", "fixed", "it's solved", "it is solved", "it's fixed", "it is fixed"], command: null,
+      asksFeedback: true,
+    },
     {
       label: "Still broken",
       answers: ["still broken", "broken", "not solved", "not fixed", "still not working", "not working"],

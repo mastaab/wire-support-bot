@@ -106,6 +106,7 @@ function setup(options: SetupOptions = {}) {
     addCustomerReply: vi.fn(),
     listChangedSince: vi.fn(async () => []),
     addCustomerAttachment: vi.fn(async () => undefined),
+    submitFeedback: vi.fn(async () => undefined),
     ...options.tracker,
   } satisfies IssueTrackerPort;
   const audited: AuditLogEntry[] = [];

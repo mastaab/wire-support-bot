@@ -7,7 +7,7 @@ const BASE = "https://api.test/ex/jira/cloud";
 const config: JiraConfig = {
   baseUrl: BASE, siteUrl: "https://site.test", apiToken: "synthetic-token",
   projectKey: "SD", serviceDeskId: "5", requestTypes: { fault: "101" }, timeoutMs: 1000,
-  shareWithModel: false, passive: false, agentChat: "ask",
+  shareWithModel: false, passive: false, agentChat: "ask", feedback: false,
 };
 const MARKER = "PRIVATE_BODY_MARKER";
 
@@ -454,6 +454,60 @@ describe("JiraServiceManagementAdapter.addCustomerReply", () => {
     expect((error as Error).message).toBe(message);
     expect(JSON.stringify(error)).not.toContain(MARKER);
     expect(JSON.stringify([log.warn.mock.calls, log.info.mock.calls, log.error.mock.calls, log.debug.mock.calls])).not.toContain(MARKER);
+  });
+});
+
+describe("JiraServiceManagementAdapter.submitFeedback", () => {
+  const POST_FEEDBACK = "POST /rest/servicedeskapi/request/SD-1/feedback";
+
+  it.each([1, 2, 3, 4, 5])("posts the rating %s to the experimental feedback endpoint with the opt-in header, without a comment", async (rating) => {
+    const fetch = stubJira({ [POST_FEEDBACK]: [json({ type: "csat", rating }, 200)] });
+    await adapter().submitFeedback("SD-1", rating);
+    expect(calls(fetch)).toEqual([POST_FEEDBACK]);
+    const init = fetch.mock.calls[0][1];
+    expect(init.headers).toEqual({
+      Authorization: "Bearer synthetic-token", Accept: "application/json", "Accept-Language": "en-GB",
+      "X-ExperimentalApi": "opt-in", "Content-Type": "application/json",
+    });
+    expect(JSON.parse(init.body as string)).toEqual({ rating });
+  });
+
+  it("accepts an empty success response", async () => {
+    stubJira({ [POST_FEEDBACK]: [empty(204)] });
+    await expect(adapter().submitFeedback("SD-1", 5)).resolves.toBeUndefined();
+  });
+
+  it.each([0, 6, 2.5, Number.NaN])("refuses the rating %s without calling Jira", async (rating) => {
+    const fetch = stubJira({});
+    await expect(adapter().submitFeedback("SD-1", rating)).rejects.toThrow("Feedback rating must be a whole number from 1 to 5");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects keys outside the project without calling Jira", async () => {
+    const fetch = stubJira({});
+    await expect(adapter().submitFeedback("OPS-1", 4)).rejects.toThrow("Issue key is outside the configured project");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, "Jira request failed (400)"],
+    [403, "Jira rejected the credentials or scopes (403)"],
+    [404, "Jira request failed (404)"],
+    [500, "Jira request failed (500)"],
+  ])("maps a %s failure to its status, without the response body", async (status, message) => {
+    const log = logger();
+    stubJira({ [POST_FEEDBACK]: [json({ errorMessage: `Feedback is disabled ${MARKER}` }, status)] });
+    const error = await adapter(log).submitFeedback("SD-1", 3).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(IssueTrackerError);
+    expect((error as IssueTrackerError).message).toBe(message);
+    expect((error as IssueTrackerError).status).toBe(status);
+    expect(JSON.stringify(error)).not.toContain(MARKER);
+    expect(JSON.stringify([log.warn.mock.calls, log.info.mock.calls, log.error.mock.calls, log.debug.mock.calls])).not.toContain(MARKER);
+  });
+
+  it("maps a timeout", async () => {
+    stubJira({ [POST_FEEDBACK]: [() => { throw Object.assign(new Error("aborted"), { name: "AbortError" }); }] });
+    await expect(adapter().submitFeedback("SD-1", 3)).rejects.toThrow("Jira request timed out");
   });
 });
 
