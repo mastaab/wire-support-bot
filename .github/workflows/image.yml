@@ -1,0 +1,102 @@
+# Builds the container image and pushes it to quay.io/wire/wire-support-bot.
+#
+# Repository secrets (Settings > Secrets and variables > Actions):
+#   QUAY_USERNAME  name of a quay.io robot account with write access to the repository
+#   QUAY_PASSWORD  token of that robot account
+# Pull requests only build (no login, no push), so they need neither secret.
+#
+# Tags:
+#   push to main     main, sha-<short sha>
+#   tag v<semver>    <version>, <major>.<minor>, latest (latest not for pre-releases)
+#   pull request     pr-<number> (built, never pushed)
+name: Image
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref; a new commit on a pull request cancels the older run.
+# Runs on main and on tags always finish, so every pushed commit gets its image.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: quay.io/wire/wire-support-bot
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # Same install as the Dockerfile: --ignore-scripts stops npm 10 from running an
+      # implicit `node-gyp rebuild` for better-sqlite3 (prebuilt binaries ship in its
+      # tarball); Prisma is the only dependency whose install hooks we need.
+      - run: npm ci --ignore-scripts --no-audit
+      - run: npm rebuild prisma @prisma/client @prisma/engines
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          # latest only from a release tag, never from main.
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=branch
+            type=sha,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
+            type=ref,event=pr
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Login only for events that push.
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      # linux/amd64 only: the @wireapp/core-crypto native library ships for x86-64 only.
+      # provenance and sbom stay at the action defaults (minimal provenance, no SBOM).
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
