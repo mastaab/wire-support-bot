@@ -356,7 +356,7 @@ How the chart runs the bot:
 
 ### Container image
 
-The workflow `.github/workflows/image.yml` builds the image from the `Dockerfile` and pushes it to `quay.io/wire/wire-support-bot`, for `linux/amd64` only (the Wire SDK's native crypto library is built for x86-64). A push to `main` publishes the tags `main` and `sha-<commit>`; a tag `v1.2.3` publishes `1.2.3`, `1.2` and `latest`; pull requests build the image without publishing it. The chart uses the tag of its `appVersion` unless `image.tag` is set. The workflow needs the repository secrets `QUAY_USERNAME` and `QUAY_PASSWORD` of a quay.io robot account with write access.
+The workflow `.github/workflows/image.yml` builds the image from the `Dockerfile`, for `linux/amd64` only (the Wire SDK's native crypto library is built for x86-64). Only a version tag publishes it to `quay.io/wire/wire-support-bot`: a tag `v1.2.3` publishes `1.2.3`, `1.2` and `latest` (no `latest` for a pre-release such as `v1.2.3-rc.1`). Pushes to `main`, pull requests and manual runs test and build the image without publishing it. The chart uses the tag of its `appVersion` unless `image.tag` is set. The workflow needs the repository secrets `QUAY_USERNAME` and `QUAY_PASSWORD` of a quay.io robot account with write access.
 
 To use your own registry, build and push the image yourself and set `image.repository` (and `imagePullSecrets` for a private registry):
 
