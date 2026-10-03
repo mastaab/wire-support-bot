@@ -60,6 +60,27 @@ Every choice can also be answered by text: with the request key ("SD-41"), "new"
 A question with buttons shows the choices as buttons and leaves out the text answer hint (such as "(yes or no)?" or "(SD-38, new or cancel)?"). The text answers (yes, no, the request key, new, cancel, the option's number) still work. Clients without composite-message support show the question without the hint, and members can still answer there in text. When the bot asks again in text after an unclear answer, that question names the text answers.
 Questions that ask for no change ("what was the VPN request called?") get an answer from the recent conversation and the conversation's support requests. When the bot's latest message among the last three ended with a question, the next message is treated as a follow-up even without a mention.
 
+### First-level help
+
+With the document index on (`WIRE_SUPPORT_BOT_KNOWLEDGE=on`, see "The built-in document index"), a member who mentions the bot with a problem gets an answer from the curated documents with their source, and under it a short question: "Alice, did this help?" [Solved] [Raise a ticket].
+
+- When it is asked: after an answer to a mention or a follow-up that used at least one excerpt of the document index and made no offer, when the member's message describes a fault. A how-to question ("how do I reset the engine check light?") and a message that names a request ("any news on SD-42?") never get it. For other messages the bot asks the support triage that passive help uses (one more call to the `classify` model slot, also with passive help off), and only a message it drafts as a fault gets the question, not a question to the service desk, a part order, a status question or small talk. It is not asked while the member has another open question in the conversation.
+- [Solved] (or "solved", "yes", "it helped", "thanks") closes the question with "Answered by Alice: Solved", and nothing else happens.
+- [Raise a ticket] (or "raise a ticket", "ticket", "no", "still broken") closes it with "Answered by Alice: Raise a ticket" and offers to raise the problem, as the triage drafted it, with [Yes] [No] like any other offer. Nothing reaches the service desk before that yes.
+- The usual button rules apply: only the member who asked can answer, and their first click decides. Any other message from them closes the question ("Closed, as the next message was not an answer.") and is handled as usual, and a newer question to them replaces it. It can be answered for `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` (4 hours by default, and also when that setting is `0`), since trying a fix can take a while, and is closed as expired after that.
+
+For example:
+
+```text
+Alice: @Wire Support Bot the engine check light is on and truck 12 loses power
+Bot:   With the engine check light on and reduced power, stop in a safe place and call the fleet desk. (Dashboard warning lights, Yellow lights > Engine check light)
+Bot:   Alice, did this help?  [Solved] [Raise a ticket]
+Alice: (clicks [Raise a ticket])
+Bot:   Shall I report this to the service desk?
+       > **Engine check light on, truck 12 loses power**
+       > The engine check light is on and truck 12 loses power.  [Yes] [No]
+```
+
 ### Passive help
 
 With `WIRE_SUPPORT_BOT_JIRA_PASSIVE=on`, messages that do not mention the bot are classified by the model. When the classifier is confident (0.8 or more) that a message concerns the service desk, the bot may:
@@ -134,7 +155,7 @@ The explicit commands (`support:`, `reply to`, `resolve`) are themselves the mem
 
 ### Buttons
 
-Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered and ranked by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update, about the agent conversation or for a rating.
+Every offer question is a Wire composite message: the question's text plus buttons. A button's ID carries no content, only the offer's random ID and the option's number; a click is matched by the clicked message and checked against the stored offer, so a key or text is never taken from the click itself. Code builds the options from validated data: [Yes] and [No], the candidate requests of a choice (the conversation's own requests, filtered and ranked by code; a request the model names counts only if it is one of them) plus "new", "cancel" or "do not attach", or a part order's quick quantities and configured delivery locations plus "other", or the fixed options of a question after a desk update, about the agent conversation, for a rating or after an answer from the document index ("Did this help?").
 
 The click rules:
 
@@ -175,6 +196,7 @@ Metrics (see "Metrics"), when turned on, are counts, durations and a few current
 Sent to the model endpoint:
 
 - for an answer: the member's message, up to nine earlier messages with the senders' display names, the conversation's member names and IDs, the requester, the conversation's stored support request records, and with the document index on, the matching excerpts with their sources;
+- with the document index on, after an answer that used an excerpt and made no offer: the member's message once more, to the support triage, to decide whether it describes a fault (see "First-level help");
 - for passive help: the message, recent messages from members, and the key and summary of open requests;
 - ticket content (live status, SLAs and up to three recent desk replies per ticket) only when `WIRE_SUPPORT_BOT_JIRA_SHARE_WITH_MODEL=on`.
 
@@ -271,7 +293,7 @@ The seam covers the answer path, which needs a mention. Suggesting knowledge for
 
 #### The built-in document index
 
-With `WIRE_SUPPORT_BOT_KNOWLEDGE=on` the bot answers from curated documents (manuals, troubleshooting guides, FAQs) in Markdown or plain text. A member who mentions the bot with a problem or a question gets an answer that uses the matching excerpts and names their source, for example "Dashboard warning lights, Yellow lights > Engine check light". If that does not solve the problem, the member asks the bot to raise a ticket and gets the usual offer: the bot proposes, a person decides.
+With `WIRE_SUPPORT_BOT_KNOWLEDGE=on` the bot answers from curated documents (manuals, troubleshooting guides, FAQs) in Markdown or plain text. A member who mentions the bot with a problem or a question gets an answer that uses the matching excerpts and names their source, for example "Dashboard warning lights, Yellow lights > Engine check light". For a problem, the bot then asks "Did this help?" with [Solved] and [Raise a ticket] (see "First-level help"); [Raise a ticket], or asking the bot to raise a ticket at any time, leads to the usual offer: the bot proposes, a person decides.
 
 - Ingestion: `npm run knowledge:ingest -- <directory>` reads every `.md`, `.markdown` and `.txt` file in the directory and its subdirectories (names starting with a dot are skipped). A document's title is its first `# ` heading, else the file name. Each section under a heading becomes an excerpt (a chunk) with its heading path below the title; a section longer than about 3,000 characters (about 750 tokens) is split at paragraphs, lines, sentences or spaces, never inside a word, and each further part starts with the end of the one before. Every chunk is embedded together with its title and heading path, and stored in Postgres with its embedding.
 - The directory is the full set: a run adds new documents, skips unchanged ones (same content hash and embedding model), replaces changed ones and removes the documents that are no longer in the directory. A directory without documents is refused, so a wrong path cannot empty the index. The command prints a summary such as `4 added, 0 updated, 0 unchanged, 0 removed; 30 chunks (30 embedded)` and no document content, and exits with code 1 on an error; a failed run keeps the documents stored so far, and the next run continues. It uses the bot's settings and `.env`, needs the database and the embeddings endpoint (not Wire or Jira), and also runs while `WIRE_SUPPORT_BOT_KNOWLEDGE` is off, so you can fill the index before you turn it on.
@@ -591,7 +613,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 
 | Setting | Required | Default | Meaning |
 |---|---|---|---|
-| `WIRE_SUPPORT_BOT_KNOWLEDGE` | no | `off` | `on` lets answers use the ingested documents (see "The built-in document index"). Off, the bot makes no embedding call. |
+| `WIRE_SUPPORT_BOT_KNOWLEDGE` | no | `off` | `on` lets answers use the ingested documents (see "The built-in document index") and asks "Did this help?" after an answer to a problem (see "First-level help"). Off, the bot makes no embedding call. |
 | `WIRE_SUPPORT_BOT_EMBED_BASE_URL` | no | `WIRE_SUPPORT_BOT_LLM_BASE_URL` | OpenAI-compatible endpoint for embeddings (http or https); `/embeddings` is appended. Questions and document excerpts are sent to it. |
 | `WIRE_SUPPORT_BOT_EMBED_API_KEY` | no | `WIRE_SUPPORT_BOT_LLM_API_KEY` | Sent as a Bearer token to the embeddings endpoint. |
 | `WIRE_SUPPORT_BOT_EMBED_MODEL` | no | `qwen3-embedding:0.6b` | Embedding model, for the ingestion and the search alike; after a change, run the ingestion again. |
@@ -631,7 +653,7 @@ The embeddings requests use `WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS`. The settings are 
 |---|---|---|---|
 | `WIRE_SUPPORT_BOT_JIRA_PASSIVE` | no | `off` | `on` lets the bot read unaddressed messages, offer to raise, add to or resolve requests, and offer to attach files. |
 | `WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS` | no | unset (no watch) | Seconds between checks for desk replies, status and assignee changes; a whole number, at least 15. |
-| `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` | no | `4` | Hours the requester can answer the question after a desk reply or resolve, and the rating question; a whole number from 0 to 72, `0` asks no such questions. Needs the watch. |
+| `WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS` | no | `4` | Hours the requester can answer the question after a desk reply or resolve, and the rating question; a whole number from 0 to 72, `0` asks no such questions. Needs the watch. Also the lifetime of the question about the agent conversation and of "Did this help?", which keep 4 hours when it is `0`. |
 | `WIRE_SUPPORT_BOT_JIRA_FEEDBACK` | no | `off` | `on` asks the requester for a satisfaction rating (1 to 5) after [Solved] or any resolve from Wire and sends it to the request's feedback in Jira. Needs the watch and the questions after a desk update. Ratings need customer satisfaction enabled in the service desk project's settings. |
 
 ### Logging and conversations
@@ -695,12 +717,13 @@ Every metric name starts with `wire_support_bot_`. The Node runtime metrics of p
 | `wire_support_bot_support_requests_raised_total` | counter | `kind`: `question`, `part`, `fault` | Requests raised with the service desk. |
 | `wire_support_bot_support_replies_sent_total` | counter | | Replies sent to the service desk from Wire. |
 | `wire_support_bot_support_requests_resolved_total` | counter | | Resolves from Wire that reached done. |
-| `wire_support_bot_offers_total` | counter | `event`: `made`, `accepted`, `declined`, `expired` | Offers and questions put to a member (yes-or-no offers, choices, part-order steps, questions after a desk update, ratings) and how they ended. Offers replaced, dropped or lost on a restart are not counted as ended. |
+| `wire_support_bot_offers_total` | counter | `event`: `made`, `accepted`, `declined`, `expired` | Offers and questions put to a member (yes-or-no offers, choices, part-order steps, questions after a desk update, ratings, "Did this help?") and how they ended. Offers replaced, dropped or lost on a restart are not counted as ended. |
 | `wire_support_bot_button_clicks_total` | counter | `outcome`: `accepted`, `not_asked`, `late`, `invalid` | Button clicks: the deciding click, a click by a member who was not asked, a click on a question that is no longer open, a button that does not belong to the question. |
 | `wire_support_bot_ratings_total` | counter | `outcome`: `ok`, `refused`, `unconfirmed`, `not_sent` | Satisfaction ratings: accepted, rejected by Jira, a timeout or server error (it may have arrived), or stopped before Jira. |
 | `wire_support_bot_pending_offers` | gauge | | Offers and questions waiting for an answer, read at each scrape. |
 | `wire_support_bot_queue_length` | gauge | | Messages waiting in the passive-help queue, read at each scrape; 0 with passive help off. |
 | `wire_support_bot_knowledge_retrievals_total` | counter | `outcome`: `hit`, `miss`, `error` | Searches of the document index for an answer: at least one excerpt passed on, none similar enough (or an empty index), or the question could not be embedded or the index not read. Only with the document index on. |
+| `wire_support_bot_knowledge_help_answers_total` | counter | `outcome`: `solved`, `ticket`, `ended`, `expired` | How "Did this help?" after an answer from the document index ended: [Solved] or a text answer for it, [Raise a ticket] or a text answer for it (which leads to the raise offer, counted in `wire_support_bot_offers_total`), another message, a file or a newer question ended it without a decision, or it was not answered in time. |
 | `wire_support_bot_knowledge_chunks` | gauge | | Excerpts of the document index loaded for searching, read at each scrape; 0 with the index off. |
 
 The counters with labels start at 0 for every label value, so rates and absence checks work from the start. The metrics carry no content and no IDs (see "What is stored and what is sent where").

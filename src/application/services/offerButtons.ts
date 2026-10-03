@@ -137,6 +137,25 @@ export function doNotAttachChoice(): OfferChoice {
   return { label: "Do not attach", answers: ["no", ...DECLINES.filter((answer) => answer !== "no"), "do not attach", "don't attach", "dont attach"], command: null };
 }
 
+/**
+ * True for a question the bot asks on its own rather than an offer the member asked for: a
+ * question after a desk update, about the agent conversation, for a rating, or "Did this help?".
+ * A text answer picks one of its options (or says "no"); any other message is not an answer.
+ */
+export function isOwnQuestion(offer: Pick<PendingOffer, "deskUpdate" | "knowledgeHelp">): boolean {
+  return !!offer.deskUpdate || !!offer.knowledgeHelp;
+}
+
+/**
+ * True when the member's live offer holds their question slot, so a question the bot asks on its
+ * own is not asked over it: any offer or question except one the bot asked on its own, which a
+ * newer question replaces. The question about the agent conversation (`keepsSlot`) holds it, since
+ * it is asked once per request.
+ */
+export function holdsQuestionSlot(live: Pick<PendingOffer, "deskUpdate" | "knowledgeHelp" | "keepsSlot"> | null): boolean {
+  return !!live && (!isOwnQuestion(live) || !!live.keepsSlot);
+}
+
 /** True for a choice offer, false for a yes-or-no offer. */
 export function isChoiceOffer(offer: Pick<PendingOffer, "choices">): boolean {
   return offer.choices !== undefined;

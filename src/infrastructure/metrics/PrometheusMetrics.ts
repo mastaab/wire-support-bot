@@ -8,7 +8,7 @@
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
 import { SUPPORT_REQUEST_KINDS } from "../../domain/entities/SupportRequest";
 import {
-  BUTTON_CLICK_OUTCOMES, JIRA_OPERATIONS, JIRA_OUTCOMES, KNOWLEDGE_RETRIEVAL_OUTCOMES, MODEL_CALL_OUTCOMES, MODEL_SLOTS, OFFER_EVENTS, RATING_OUTCOMES,
+  BUTTON_CLICK_OUTCOMES, JIRA_OPERATIONS, JIRA_OUTCOMES, KNOWLEDGE_HELP_OUTCOMES, KNOWLEDGE_RETRIEVAL_OUTCOMES, MODEL_CALL_OUTCOMES, MODEL_SLOTS, OFFER_EVENTS, RATING_OUTCOMES,
   WATCH_CHECK_OUTCOMES, WIRE_CONNECTION_EVENTS, WIRE_MESSAGE_KINDS, WIRE_SDK_PROBLEMS, WIRE_WATCHDOG_ACTIONS,
   type CollectedGauge, type MetricsPort,
 } from "../../application/ports/MetricsPort";
@@ -86,6 +86,9 @@ export function createPrometheusMetrics(): PrometheusMetrics {
   const retrievals = counter("knowledge_retrievals_total", "Searches of the document index for an answer, by outcome.", {
     outcome: KNOWLEDGE_RETRIEVAL_OUTCOMES,
   });
+  const helpAnswers = counter("knowledge_help_answers_total", "Answers to \"Did this help?\" after an answer from the document index, by outcome.", {
+    outcome: KNOWLEDGE_HELP_OUTCOMES,
+  });
 
   // Gauges read on collection; a reader that throws leaves the gauge at its last value.
   const readers = new Map<CollectedGauge, () => number>();
@@ -129,6 +132,7 @@ export function createPrometheusMetrics(): PrometheusMetrics {
     buttonClick: (outcome) => clicks.inc({ outcome }),
     ratingSent: (outcome) => ratings.inc({ outcome }),
     knowledgeRetrieval: (outcome) => retrievals.inc({ outcome }),
+    knowledgeHelpAnswer: (outcome) => helpAnswers.inc({ outcome }),
     collect: (gauge, read) => { readers.set(gauge, read); },
   };
 

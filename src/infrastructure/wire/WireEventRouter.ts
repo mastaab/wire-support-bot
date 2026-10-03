@@ -63,6 +63,7 @@ type HandledKind = "text" | "file" | "button_click";
 /**
  * The route a text message took, on its `Message handled` line:
  * - `offer_answer`: a yes, no, picked option or reply text answered the sender's pending offer.
+ * - `knowledge_help_answer`: a text answer picked [Solved] or [Raise a ticket] after "Did this help?".
  * - `part_order_answer`: the message completed or corrected the sender's part-order draft.
  * - `multiple_commands`: several commands in one message; none was run.
  * - `timezone`: the channel's timezone was set or shown.
@@ -74,7 +75,7 @@ type HandledKind = "text" | "file" | "button_click";
  * - `ignored`: nothing was done (not addressed with passive help off, or a group the bot created).
  */
 type TextRoute =
-  | "offer_answer" | "part_order_answer" | "multiple_commands" | "timezone"
+  | "offer_answer" | "knowledge_help_answer" | "part_order_answer" | "multiple_commands" | "timezone"
   | "support_command" | "resolve_command" | "reply_command" | "list_command" | "status_lookup"
   | "answer" | "passive" | "ignored";
 
@@ -327,7 +328,7 @@ export class WireEventRouter extends WireEventsHandler {
         // entry after it, so the offer's "(yes or no)?" no longer counts as the bot's latest
         // question: otherwise the requester's next message would be taken as a follow-up.
         this.recordHandled(convId, wireMessage.id, sender, senderDisplayName, text, "(Answered the offer above.)");
-        trace.route = "offer_answer";
+        trace.route = live?.knowledgeHelp ? "knowledge_help_answer" : "offer_answer";
         return;
       }
       droppedOffer = pendingOffers.drop(convId, sender) ?? undefined;
@@ -799,7 +800,7 @@ export class WireEventRouter extends WireEventsHandler {
       });
       // An option that writes or opens a conversation is work the requester waits for; declining is not.
       const chosen = decision?.command || live.choices?.[parsed.index]?.then ? await this.typing(convId, run) : await run();
-      outcome = { chosen };
+      outcome = { chosen, ...(live.knowledgeHelp ? { question: "knowledge_help" } : {}) };
       // Like a text answer: the requester's next interaction, which closes the offer for the
       // answer model and ends the question as the bot's latest.
       offers.forgetDropped(convId, sender);

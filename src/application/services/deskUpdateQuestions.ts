@@ -3,7 +3,7 @@ import type { QualifiedId } from "../../domain/ids/QualifiedId";
 import type { DeskUpdateTarget, OfferChoice, OfferCommand, PendingOfferStore, ReplyTextPrompt } from "../ports/PendingOfferPort";
 import type { SentMessageRef, WireOutboundPort } from "../ports/WireOutboundPort";
 import type { Logger } from "../ports/Logger";
-import { newOfferId, offerPromptFields, sendOfferPrompt, withoutAnswerHint } from "./offerButtons";
+import { holdsQuestionSlot, newOfferId, offerPromptFields, sendOfferPrompt, withoutAnswerHint } from "./offerButtons";
 import { REPLACED_LINE, closeEndedOfferPrompts, closedPromptText } from "./offerPromptClosing";
 
 /**
@@ -146,12 +146,12 @@ export class DeskUpdateQuestions {
   }
 
   /**
-   * True when the requester has an open question other than a desk-update question; the question
-   * about the agent conversation (`keepsSlot`) also counts, since it is asked once per request.
+   * True when the requester has an open question other than one the bot asked on its own (a
+   * desk-update question, a rating, "Did this help?"); the question about the agent conversation
+   * (`keepsSlot`) also counts, since it is asked once per request.
    */
   private busy(conversationId: QualifiedId, requesterId: QualifiedId): boolean {
-    const live = this.deps.offers.find(conversationId, requesterId, this.now());
-    return !!live && (!live.deskUpdate || !!live.keepsSlot);
+    return holdsQuestionSlot(this.deps.offers.find(conversationId, requesterId, this.now()));
   }
 
   private async closeUnstored(conversationId: QualifiedId, messageId: string, question: string): Promise<void> {

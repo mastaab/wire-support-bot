@@ -83,6 +83,15 @@ export type RatingOutcome = (typeof RATING_OUTCOMES)[number];
 export const KNOWLEDGE_RETRIEVAL_OUTCOMES = ["hit", "miss", "error"] as const;
 export type KnowledgeRetrievalOutcome = (typeof KNOWLEDGE_RETRIEVAL_OUTCOMES)[number];
 
+/**
+ * How the question "Did this help?" after an answer from the document index ended: solved
+ * ([Solved] or a text answer such as "thanks"), ticket ([Raise a ticket], which leads to the raise
+ * offer), ended (another message, a file or a newer question ended it without a decision),
+ * expired (unanswered in time).
+ */
+export const KNOWLEDGE_HELP_OUTCOMES = ["solved", "ticket", "ended", "expired"] as const;
+export type KnowledgeHelpOutcome = (typeof KNOWLEDGE_HELP_OUTCOMES)[number];
+
 /** Values read when metrics are collected, not recorded as events. */
 export const COLLECTED_GAUGES = ["pending_offers", "queue_length", "knowledge_chunks"] as const;
 export type CollectedGauge = (typeof COLLECTED_GAUGES)[number];
@@ -105,6 +114,7 @@ export interface MetricsPort {
   buttonClick(outcome: ButtonClickOutcome): void;
   ratingSent(outcome: RatingOutcome): void;
   knowledgeRetrieval(outcome: KnowledgeRetrievalOutcome): void;
+  knowledgeHelpAnswer(outcome: KnowledgeHelpOutcome): void;
   /** Registers how a gauge is read; it is called each time metrics are collected. */
   collect(gauge: CollectedGauge, read: () => number): void;
 }
@@ -127,6 +137,7 @@ export const NO_METRICS: MetricsPort = {
   buttonClick: ignore,
   ratingSent: ignore,
   knowledgeRetrieval: ignore,
+  knowledgeHelpAnswer: ignore,
   collect: ignore,
 };
 

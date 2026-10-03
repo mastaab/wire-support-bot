@@ -3,12 +3,12 @@ import { DEFAULT_PART_ASSET } from "../../../domain/entities/SupportRequest";
 import type { PartAssetWording } from "../../../domain/entities/SupportRequest";
 import {
   NOTHING_TO_CONFIRM_REPLY, OFFER_TTL_MS, REPLY_BODY_MAX, formatChooseAgain, formatReplyQuestion, formatStillMissingReply,
-  missingPartDetails, offerCommandLine,
+  formatSupportQuestion, missingPartDetails, offerCommandLine,
 } from "../../services/offers";
 import type { OfferCommand, PendingOffer, PendingOfferStore } from "../../services/offers";
-import type { ChoiceAction, DeskUpdateTarget, OfferChoice, ReplyTextPrompt } from "../../ports/PendingOfferPort";
+import type { ChoiceAction, DeskUpdateTarget, OfferChoice, ReplyTextPrompt, SupportOfferCommand } from "../../ports/PendingOfferPort";
 import {
-  YES_NO_LABELS, answerForms, choiceHint, decisionAt, matchChoice, newOfferId, offerPromptFields, sendOfferPrompt,
+  YES_NO_LABELS, answerForms, choiceHint, decisionAt, isOwnQuestion, matchChoice, newOfferId, offerPromptFields, sendOfferPrompt,
 } from "../../services/offerButtons";
 import { REPLY_TEXT_CANCELED, replyTextQuestion } from "../../services/deskUpdateQuestions";
 import { answeredLine, closeOfferPrompt } from "../../services/offerPromptClosing";
@@ -196,9 +196,10 @@ export class ConfirmOffer {
   /** A text answer to a choice offer: an option runs, a bare yes or acknowledgment asks again, anything else is not an answer. */
   private async answerChoice(live: PendingOffer, choices: readonly OfferChoice[], input: ConfirmOfferInput, now: Date): Promise<boolean> {
     const index = matchChoice(choices, input.text);
-    if (index === null && live.deskUpdate) {
-      // A desk-update question is answered by an option or a "no"; anything else is the
-      // requester moving on, also a "yes" or "thanks", which may be meant for the desk's reply.
+    if (index === null && isOwnQuestion(live)) {
+      // A question the bot asked on its own (after a desk update, "Did this help?") is answered by
+      // an option or a "no"; anything else is the requester moving on, also a "yes" or "thanks"
+      // to a desk-update question, which may be meant for the desk's reply.
       if (classifyConfirmation(input.text) !== "no") return false;
       const offer = this.offers.take(input.conversationId, input.requesterId, now);
       if (!offer) return false;
@@ -318,6 +319,7 @@ export class ConfirmOffer {
   ): Promise<void> {
     const asksReplyText = choice?.asksReplyText;
     this.metrics.offer(command || asksReplyText || choice?.then ? "accepted" : "declined");
+    if (offer.knowledgeHelp) this.metrics.knowledgeHelpAnswer(choice?.then?.kind === "offerRaise" ? "ticket" : "solved");
     if (offer.id) this.offers.markAnswered(offer.conversationId, offer.id);
     const { conversationId, requesterId: actorId, replyToMessageId } = context;
     await closeOfferPrompt(
@@ -333,8 +335,9 @@ export class ConfirmOffer {
       return;
     }
     if (!command) {
-      // A desk-update question's [Solved] or "no" changes nothing; its closing line says so.
-      if (!offer.deskUpdate) await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
+      // A desk-update question's [Solved] or "no", and [Solved] after "Did this help?", change
+      // nothing; the closing line says so.
+      if (!isOwnQuestion(offer)) await this.wireOutbound.sendPlainText(conversationId, "Understood, I won't.", { replyToMessageId });
       // [Solved]: the requester is satisfied, so the bot may ask for a rating.
       if (choice?.asksFeedback && offer.deskUpdate) await this.askFeedback(offer.deskUpdate, context);
       return;
@@ -422,7 +425,25 @@ export class ConfirmOffer {
           actorId: context.requesterId, replyToMessageId: context.replyToMessageId,
         });
         return;
+      case "offerRaise":
+        await this.offerRaise(action.command, context);
+        return;
     }
+  }
+
+  /**
+   * After [Raise a ticket] on "Did this help?": offers to raise the drafted request with [Yes] [No],
+   * as the answer path does. Nothing reaches Jira before that yes; `RaiseSupportRequest` runs then.
+   */
+  private async offerRaise(command: SupportOfferCommand, context: AnswerContext): Promise<void> {
+    const question = formatSupportQuestion(command.summary, command.description, command.requestKind, command.part, this.partAsset);
+    const offerId = newOfferId();
+    const sent = await sendOfferPrompt(this.wireOutbound, context.conversationId, question, offerId, undefined, context.replyToMessageId);
+    const at = this.now();
+    this.offers.put({
+      command, conversationId: context.conversationId, requesterId: context.requesterId,
+      createdAt: at, expiresAt: new Date(at.getTime() + OFFER_TTL_MS), ...offerPromptFields(offerId, sent, question),
+    });
   }
 
   /** Asks the requester for a satisfaction rating of the request, when ratings are on. Never fails the answer. */

@@ -27,6 +27,7 @@ import { fillMissingPartDetails, statedPartDetails } from "../../services/partDe
 import { newOfferId, offerPromptFields, sendOfferPrompt } from "../../services/offerButtons";
 import { partOrderStep } from "../../services/partOrderSteps";
 import type { PartOrderStep } from "../../services/partOrderSteps";
+import type { KnowledgeHelpQuestions } from "../../services/knowledgeHelpQuestions";
 
 /**
  * Scans `text` for `@Name` tokens and returns Wire mention objects with UTF-16 offsets.
@@ -99,6 +100,11 @@ export interface AnswerQuestionJira {
    * when a proposed part order lacks essentials; without it the bot asks for them.
    */
   partDetails?: Pick<SupportTriagePort, "extractPartDetails">;
+  /**
+   * "Did this help?" after an answer that used a knowledge article (the document index on): asked
+   * when the member's message describes a problem and the answer made no offer. Absent: never asked.
+   */
+  knowledgeHelp?: Pick<KnowledgeHelpQuestions, "ask">;
   now?: () => Date;
 }
 
@@ -209,6 +215,8 @@ export class AnswerQuestion {
 
   async execute(input: AnswerQuestionInput): Promise<string> {
     let retrievalResults: RetrievalResult[] = [];
+    // Knowledge articles passed to the model, which make the answer one "Did this help?" may follow.
+    let articles = 0;
 
     if (this.retrieval) {
       try {
@@ -221,6 +229,7 @@ export class AnswerQuestion {
         // Non-fatal: answer without the source's results rather than failing.
         this.logger?.warn("AnswerQuestion: retrieval failed, answering without it", { err: (err instanceof Error ? err.name : "UnknownError") });
       }
+      articles = retrievalResults.filter((result) => result.type === "knowledge_article").length;
     }
 
     const now = (this.jira.now ?? (() => new Date()))();
@@ -269,6 +278,7 @@ export class AnswerQuestion {
     if (!prepared) {
       const sent = await this.send(input, text, true);
       await this.rememberAnswer(this.jira, input, text, sent, live);
+      if (articles > 0 && parsed.text) await this.askWhetherItHelped(input);
       return text;
     }
 
@@ -291,6 +301,35 @@ export class AnswerQuestion {
       await rememberLastMessage(this.jira.requests, prepared.requestKey, sent, "AnswerQuestion", this.logger);
     }
     return prepared.question;
+  }
+
+  /**
+   * After an answer that used a knowledge article and made no offer: asks the member "Did this
+   * help?" when their message may describe a problem. A how-to question ("how do I reset the
+   * dashboard?") and a message about a named request ("any news on SD-42?") are not one, and are
+   * never sent to the triage; `KnowledgeHelpQuestions` asks only when the triage drafts a fault.
+   * Never fails the answer.
+   */
+  private async askWhetherItHelped(input: AnswerQuestionInput): Promise<void> {
+    const help = this.jira.knowledgeHelp;
+    const requester = input.requester;
+    if (!help || !requester?.domain || input.amendOnly) return;
+    const question = input.question.trim();
+    if (HOW_TO_QUESTION.test(question) || namedKeys(question, this.jira.tracker.projectKey).length > 0) {
+      this.logger?.debug("AnswerQuestion: not a problem description; not asking whether the answer helped");
+      return;
+    }
+    try {
+      await help.ask({
+        message: question,
+        conversationId: input.conversationId,
+        requesterId: { id: requester.id, domain: requester.domain },
+        ...(requester.name ? { requesterName: requester.name } : {}),
+        replyToMessageId: input.replyToMessageId,
+      });
+    } catch (err) {
+      this.logger?.warn("AnswerQuestion: asking whether the answer helped failed", { err: err instanceof Error ? err.name : "UnknownError" });
+    }
   }
 
   /** The model's answer without its marker, its command and, when code accepts it, the prepared offer. */

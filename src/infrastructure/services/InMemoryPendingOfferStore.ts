@@ -38,7 +38,9 @@ const PROMPTS_PER_CONVERSATION = 200;
  * when the store notices it (`takeEndedPrompts`), marked closed so it is closed once.
  *
  * Metrics: an offer is counted as made the first time it is stored (storing the same offer again,
- * as after an acknowledgment, does not count) and as expired when the store notices its expiry.
+ * as after an acknowledgment, does not count) and as expired when the store notices its expiry. The
+ * question "Did this help?" is also counted as expired, or as ended when it is dropped (the
+ * member's next message was not an answer) or replaced by a newer question.
  */
 export class InMemoryPendingOfferStore implements PendingOfferStore {
   /** Conversation key to (requester key to offer). */
@@ -76,6 +78,7 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     // A newer question to the same requester replaces the open one, whose message is closed.
     const replaced = byRequester.get(key(offer.requesterId));
     if (replaced?.messageId && replaced.messageId !== offer.messageId) this.endPrompt(replaced, "replaced");
+    if (replaced?.knowledgeHelp && replaced !== offer) this.metrics.knowledgeHelpAnswer("ended");
     byRequester.set(key(offer.requesterId), offer);
     this.offers.set(conversationKey, byRequester);
     if (offer.id && offer.messageId) {
@@ -158,6 +161,7 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     const offer = this.liveOffer(conversationId, requesterId, now);
     if (!offer) return null;
     this.remove(conversationId, requesterId);
+    if (offer.knowledgeHelp) this.metrics.knowledgeHelpAnswer("ended");
     this.remember(conversationId, requesterId, offer.command, now);
     return offer.command;
   }
@@ -182,10 +186,15 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     if (!offer) return null;
     if (isLive(offer, now)) return offer;
     this.remove(conversationId, requesterId);
-    this.metrics.offer("expired");
+    this.countExpired(offer);
     this.endPrompt(offer, "expired");
     this.remember(conversationId, requesterId, offer.command, offer.expiresAt);
     return null;
+  }
+
+  private countExpired(offer: PendingOffer): void {
+    this.metrics.offer("expired");
+    if (offer.knowledgeHelp) this.metrics.knowledgeHelpAnswer("expired");
   }
 
   /** Queues the offer's button message for closing, unless it is unknown or already closed. */
@@ -241,7 +250,7 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
       for (const [requesterKey, offer] of byRequester) {
         if (isLive(offer, now)) continue;
         byRequester.delete(requesterKey);
-        this.metrics.offer("expired");
+        this.countExpired(offer);
         this.endPrompt(offer, "expired");
         const remembered = this.dropped.get(conversationKey) ?? new Map<string, DroppedOffer>();
         remembered.set(requesterKey, { command: withoutFileRef(offer.command), droppedAt: offer.expiresAt });

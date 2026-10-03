@@ -37,6 +37,7 @@ import { LeavePendingAgentGroups } from "../application/usecases/jira/LeavePendi
 import { AskForAgentConversation } from "../application/usecases/jira/AskForAgentConversation";
 import { SubmitFeedback } from "../application/usecases/jira/SubmitFeedback";
 import { FeedbackQuestions } from "../application/services/feedbackQuestions";
+import { KnowledgeHelpQuestions } from "../application/services/knowledgeHelpQuestions";
 import { startIntervalRunner, type IntervalRunner } from "./intervalRunner";
 import { startOfferPromptSweep } from "./offerPromptSweep";
 import { getPrismaClient } from "../infrastructure/persistence/postgres/PrismaClient";
@@ -117,10 +118,19 @@ export function createContainer(
   // documents. Off: undefined, so answers use the conversation and its support requests only.
   // Another knowledge source plugs in here as a RetrievalPort.
   const knowledge = createKnowledgeRetrieval(config.knowledge, logger, metrics);
+  // Questions the bot asks on its own (after a desk update, about the agent conversation, "Did this
+  // help?") can be answered for this long; with the desk-update questions off (0 hours) the others
+  // keep the default.
+  const questionHours = jira.updateQuestionHours ?? DESK_UPDATE_QUESTION_HOURS_DEFAULT;
+  const ownQuestionMs = (questionHours > 0 ? questionHours : DESK_UPDATE_QUESTION_HOURS_DEFAULT) * 60 * 60 * 1000;
+  // "Did this help?" after an answer from the document index; only with the index on.
+  const knowledgeHelp = knowledge
+    ? new KnowledgeHelpQuestions({ offers: pendingOffers, wireOutbound, triage: supportTriage, lifetimeMs: ownQuestionMs, logger })
+    : undefined;
   const answerQuestion = new AnswerQuestion(
     generalAnswerAdapter,
     wireOutbound,
-    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage },
+    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage, ...(knowledgeHelp ? { knowledgeHelp } : {}) },
     knowledge,
     logger,
   );
@@ -148,17 +158,15 @@ export function createContainer(
   const watchSeconds = jira.watchSeconds;
   // Questions to the requester after a desk reply or resolve; sent also with passive help off,
   // since they answer the bot's own question about the requester's request.
-  const questionHours = jira.updateQuestionHours ?? DESK_UPDATE_QUESTION_HOURS_DEFAULT;
   const deskUpdateQuestions = questionHours > 0
     ? new DeskUpdateQuestions({ offers: pendingOffers, wireOutbound, lifetimeMs: questionHours * 60 * 60 * 1000, logger })
     : undefined;
   // With "ask" the requester is asked before the group is opened. The question lives as long as a
   // desk-update question; with those turned off (0 hours) it keeps the default lifetime.
-  const agentQuestionHours = questionHours > 0 ? questionHours : DESK_UPDATE_QUESTION_HOURS_DEFAULT;
   const askForAgentConversation = openAgentConversation && jira.agentChat === "ask"
     ? new AskForAgentConversation({
       requests: supportRequestsRepo, conversations: wireConversations, offers: pendingOffers, wireOutbound, open: openAgentConversation,
-      projectKey: issueTracker.projectKey, lifetimeMs: agentQuestionHours * 60 * 60 * 1000, logger,
+      projectKey: issueTracker.projectKey, lifetimeMs: ownQuestionMs, logger,
     })
     : undefined;
   const watchSupportRequests = watchSeconds

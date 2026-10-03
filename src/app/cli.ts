@@ -60,6 +60,8 @@ import { ConfirmOffer } from "../application/usecases/jira/ConfirmOffer";
 import { AnswerQuestion } from "../application/usecases/general/AnswerQuestion";
 import { SetChannelTimezone } from "../application/usecases/general/SetChannelTimezone";
 import { createKnowledgeRetrieval } from "./knowledge";
+import { KnowledgeHelpQuestions } from "../application/services/knowledgeHelpQuestions";
+import { DESK_UPDATE_QUESTION_HOURS_DEFAULT } from "../application/services/deskUpdateQuestions";
 
 dotenv.config();
 
@@ -170,14 +172,22 @@ async function main() {
     pipeline = passivePipeline;
   }
 
+  // The document index, when WIRE_SUPPORT_BOT_KNOWLEDGE is on, and "Did this help?" after its answers.
+  const knowledge = createKnowledgeRetrieval(config.knowledge, logger);
+  const questionHours = jira.updateQuestionHours ?? DESK_UPDATE_QUESTION_HOURS_DEFAULT;
+  const knowledgeHelp = knowledge
+    ? new KnowledgeHelpQuestions({
+      offers: pendingOffers, wireOutbound, triage: supportTriage, logger,
+      lifetimeMs: (questionHours > 0 ? questionHours : DESK_UPDATE_QUESTION_HOURS_DEFAULT) * 60 * 60 * 1000,
+    })
+    : undefined;
   const answerQuestion = new AnswerQuestion(
     new OpenAIGeneralAnswerAdapter(llmFactory, logger, {
       jiraProjectKey: jira.projectKey, jiraShareWithModel: jira.shareWithModel, jiraServiceScope: jira.serviceScope, partAsset: config.partAsset,
     }),
     wireOutbound,
-    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage },
-    // The document index, when WIRE_SUPPORT_BOT_KNOWLEDGE is on.
-    createKnowledgeRetrieval(config.knowledge, logger),
+    { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage, ...(knowledgeHelp ? { knowledgeHelp } : {}) },
+    knowledge,
     logger,
   );
 

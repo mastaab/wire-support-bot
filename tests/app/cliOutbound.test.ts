@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { cliButtonClick, createCliOutbound } from "../../src/app/cliOutbound";
 import type { QualifiedId } from "../../src/domain/ids/QualifiedId";
+import { faultCommand, knowledgeHelpChoices, knowledgeHelpQuestion } from "../../src/application/services/knowledgeHelpQuestions";
+import { sendOfferPrompt } from "../../src/application/services/offerButtons";
 
 const convId: QualifiedId = { id: "cli-channel", domain: "cli.local" };
 const alice: QualifiedId = { id: "alice", domain: "cli.local" };
@@ -22,6 +24,17 @@ describe("CLI fallback for buttons", () => {
     expect(out).toEqual(["[Wire Support Bot] Shall I resolve **SD-6** (yes or no)?\n  1. Yes\n  2. No\n"]);
     expect(ref?.messageId).toMatch(/^cli-/);
     expect(cli.latestPrompt()).toEqual({ messageId: ref!.messageId, buttons: [{ id: "offer-1234:0", label: "Yes" }, { id: "offer-1234:1", label: "No" }] });
+  });
+
+  it("prints \"Did this help?\" with its options numbered, and a number clicks one of them", async () => {
+    const { out, cli } = setup();
+    const command = faultCommand({
+      requestKind: "fault", summary: "Truck 12 will not start", description: "Truck 12 will not start.",
+      duplicateOf: null, addition: null, resolves: null, closingComment: null,
+    })!;
+    await sendOfferPrompt(cli.wireOutbound, convId, knowledgeHelpQuestion("Alice"), "offer-5678", knowledgeHelpChoices(command));
+    expect(out).toEqual(["[Wire Support Bot] Alice, did this help?\n  1. Solved\n  2. Raise a ticket\n"]);
+    expect(cliButtonClick("2", alice, convId, cli.latestPrompt())?.buttonId).toBe("offer-5678:1");
   });
 
   it("prints plain text as before and shows no confirmation", async () => {

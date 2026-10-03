@@ -5,7 +5,7 @@ import type { DeskUpdateTarget, OfferChoice, PendingOfferStore } from "../../por
 import type { WireConversationPort, WireUserRef } from "../../ports/WireConversationPort";
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
-import { newOfferId, offerPromptFields, sendOfferPrompt, withoutAnswerHint } from "../../services/offerButtons";
+import { holdsQuestionSlot, newOfferId, offerPromptFields, sendOfferPrompt, withoutAnswerHint } from "../../services/offerButtons";
 import { REPLACED_LINE, closeEndedOfferPrompts, closedPromptText } from "../../services/offerPromptClosing";
 import type { OpenAgentConversation } from "./OpenAgentConversation";
 import { findSupportRequestInConversation } from "./supportRequestScope";
@@ -218,11 +218,11 @@ export class AskForAgentConversation {
 
   /**
    * True when the requester has an open question this one must not replace: anything but a
-   * desk-update question (including another agent-conversation question).
+   * question the bot asked on its own, such as a desk-update question (another agent-conversation
+   * question counts).
    */
   private busy(conversationId: QualifiedId, requesterId: QualifiedId): boolean {
-    const live = this.deps.offers.find(conversationId, requesterId, this.now());
-    return !!live && (!live.deskUpdate || !!live.keepsSlot);
+    return holdsQuestionSlot(this.deps.offers.find(conversationId, requesterId, this.now()));
   }
 
   private async closeUnstored(conversationId: QualifiedId, messageId: string, question: string): Promise<void> {

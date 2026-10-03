@@ -3,7 +3,7 @@ import { FEEDBACK_RATINGS } from "../ports/IssueTrackerPort";
 import type { DeskUpdateTarget, OfferChoice, PendingOfferStore } from "../ports/PendingOfferPort";
 import type { SentMessageRef, WireOutboundPort } from "../ports/WireOutboundPort";
 import type { Logger } from "../ports/Logger";
-import { newOfferId, offerPromptFields, sendOfferPrompt } from "./offerButtons";
+import { holdsQuestionSlot, newOfferId, offerPromptFields, sendOfferPrompt } from "./offerButtons";
 import { closeEndedOfferPrompts } from "./offerPromptClosing";
 
 /**
@@ -109,8 +109,7 @@ export class FeedbackQuestions {
   }
 
   private busy(conversationId: QualifiedId, requesterId: QualifiedId): boolean {
-    const live = this.deps.offers.find(conversationId, requesterId, this.now());
-    return !!live && (!live.deskUpdate || !!live.keepsSlot);
+    return holdsQuestionSlot(this.deps.offers.find(conversationId, requesterId, this.now()));
   }
 
   private now(): Date {

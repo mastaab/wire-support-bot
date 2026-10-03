@@ -7,7 +7,9 @@ import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundP
 import type { Logger } from "../../ports/Logger";
 import { describeFile, formatAttachQuestion } from "../../services/attachments";
 import { OFFER_TTL_MS, formatAttachTargetQuestion } from "../../services/offers";
-import { OFFER_CANDIDATES_MAX, choiceHint, doNotAttachChoice, keyChoice, newOfferId, offerPromptFields, sendOfferPrompt } from "../../services/offerButtons";
+import {
+  OFFER_CANDIDATES_MAX, choiceHint, doNotAttachChoice, isOwnQuestion, keyChoice, newOfferId, offerPromptFields, sendOfferPrompt,
+} from "../../services/offerButtons";
 
 /** Input of `OfferAttachment`. */
 export interface OfferAttachmentInput {
@@ -44,10 +46,11 @@ export class OfferAttachment {
   async execute(input: OfferAttachmentInput): Promise<boolean> {
     // A pending question to the sender is not replaced by a file: they answer it first. A pending
     // file offer is replaced, so a yes always attaches the file they posted last, and so is a
-    // question after a desk update, which never holds up the requester's other questions.
+    // question the bot asked on its own (after a desk update, "Did this help?"), which never holds
+    // up the requester's other questions.
     const live = this.offers.find(input.conversationId, input.senderId, this.now());
     const pending = live?.command ?? null;
-    if (live && pending && pending.kind !== "attach" && !live.deskUpdate) {
+    if (live && pending && pending.kind !== "attach" && !isOwnQuestion(live)) {
       try {
         await this.wireOutbound.sendPlainText(input.conversationId, ANSWER_FIRST, { replyToMessageId: input.messageId });
       } catch (err) {

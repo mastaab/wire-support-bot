@@ -76,7 +76,15 @@ export type ChoiceAction =
   /** Open the direct conversation between the requester and the assigned desk agent. */
   | { kind: "openAgentChat"; issueKey: string; agentHandle: string }
   /** Send the requester's satisfaction rating (1 to 5) to the request's feedback. */
-  | { kind: "rate"; issueKey: string; rating: number };
+  | { kind: "rate"; issueKey: string; rating: number }
+  /**
+   * Offer to raise this request with [Yes] [No], as the answer path does ([Raise a ticket] after
+   * "Did this help?"). Nothing is raised before that yes.
+   */
+  | { kind: "offerRaise"; command: SupportOfferCommand };
+
+/** An offer to raise a new support request. */
+export type SupportOfferCommand = Extract<OfferCommand, { kind: "support" }>;
 
 /** Which question asks for the reply text: after [Reply], or after [Still broken]. */
 export type ReplyTextPrompt = "reply" | "stillBroken";
@@ -139,6 +147,13 @@ export interface PendingOffer {
    * `command` is the reply with an empty body, used only to name it after it was dropped.
    */
   awaitsReplyText?: DeskUpdateTarget;
+  /**
+   * Set on the question "Did this help?" after an answer from the document index ([Solved] [Raise
+   * a ticket]). Like a desk-update question it is the bot's own question: it is never asked over
+   * another open question, a newer question replaces it, and a message that picks no option ends it.
+   * Its `command` is the drafted request [Raise a ticket] offers, used only to name it after it was dropped.
+   */
+  knowledgeHelp?: boolean;
 }
 
 /** What is remembered about an offer's button message, also after the offer itself has gone. */

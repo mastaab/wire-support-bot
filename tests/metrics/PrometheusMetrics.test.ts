@@ -40,6 +40,7 @@ describe("createPrometheusMetrics", () => {
       "wire_support_bot_pending_offers gauge",
       "wire_support_bot_queue_length gauge",
       "wire_support_bot_knowledge_retrievals_total counter",
+      "wire_support_bot_knowledge_help_answers_total counter",
       "wire_support_bot_knowledge_chunks gauge",
     ]) {
       expect(names).toContain(expected);
@@ -59,6 +60,9 @@ describe("createPrometheusMetrics", () => {
     expect(samples.filter((s) => s.startsWith("wire_support_bot_jira_requests_total{"))).toHaveLength(8 * 5);
     expect(samples).toContain('wire_support_bot_model_calls_total{slot="embed",outcome="error"} 0');
     expect(samples).toContain('wire_support_bot_knowledge_retrievals_total{outcome="miss"} 0');
+    for (const outcome of ["solved", "ticket", "ended", "expired"]) {
+      expect(samples).toContain(`wire_support_bot_knowledge_help_answers_total{outcome="${outcome}"} 0`);
+    }
     expect(samples.filter((s) => s.startsWith("wire_support_bot_model_calls_total{"))).toHaveLength(3 * 4);
   });
 
@@ -84,6 +88,7 @@ describe("createPrometheusMetrics", () => {
     metrics.ratingSent("refused");
     metrics.modelCall("embed", "ok", 0.1);
     metrics.knowledgeRetrieval("hit");
+    metrics.knowledgeHelpAnswer("ticket");
     metrics.collect("knowledge_chunks", () => 42);
     let samples = await appSamples(render);
     for (const expected of [
@@ -113,6 +118,8 @@ describe("createPrometheusMetrics", () => {
       "wire_support_bot_queue_length 0",
       'wire_support_bot_model_calls_total{slot="embed",outcome="ok"} 1',
       'wire_support_bot_knowledge_retrievals_total{outcome="hit"} 1',
+      'wire_support_bot_knowledge_help_answers_total{outcome="ticket"} 1',
+      'wire_support_bot_knowledge_help_answers_total{outcome="solved"} 0',
       "wire_support_bot_knowledge_chunks 42",
     ]) {
       expect(samples).toContain(expected);
