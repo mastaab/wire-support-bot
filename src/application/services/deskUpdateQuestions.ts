@@ -104,7 +104,7 @@ export class DeskUpdateQuestions {
     if (this.deps.lifetimeMs <= 0) return false;
     const { conversationId, requesterId, key } = request;
     if (this.busy(conversationId, requesterId)) {
-      this.deps.logger?.info("DeskUpdateQuestions: the requester has an open question; not asking", { key });
+      this.deps.logger?.debug("DeskUpdateQuestions: the requester has an open question; not asking", { key });
       return false;
     }
     const question = deskUpdateQuestion(kind, key, request.requesterName);
@@ -120,7 +120,7 @@ export class DeskUpdateQuestions {
     // Another question may have been asked meanwhile (the watch runs beside the conversation's
     // messages); it is kept, and this one is closed at once.
     if (this.busy(conversationId, requesterId)) {
-      this.deps.logger?.info("DeskUpdateQuestions: another question was asked meanwhile; closing this one", { key });
+      this.deps.logger?.debug("DeskUpdateQuestions: another question was asked meanwhile; closing this one", { key });
       if (sent) await this.closeUnstored(conversationId, sent.messageId, question);
       return false;
     }

@@ -75,7 +75,7 @@ export class FeedbackQuestions {
     const { target, conversationId, requesterId } = input;
     const key = target.issueKey;
     if (this.busy(conversationId, requesterId)) {
-      this.deps.logger?.info("FeedbackQuestions: the requester has an open question; not asking", { key });
+      this.deps.logger?.debug("FeedbackQuestions: the requester has an open question; not asking", { key });
       return false;
     }
     const question = feedbackQuestion(key, input.requesterName);

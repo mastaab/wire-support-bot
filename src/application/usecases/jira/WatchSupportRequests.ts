@@ -362,7 +362,7 @@ export class WatchSupportRequests {
     const now = this.now();
     const since = this.agentQuestionWaiting.get(request.key) ?? now;
     if (now.getTime() - since.getTime() >= ask.lifetimeMs) {
-      this.logger?.info("WatchSupportRequests: the requester stayed busy; not asking about the agent conversation", { key: request.key });
+      this.logger?.debug("WatchSupportRequests: the requester stayed busy; not asking about the agent conversation", { key: request.key });
       this.agentQuestionWaiting.delete(request.key);
       return "skipped";
     }

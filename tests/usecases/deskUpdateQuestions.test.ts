@@ -105,7 +105,7 @@ describe("DeskUpdateQuestions.ask", () => {
 
     expect(wire.sendCompositePrompt).not.toHaveBeenCalled();
     expect(offers.find(convId, alice, now)).toEqual(other);
-    expect(logger.info).toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith("DeskUpdateQuestions: the requester has an open question; not asking", { key: "SD-6" });
   });
 
   it("replaces an earlier desk-update question to the requester and closes it at once", async () => {

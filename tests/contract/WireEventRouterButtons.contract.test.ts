@@ -416,3 +416,36 @@ describe("WireEventRouter contract: metrics of button clicks", () => {
     expect(of("wireMessageReceived")).toEqual([["button_click"], ["text"], ["other"], ["other"], ["other"]]);
   });
 });
+
+describe("WireEventRouter contract: the Message handled line for clicks", () => {
+  it("logs each click's outcome at debug, with no names, and none of the old click lines at info", async () => {
+    const { router, ask, deps } = setup();
+    ask();
+    await router.onButtonClicked(click(bob, `${OFFER_ID}:0`));
+    await router.onButtonClicked(click(alice, "offer-other:0"));
+    await router.onButtonClicked(click(alice, `${OFFER_ID}:0`));
+    await router.onButtonClicked(click(alice, `${OFFER_ID}:1`));
+    await router.onButtonClicked(click(botId, `${OFFER_ID}:0`));
+
+    const lines = vi.mocked(deps.logger.debug).mock.calls.filter((call) => call[0] === "Message handled").map((call) => call[1]!);
+    expect(lines).toEqual([
+      { kind: "button_click", route: "not_asked", durationMs: expect.any(Number) },
+      { kind: "button_click", route: "invalid", durationMs: expect.any(Number) },
+      { kind: "button_click", route: "accepted", durationMs: expect.any(Number), chosen: true },
+      { kind: "button_click", route: "late", durationMs: expect.any(Number), known: true, answered: true },
+      { kind: "button_click", route: "ignored", durationMs: expect.any(Number) },
+    ]);
+    expect(JSON.stringify(lines)).not.toMatch(/Alice|Bob/);
+    expect(vi.mocked(deps.logger.info).mock.calls.map((call) => call[0] as string).filter((msg) => /^Button: |^Message handled/.test(msg))).toEqual([]);
+  });
+
+  it("logs a failing click as failed with its outcome, next to the error line", async () => {
+    const { router, ask, deps } = setup();
+    ask();
+    vi.spyOn(deps.confirmOffer, "choose").mockRejectedValue(new TypeError("offline"));
+    await router.onButtonClicked(click(alice, `${OFFER_ID}:0`));
+    expect(deps.logger.error).toHaveBeenCalledWith("Button handler failed", { err: "TypeError" });
+    const lines = vi.mocked(deps.logger.debug).mock.calls.filter((call) => call[0] === "Message handled").map((call) => call[1]!);
+    expect(lines).toEqual([{ kind: "button_click", route: "accepted", durationMs: expect.any(Number), failed: true }]);
+  });
+});

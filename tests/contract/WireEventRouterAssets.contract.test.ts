@@ -191,3 +191,33 @@ describe("WireEventRouter contract: posted files", () => {
     expect(created.has(convId)).toBe(false);
   });
 });
+
+describe("WireEventRouter contract: the Message handled line for files", () => {
+  const handled = (d: WireEventRouterDeps) =>
+    vi.mocked(d.logger.debug).mock.calls.filter((call) => call[0] === "Message handled").map((call) => call[1]!);
+
+  it("logs one debug line per file with its route and kind, none for the preview, and no file name", async () => {
+    const { deps: d, offerAttachment } = deps();
+    const router = new WireEventRouter(d);
+    await router.onAssetMessageReceived(asset({ remoteData: null }));
+    await router.onAssetMessageReceived(asset());
+    offerAttachment.execute.mockResolvedValue(false);
+    await router.onAssetMessageReceived(asset({ messageId: "file-2" }));
+    await router.onAssetMessageReceived(asset({ messageId: "file-3", mimeType: "application/zip" }));
+    expect(handled(d)).toEqual([
+      { kind: "file", route: "offered", durationMs: expect.any(Number), fileKind: "photo" },
+      { kind: "file", route: "not_offered", durationMs: expect.any(Number), fileKind: "photo" },
+      { kind: "file", route: "ignored", durationMs: expect.any(Number) },
+    ]);
+    expect(JSON.stringify(handled(d))).not.toContain("jam.jpg");
+    expect(d.logger.info).not.toHaveBeenCalled();
+  });
+
+  it("logs a failing offer as failed, next to the error line", async () => {
+    const { deps: d, offerAttachment } = deps();
+    offerAttachment.execute.mockRejectedValue(new TypeError("offline"));
+    await new WireEventRouter(d).onAssetMessageReceived(asset());
+    expect(d.logger.error).toHaveBeenCalledWith("File handler failed", { err: "TypeError" });
+    expect(handled(d)).toEqual([{ kind: "file", durationMs: expect.any(Number), fileKind: "photo", failed: true }]);
+  });
+});

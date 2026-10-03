@@ -899,7 +899,7 @@ describe("WatchSupportRequests: the agent conversation as an opt-in (ask)", () =
     expect(await watcher.check()).toEqual({ announced: 0, pending: 0 });
     expect(requests.setAssignee).toHaveBeenCalledWith("SD-6", AGENT);
     expect(requests.markAgentConversation).not.toHaveBeenCalled();
-    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("stayed busy"), { key: "SD-6" });
+    expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("stayed busy"), { key: "SD-6" });
     offers.take(convId, alice, later);
     await watcher.check();
     expect(labels()).toEqual([]);

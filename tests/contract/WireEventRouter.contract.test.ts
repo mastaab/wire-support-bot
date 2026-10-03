@@ -906,3 +906,76 @@ describe("WireEventRouter contract: channel timezone", () => {
     expect(deps.setChannelTimezone!.execute).not.toHaveBeenCalled();
   });
 });
+
+describe("WireEventRouter contract: the Message handled line", () => {
+  const named = { id: "user-1", domain: "example.com" };
+
+  /** Deps whose sender has a display name, so a test can check the name stays out of the line. */
+  function namedDeps(overrides: Partial<WireEventRouterDeps> = {}): WireEventRouterDeps {
+    const memberCache = new InMemoryMemberCache();
+    memberCache.setMembers(convId, [{ userId: named, role: "member", name: "Second User" }]);
+    return jiraDeps({ memberCache, ...overrides });
+  }
+
+  /** The `Message handled` lines, which are debug only. */
+  function handledLines(deps: WireEventRouterDeps): Array<Record<string, unknown>> {
+    for (const level of ["info", "warn", "error"] as const) {
+      expect(vi.mocked(deps.logger[level]).mock.calls.map((call) => call[0])).not.toContain("Message handled");
+    }
+    return vi.mocked(deps.logger.debug).mock.calls.filter((call) => call[0] === "Message handled").map((call) => call[1]!);
+  }
+
+  /** The line carries IDs only, through the child logger: no message text and no name. */
+  function expectNoContent(deps: WireEventRouterDeps, line: Record<string, unknown>, text: string): void {
+    expect(deps.logger.child).toHaveBeenCalledWith({ conversationId: convId.id, senderId: named.id, messageId: "msg-1" });
+    expect(JSON.stringify(line)).not.toContain(text);
+    expect(JSON.stringify(line)).not.toContain("Second User");
+    expect(Number.isInteger(line.durationMs)).toBe(true);
+  }
+
+  it("logs one line for a support command, with its route and duration", async () => {
+    const deps = namedDeps();
+    await new WireEventRouter(deps).onTextMessageReceived(customMention("support requests"));
+    const lines = handledLines(deps);
+    expect(lines).toEqual([{ kind: "text", route: "list_command", durationMs: expect.any(Number) }]);
+    expectNoContent(deps, lines[0]!, "support requests");
+  });
+
+  it("logs the answer path with whether it was a follow-up or an amendment, and no dispatch line at info", async () => {
+    const deps = namedDeps();
+    await new WireEventRouter(deps).onTextMessageReceived(customMention("What am I responsible for?"));
+    const lines = handledLines(deps);
+    expect(lines).toEqual([{ kind: "text", route: "answer", durationMs: expect.any(Number), isFollowUp: false, amendOnly: false }]);
+    expectNoContent(deps, lines[0]!, "responsible");
+    expect(deps.logger.info).not.toHaveBeenCalled();
+  });
+
+  it("logs a message queued for passive help as passive, and one with passive help off as ignored", async () => {
+    const queue = { enqueue: vi.fn(), setWorker: vi.fn(), depth: 0, concurrency: 0 };
+    const passive = namedDeps({
+      processingQueue: queue as unknown as WireEventRouterDeps["processingQueue"],
+      pipeline: { process: vi.fn() } as unknown as WireEventRouterDeps["pipeline"],
+    });
+    await new WireEventRouter(passive).onTextMessageReceived(makeMessage("the printer is jammed again"));
+    expect(handledLines(passive)).toEqual([{ kind: "text", route: "passive", durationMs: expect.any(Number) }]);
+    expectNoContent(passive, handledLines(passive)[0]!, "printer");
+    expect(passive.logger.info).not.toHaveBeenCalled();
+
+    const off = namedDeps();
+    await new WireEventRouter(off).onTextMessageReceived(makeMessage("lunch at noon?"));
+    expect(handledLines(off)).toEqual([{ kind: "text", route: "ignored", durationMs: expect.any(Number) }]);
+    expectNoContent(off, handledLines(off)[0]!, "lunch");
+  });
+
+  it("logs a failing handler as failed with the route it took, next to the error line", async () => {
+    const deps = namedDeps();
+    vi.mocked(deps.answerQuestion.execute).mockRejectedValue(new TypeError("model down"));
+    await new WireEventRouter(deps).onTextMessageReceived(customMention("What am I responsible for?"));
+    expect(deps.logger.error).toHaveBeenCalledWith("Handler failed", expect.objectContaining({ err: "TypeError" }));
+    const lines = handledLines(deps);
+    expect(lines).toEqual([{
+      kind: "text", route: "answer", durationMs: expect.any(Number), isFollowUp: false, amendOnly: false, failed: true,
+    }]);
+    expectNoContent(deps, lines[0]!, "responsible");
+  });
+});

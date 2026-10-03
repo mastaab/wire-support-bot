@@ -102,7 +102,7 @@ export class AskForAgentConversation {
   async ask(request: SupportRequest, agentHandle: string): Promise<AskForAgentConversationOutcome> {
     const { conversationId, requesterId, key } = request;
     if (this.busy(conversationId, requesterId)) {
-      this.deps.logger?.info(`${SOURCE}: the requester has an open question; asking later`, { key });
+      this.deps.logger?.debug(`${SOURCE}: the requester has an open question; asking later`, { key });
       return "busy";
     }
 
@@ -134,7 +134,7 @@ export class AskForAgentConversation {
     }
     // Another question may have been asked meanwhile; it is kept and this one is closed and asked later.
     if (this.busy(conversationId, requesterId)) {
-      this.deps.logger?.info(`${SOURCE}: another question was asked meanwhile; asking later`, { key });
+      this.deps.logger?.debug(`${SOURCE}: another question was asked meanwhile; asking later`, { key });
       if (sent) await this.closeUnstored(conversationId, sent.messageId, question);
       return "busy";
     }

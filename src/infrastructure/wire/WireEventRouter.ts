@@ -57,6 +57,40 @@ function isPartOrder(command: OfferCommand): boolean {
   return command.kind === "support" && command.requestKind === "part";
 }
 
+/** The kind of Wire event a `Message handled` line reports. */
+type HandledKind = "text" | "file" | "button_click";
+
+/**
+ * The route a text message took, on its `Message handled` line:
+ * - `offer_answer`: a yes, no, picked option or reply text answered the sender's pending offer.
+ * - `part_order_answer`: the message completed or corrected the sender's part-order draft.
+ * - `multiple_commands`: several commands in one message; none was run.
+ * - `timezone`: the channel's timezone was set or shown.
+ * - `support_command`, `resolve_command`, `reply_command`, `list_command`: the support command ran.
+ * - `status_lookup`: a request's status was looked up.
+ * - `answer`: the answer path ran (a mention, a follow-up to the bot's question, or a message that
+ *   displaced the sender's offer).
+ * - `passive`: the message was queued for passive help.
+ * - `ignored`: nothing was done (not addressed with passive help off, or a group the bot created).
+ */
+type TextRoute =
+  | "offer_answer" | "part_order_answer" | "multiple_commands" | "timezone"
+  | "support_command" | "resolve_command" | "reply_command" | "list_command" | "status_lookup"
+  | "answer" | "passive" | "ignored";
+
+/** Where a text message went, filled in by the handler as it routes the message. */
+interface TextTrace {
+  route?: TextRoute;
+  isFollowUp?: boolean;
+  amendOnly?: boolean;
+}
+
+/** A file's route: an attachment was offered, not offered (no open request), or the file was ignored. */
+type FileRoute = "offered" | "not_offered" | "ignored";
+
+/** A click's route: its outcome as counted in the metrics, or `ignored` (the bot's own, or a group it created). */
+type ClickRoute = "accepted" | "not_asked" | "late" | "invalid" | "ignored";
+
 function toCachedRole(role: ConversationRole): CachedMember["role"] {
   return role === ConversationRole.ADMIN ? "admin" : "member";
 }
@@ -148,11 +182,32 @@ export class WireEventRouter extends WireEventsHandler {
     }
   }
 
+  /**
+   * One debug line per handled event, with its route and the time it took in the conversation's
+   * queue (not the wait before it). IDs come from the child logger; no text and no names.
+   */
+  private logHandled(
+    log: Logger, kind: HandledKind, route: TextRoute | FileRoute | ClickRoute | undefined, startedAt: number,
+    data: Record<string, unknown> = {},
+  ): void {
+    log.debug("Message handled", { kind, ...(route ? { route } : {}), durationMs: Math.round(Date.now() - startedAt), ...data });
+  }
+
   private async processTextMessage(wireMessage: TextMessage): Promise<void> {
-    if (this.deps.createdConversations?.has(wireMessage.conversationId as QualifiedId)) return;
+    const startedAt = Date.now();
     const text = wireMessage.text ?? "";
     const convId = wireMessage.conversationId as QualifiedId;
     const sender = wireMessage.sender as QualifiedId;
+    // IDs only: names and other personal data never reach the log.
+    const log = this.deps.logger.child({
+      conversationId: convId.id,
+      senderId: sender.id,
+      messageId: wireMessage.id,
+    });
+    if (this.deps.createdConversations?.has(convId)) {
+      this.logHandled(log, "text", "ignored", startedAt);
+      return;
+    }
     const channelId = toChannelId(convId);
     let senderMember = this.deps.memberCache.getMembers(convId).find((m) => sameQualifiedId(m.userId, sender));
 
@@ -191,16 +246,12 @@ export class WireEventRouter extends WireEventsHandler {
       });
     }
 
-    // IDs only: names and other personal data never reach the log.
-    const log = this.deps.logger.child({
-      conversationId: convId.id,
-      senderId: sender.id,
-      messageId: wireMessage.id,
-    });
-
+    const trace: TextTrace = {};
+    let failed = false;
     try {
-      await this.handleTextMessage(wireMessage, text, convId, sender, channelId, log);
+      await this.handleTextMessage(wireMessage, text, convId, sender, channelId, log, trace);
     } catch (err) {
+      failed = true;
       log.error("Handler failed", { err: (err instanceof Error ? err.name : "UnknownError"), errorType: err instanceof Error ? err.name : undefined });
       try {
         await this.deps.wireOutbound.sendPlainText(convId, "Something went wrong. Please try again.", {
@@ -210,6 +261,11 @@ export class WireEventRouter extends WireEventsHandler {
         log.error("Failed to send error reply", { err: (sendErr instanceof Error ? sendErr.name : "UnknownError") });
       }
     }
+    this.logHandled(log, "text", trace.route ?? (failed ? undefined : "ignored"), startedAt, {
+      ...(trace.isFollowUp !== undefined ? { isFollowUp: trace.isFollowUp } : {}),
+      ...(trace.amendOnly !== undefined ? { amendOnly: trace.amendOnly } : {}),
+      ...(failed ? { failed: true } : {}),
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -223,6 +279,7 @@ export class WireEventRouter extends WireEventsHandler {
     sender: QualifiedId,
     channelId: string,
     log: Logger,
+    trace: TextTrace,
   ): Promise<void> {
     const lowered = text.trim().toLowerCase();
     const botMentioned = wireMessage.mentions?.some((m) => sameQualifiedId(m.userId, this.deps.botUserId)) ?? false;
@@ -270,6 +327,7 @@ export class WireEventRouter extends WireEventsHandler {
         // entry after it, so the offer's "(yes or no)?" no longer counts as the bot's latest
         // question: otherwise the requester's next message would be taken as a follow-up.
         this.recordHandled(convId, wireMessage.id, sender, senderDisplayName, text, "(Answered the offer above.)");
+        trace.route = "offer_answer";
         return;
       }
       droppedOffer = pendingOffers.drop(convId, sender) ?? undefined;
@@ -295,6 +353,7 @@ export class WireEventRouter extends WireEventsHandler {
           // answered), so a later click on its buttons changes nothing.
           if (live?.id) pendingOffers.markAnswered(convId, live.id);
           this.recordHandled(convId, wireMessage.id, sender, senderDisplayName, text, "(Updated the part order draft.)");
+          trace.route = "part_order_answer";
           return;
         }
       }
@@ -310,6 +369,7 @@ export class WireEventRouter extends WireEventsHandler {
 
     // Reject a command bundle before any write, buffering or model work.
     if (hasMultipleCommands(text, wireMessage.mentions ?? [], this.deps.botUserId, this.deps.getIssueStatus.projectKey)) {
+      trace.route = "multiple_commands";
       await this.deps.wireOutbound.sendPlainText(convId,
         "Please send one command per message. I have not run any commands from this message.",
         { replyToMessageId: wireMessage.id });
@@ -326,6 +386,7 @@ export class WireEventRouter extends WireEventsHandler {
       const timezoneArg = timezoneMatch?.[1]?.replace(/[.!]$/, "");
       if (timezoneMatch && this.deps.setChannelTimezone
           && (timezoneArg === undefined || /^[A-Za-z_]+(?:\/[A-Za-z0-9_+\-]+)*$/.test(timezoneArg))) {
+        trace.route = "timezone";
         await this.deps.setChannelTimezone.execute({
           conversationId: convId, channelId, actorId: sender,
           ...(timezoneArg ? { timezone: timezoneArg } : {}),
@@ -349,6 +410,7 @@ export class WireEventRouter extends WireEventsHandler {
     const projectKey = this.deps.getIssueStatus.projectKey;
     const supportMatch = isBotAddressed ? commandText.match(/^support\s*:\s*([\s\S]+)$/i) : null;
     if (supportMatch) {
+      trace.route = "support_command";
       const { summary, description } = splitSupportText(supportMatch[1]!);
       await this.typing(convId, () => this.deps.raiseSupportRequest.execute({
         summary, description, conversationId: convId, requesterId: sender,
@@ -361,6 +423,7 @@ export class WireEventRouter extends WireEventsHandler {
       ? commandText.match(new RegExp(`^(?:resolve|close)\\s+(${projectKey}-\\d+)(?:\\s*:\\s*([\\s\\S]+)|[.!]?\\s*)$`, "i"))
       : null;
     if (resolveMatch) {
+      trace.route = "resolve_command";
       // `resolve SD-6: <comment>` adds a closing comment before resolving.
       const comment = resolveMatch[2]?.trim();
       await this.typing(convId, () => this.deps.resolveSupportRequest.execute({
@@ -374,6 +437,7 @@ export class WireEventRouter extends WireEventsHandler {
       ? commandText.match(new RegExp(`^reply\\s+to\\s+(${projectKey}-\\d+)\\s*:\\s*([\\s\\S]+)$`, "i"))
       : null;
     if (replyMatch) {
+      trace.route = "reply_command";
       await this.typing(convId, () => this.deps.replyToServiceDesk.execute({
         reference: replyMatch[1]!.toUpperCase(), body: replyMatch[2]!, conversationId: convId,
         actorId: sender, replyToMessageId: wireMessage.id,
@@ -385,6 +449,7 @@ export class WireEventRouter extends WireEventsHandler {
       ? commandLowered.match(/^(my\s+)?(?:open\s+)?support\s+requests?[?.]?\s*$/)
       : null;
     if (supportListMatch) {
+      trace.route = "list_command";
       await this.typing(convId, () => this.deps.listSupportRequests.execute({
         conversationId: convId, ...(supportListMatch[1] ? { requesterId: sender } : {}), replyToMessageId: wireMessage.id,
       }));
@@ -395,6 +460,7 @@ export class WireEventRouter extends WireEventsHandler {
     // keys of the configured project match; see matchIssueStatusRequest.
     const issueReference = isBotAddressed ? matchIssueStatusRequest(commandText, projectKey) : null;
     if (issueReference) {
+      trace.route = "status_lookup";
       const timezone = await this.channelTimezone(channelId);
       await this.typing(convId, () => this.deps.getIssueStatus.execute({
         reference: issueReference, conversationId: convId, timezone, replyToMessageId: wireMessage.id,
@@ -420,12 +486,12 @@ export class WireEventRouter extends WireEventsHandler {
     if (botMentioned || isFollowUp || amendsOffer) {
       await this.answerInChannel({
         wireMessage, text, commandText, convId, sender, channelId, senderDisplayName, members,
-        droppedOffer, amendOnly: amendsOffer && !botMentioned && !isFollowUp, isFollowUp, log,
+        droppedOffer, amendOnly: amendsOffer && !botMentioned && !isFollowUp, isFollowUp, trace,
       });
       return;
     }
     // ── Otherwise: passive service-desk help ─────────────────────────────────
-    this.enqueueForPipeline(wireMessage, text, convId, sender, channelId, senderDisplayName, log);
+    this.enqueueForPipeline(wireMessage, text, convId, sender, channelId, senderDisplayName, trace);
   }
 
   /** Buffers a message the offer handling consumed, followed by a bot entry that closes the offer. */
@@ -461,10 +527,12 @@ export class WireEventRouter extends WireEventsHandler {
     droppedOffer: OfferCommand | undefined;
     amendOnly: boolean;
     isFollowUp: boolean;
-    log: Logger;
+    trace: TextTrace;
   }): Promise<void> {
-    const { wireMessage, text, commandText, convId, sender, channelId, senderDisplayName, droppedOffer, amendOnly, log } = input;
-    log.info("Message: dispatched to answerQuestion", { isFollowUp: input.isFollowUp, amendOnly });
+    const { wireMessage, text, commandText, convId, sender, channelId, senderDisplayName, droppedOffer, amendOnly, trace } = input;
+    trace.route = "answer";
+    trace.isFollowUp = input.isFollowUp;
+    trace.amendOnly = amendOnly;
     const timezone = await this.channelTimezone(channelId);
     const recentContext = this.deps.messageBuffer.getLastN(convId, CONTEXT_WINDOW).slice(0, -1).map((m) =>
       m.senderName ? `${m.senderName}: ${m.text}` : m.text,
@@ -482,7 +550,7 @@ export class WireEventRouter extends WireEventsHandler {
     }));
     // Not a revision: the message was ordinary conversation, so passive help still sees it.
     if (amendOnly && !answer) {
-      this.enqueueForPipeline(wireMessage, text, convId, sender, channelId, senderDisplayName, log);
+      this.enqueueForPipeline(wireMessage, text, convId, sender, channelId, senderDisplayName, trace);
       return;
     }
     // Buffer the bot's answer so follow-up messages have context.
@@ -502,10 +570,13 @@ export class WireEventRouter extends WireEventsHandler {
     sender: QualifiedId,
     channelId: string,
     senderDisplayName: string | undefined,
-    log: Logger,
+    trace: TextTrace,
   ): void {
-    if (!this.deps.processingQueue || !this.deps.pipeline) return;
-    log.info("Message: enqueued for passive help");
+    if (!this.deps.processingQueue || !this.deps.pipeline) {
+      trace.route = "ignored";
+      return;
+    }
+    trace.route = "passive";
     const job: MessageJob = {
       messageId: wireMessage.id,
       channelId,
@@ -544,29 +615,33 @@ export class WireEventRouter extends WireEventsHandler {
   }
 
   private async processAssetMessage(wireMessage: AssetMessage): Promise<void> {
-    if (this.deps.createdConversations?.has(wireMessage.conversationId as QualifiedId)) return;
-    const offerAttachment = this.deps.offerAttachment;
+    // No download data yet: the preview before the upload, which is not a file of its own and gets no line.
+    if (!wireMessage.remoteData) return;
+    const startedAt = Date.now();
+    const convId = wireMessage.conversationId as QualifiedId;
     const sender = wireMessage.sender as QualifiedId | undefined;
-    if (!offerAttachment || !sender || sameQualifiedId(sender, this.deps.botUserId)) return;
-    // No download data yet (the preview), or a self-deleting message, whose timer Wire must be able to keep.
-    if (!wireMessage.remoteData || wireMessage.expiresAfterMillis) return;
+    const log = this.deps.logger.child({ conversationId: convId.id, senderId: sender?.id, messageId: wireMessage.id });
+    const ignored = () => this.logHandled(log, "file", "ignored", startedAt);
+    if (this.deps.createdConversations?.has(convId)) return ignored();
+    const offerAttachment = this.deps.offerAttachment;
+    if (!offerAttachment || !sender || sameQualifiedId(sender, this.deps.botUserId)) return ignored();
+    // A self-deleting message, whose timer Wire must be able to keep.
+    if (wireMessage.expiresAfterMillis) return ignored();
     const fileKind = attachableKind(wireMessage.mimeType);
     const sizeInBytes = Number(wireMessage.sizeInBytes);
-    if (!fileKind || !Number.isFinite(sizeInBytes) || sizeInBytes <= 0 || sizeInBytes > ATTACHMENT_MAX_BYTES) return;
-    if (!this.firstSightOfAsset(wireMessage.id)) return;
-
-    const convId = wireMessage.conversationId as QualifiedId;
-    const log = this.deps.logger.child({ conversationId: convId.id, senderId: sender.id, messageId: wireMessage.id });
+    if (!fileKind || !Number.isFinite(sizeInBytes) || sizeInBytes <= 0 || sizeInBytes > ATTACHMENT_MAX_BYTES) return ignored();
+    if (!this.firstSightOfAsset(wireMessage.id)) return ignored();
 
     const name = wireMessage.name?.trim() || (fileKind === "photo" ? "photo" : "file");
+    let offered: boolean;
     try {
-      const offered = await offerAttachment.execute({
+      offered = await offerAttachment.execute({
         conversationId: convId, senderId: sender, messageId: wireMessage.id,
         file: { ref: { transport: "wire", data: wireMessage.remoteData }, fileKind, name, mimeType: wireMessage.mimeType, sizeInBytes },
       });
-      log.debug("File received", { fileKind, offered });
     } catch (err) {
       log.error("File handler failed", { err: err instanceof Error ? err.name : "UnknownError" });
+      this.logHandled(log, "file", undefined, startedAt, { fileKind, failed: true });
       return;
     }
     // Context for the next text message, without the file's name or content.
@@ -574,6 +649,7 @@ export class WireEventRouter extends WireEventsHandler {
     this.deps.messageBuffer.push(convId, {
       messageId: wireMessage.id, senderId: sender, senderName, text: fileKind === "photo" ? "(photo)" : "(file)", timestamp: new Date(),
     });
+    this.logHandled(log, "file", (offered ? "offered" : "not_offered"), startedAt, { fileKind });
   }
 
   /**
@@ -664,19 +740,27 @@ export class WireEventRouter extends WireEventsHandler {
   }
 
   private async processButtonClick(wireMessage: CompositeButtonAction): Promise<void> {
+    const startedAt = Date.now();
     const convId = wireMessage.conversationId as QualifiedId;
     const sender = wireMessage.sender as QualifiedId | undefined;
-    if (!sender || sameQualifiedId(sender, this.deps.botUserId) || this.deps.createdConversations?.has(convId)) return;
     const { buttonId, referenceMessageId } = wireMessage;
-    const log = this.deps.logger.child({ conversationId: convId.id, senderId: sender.id, messageId: referenceMessageId });
+    const log = this.deps.logger.child({ conversationId: convId.id, senderId: sender?.id, messageId: referenceMessageId });
+    if (!sender || sameQualifiedId(sender, this.deps.botUserId) || this.deps.createdConversations?.has(convId)) {
+      this.logHandled(log, "button_click", "ignored", startedAt);
+      return;
+    }
     const offers = this.deps.pendingOffers;
+    let route: ClickRoute | undefined;
+    // Details of the outcome for the `Message handled` line.
+    let outcome: Record<string, unknown> = {};
+    let failed = false;
     try {
       const prompt = offers.prompt(convId, referenceMessageId);
       const live = prompt ? offers.find(convId, prompt.requesterId) : null;
       const open = !!prompt && !prompt.answered && !prompt.closed && !!live && live.id === prompt.offerId && live.messageId === referenceMessageId;
 
       if (prompt && open && !sameQualifiedId(sender, prompt.requesterId)) {
-        log.info("Button: click by a member who was not asked");
+        route = "not_asked";
         this.metrics.buttonClick("not_asked");
         if (offers.claimNotice(convId, referenceMessageId, "others")) {
           await this.deps.wireOutbound.sendPlainText(convId, `Only ${this.memberName(convId, prompt.requesterId) ?? "the person who was asked"} can answer this.`);
@@ -685,7 +769,8 @@ export class WireEventRouter extends WireEventsHandler {
       }
       if (!prompt || !open || !live) {
         // Silent: the message is closed or about to be, and a client may not have applied the edit yet.
-        log.info("Button: click on a question that is no longer open", { known: !!prompt, answered: prompt?.answered ?? false });
+        route = "late";
+        outcome = { known: !!prompt, answered: prompt?.answered ?? false };
         this.metrics.buttonClick("late");
         return;
       }
@@ -693,11 +778,13 @@ export class WireEventRouter extends WireEventsHandler {
       const parsed = parseOfferButtonId(buttonId);
       if (!parsed || parsed.offerId !== live.id || !decisionAt(live, parsed.index)) {
         log.warn("Button: the button does not belong to the offer");
+        route = "invalid";
         this.metrics.buttonClick("invalid");
         return;
       }
 
       // Accepted: this click decides. It is marked first, so any later click finds it answered.
+      route = "accepted";
       this.metrics.buttonClick("accepted");
       offers.markAnswered(convId, parsed.offerId);
       try {
@@ -712,19 +799,22 @@ export class WireEventRouter extends WireEventsHandler {
       });
       // An option that writes or opens a conversation is work the requester waits for; declining is not.
       const chosen = decision?.command || live.choices?.[parsed.index]?.then ? await this.typing(convId, run) : await run();
-      log.info("Button: click accepted", { chosen });
+      outcome = { chosen };
       // Like a text answer: the requester's next interaction, which closes the offer for the
       // answer model and ends the question as the bot's latest.
       offers.forgetDropped(convId, sender);
       const label = (live.choices?.[parsed.index]?.label ?? YES_NO_LABELS[parsed.index]) ?? "";
       this.recordHandled(convId, `click-${wireMessage.id}`, sender, senderName, `(Chose "${label}".)`, "(Answered the offer above.)");
     } catch (err) {
+      failed = true;
       log.error("Button handler failed", { err: err instanceof Error ? err.name : "UnknownError" });
       try {
         await this.deps.wireOutbound.sendPlainText(convId, "Something went wrong. Please try again.");
       } catch (sendErr) {
         log.error("Failed to send error reply", { err: sendErr instanceof Error ? sendErr.name : "UnknownError" });
       }
+    } finally {
+      this.logHandled(log, "button_click", route, startedAt, { ...outcome, ...(failed ? { failed: true } : {}) });
     }
   }
 

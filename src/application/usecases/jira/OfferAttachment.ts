@@ -87,7 +87,7 @@ export class OfferAttachment {
     // Passive help runs alongside and may have stored a question for the sender meanwhile; keep it.
     const current = this.offers.peek(input.conversationId, input.senderId, this.now());
     if (current && current !== pending) {
-      this.logger?.info("OfferAttachment: another offer was stored meanwhile; the file offer is not kept");
+      this.logger?.debug("OfferAttachment: another offer was stored meanwhile; the file offer is not kept");
       return false;
     }
     const now = this.now();

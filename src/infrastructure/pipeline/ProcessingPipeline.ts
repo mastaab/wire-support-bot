@@ -74,7 +74,7 @@ export class ProcessingPipeline {
       return;
     }
     if (signal?.aborted) return;
-    log.info("Pipeline: classify", { categories: result.categories, confidence: result.confidence });
+    log.debug("Pipeline: classify", { categories: result.categories, confidence: result.confidence });
 
     if (!result.categories.some((category) => SERVICE_DESK_CATEGORIES.includes(category))) return;
 
