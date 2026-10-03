@@ -15,8 +15,8 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      # Wire SDK store (SQLite + CoreCrypto keystore): must persist across restarts.
-      # Losing it means the bot loses all end-to-end encryption session state.
+      # Wire SDK store (SQLite + CoreCrypto keystore): must persist across restarts. Without it the
+      # bot starts as a new device and cannot read messages sent while it had no store.
       - wire-support-bot-crypto:/app/storage
     # Metrics and health endpoint: set WIRE_SUPPORT_BOT_METRICS_PORT=9464 in .env and uncomment.
     # ports:

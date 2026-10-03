@@ -397,7 +397,7 @@ const CRYPTO_KEY_BYTES = 32;
 
 /**
  * Decode WIRE_SDK_CRYPTO_KEY: exactly 32 bytes, hex-encoded (64 chars).
- * Generate one with `openssl rand -hex 32`. Losing it means losing the crypto store.
+ * Generate one with `openssl rand -hex 32`. It encrypts the store; with a new key the store must be deleted.
  */
 function parseCryptoKey(name: string): Uint8Array {
   const raw = getEnv(name).trim();

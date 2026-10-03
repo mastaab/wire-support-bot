@@ -103,9 +103,9 @@ function startFailureFields(error: unknown): Record<string, string> {
   if (error instanceof AuthenticationError || errorName === "AuthenticationError") {
     return {
       errorName,
-      hint: "The Wire backend refused the login: the SDK store's login cookie or WIRE_SDK_API_TOKEN is no longer valid, "
-        + "for example because another instance of this app logged in with its own store. "
-        + "Issue a new token (npm run register-app -- refresh), set WIRE_SDK_API_TOKEN and start again.",
+      hint: "The Wire backend refused the login, for example because another instance of this app logged in with its own store. "
+        + "The SDK has dropped the refused login cookie, so the next start logs in with WIRE_SDK_API_TOKEN as a new device. "
+        + "If that start fails too, the token is no longer valid: issue a new one (npm run register-app -- refresh).",
     };
   }
   return { errorName };

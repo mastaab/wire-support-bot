@@ -1,6 +1,6 @@
 {{- /*
-The Wire SDK store (SQLite database and CoreCrypto keystore). Losing this volume or
-WIRE_SDK_CRYPTO_KEY loses the end-to-end encryption state, so the claim is kept on helm uninstall.
+The Wire SDK store (SQLite database and CoreCrypto keystore). Without it the bot starts as a new
+device and cannot read messages sent while it had no store, so the claim is kept on helm uninstall.
 */}}
 {{- if not .Values.persistence.existingClaim }}
 apiVersion: v1

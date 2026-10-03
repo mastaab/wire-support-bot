@@ -307,7 +307,7 @@ npm run build
 npm start
 ```
 
-`npm start` runs `dist/app/main.js`, which reads `.env`. `npm run dev` runs the TypeScript source with ts-node. The Wire SDK keeps its local database and crypto keystore under `./storage` in the working directory: keep that directory and `WIRE_SDK_CRYPTO_KEY` together, because losing either loses the bot's end-to-end encryption state.
+`npm start` runs `dist/app/main.js`, which reads `.env`. `npm run dev` runs the TypeScript source with ts-node. The Wire SDK keeps its local database and crypto keystore under `./storage` in the working directory: keep that directory and `WIRE_SDK_CRYPTO_KEY` together; the key encrypts the store, so if the key is lost or changed, delete the store too. Without the store the bot starts as a new device of the app, logs in with `WIRE_SDK_API_TOKEN` and rejoins its conversations, but it cannot read messages sent while it had no store, and members may see a new device.
 
 ### Docker Compose
 
@@ -466,7 +466,7 @@ How the chart runs the bot:
 
 - Exactly one replica, replaced with the `Recreate` strategy, so an upgrade stops the old pod before the new one starts. Two instances must never use the same Wire app and store; do not run the bot elsewhere (Docker Compose, a local process) with the same app while the release is installed.
 - The entry point applies the migrations and starts the bot, as with Docker Compose.
-- The SDK store is a `ReadWriteOnce` claim mounted at `/app/storage` (`persistence.size`, default 1Gi; `persistence.storageClass`; or `persistence.existingClaim`). `helm uninstall` keeps the claim. Losing it or `WIRE_SDK_CRYPTO_KEY` loses the end-to-end encryption state, so back up both.
+- The SDK store is a `ReadWriteOnce` claim mounted at `/app/storage` (`persistence.size`, default 1Gi; `persistence.storageClass`; or `persistence.existingClaim`). `helm uninstall` keeps the claim. Without the store the bot starts as a new device of the app, logs in with `WIRE_SDK_API_TOKEN` and rejoins its conversations, but it cannot read messages sent while it had no store, and members may see a new device. If `WIRE_SDK_CRYPTO_KEY` is lost or changed, delete the claim's contents too.
 - The pod runs as user and group 1000 (the `node` user of the base image) with `fsGroup` 1000, no privilege escalation and no capabilities, and does not mount a service account token.
 - A failed start exits the process, and Kubernetes restarts the pod. With `metrics.enabled` the pod also has a liveness probe on `/healthz`, which only checks that the process answers (see "Metrics"); there is no readiness probe, since nothing routes traffic to the pod.
 
@@ -690,7 +690,7 @@ dropdb wire_support_bot_test
 ## Limitations and notes
 
 - Answer quality, classification and the drafting of offers depend on the model. Code guards every write, but a weaker model makes fewer and worse offers. Try your model with the CLI before you turn on passive help.
-- Run one bot process per Wire app and storage directory. The SDK store, pending offers, the message buffer and the guard against double submits belong to the process. Use a separate Wire app for every deployment, including test and staging setups: each SDK store holds its own login cookie, which the Wire backend renews, so a second store logging in as the same app (a new pod, a copy of the store, a test cluster) can make the backend refuse the first one. The bot then stops at start-up with `AuthenticationError` and a hint; issue a new token with `npm run register-app -- refresh` and start again.
+- Run one bot process per Wire app and storage directory. The SDK store, pending offers, the message buffer and the guard against double submits belong to the process. Use a separate Wire app for every deployment, including test and staging setups: each SDK store holds its own login cookie, which the Wire backend renews, so a second store logging in as the same app (a new pod, a copy of the store, a test cluster) can make the backend refuse the first one. The refused bot stops at start-up with `AuthenticationError` and a hint, after the SDK has dropped the refused cookie. The next start (Docker Compose and Kubernetes restart it by themselves) logs in again with `WIRE_SDK_API_TOKEN` as a new device; while both instances run, they keep refusing each other in turn. Only if that start fails as well is the token itself no longer valid: issue a new one with `npm run register-app -- refresh`.
 - Pending offers and recent messages are held in memory: a restart drops unanswered offers and the conversation context.
 - Desk updates arrive by polling, so they appear up to one interval late (the interval is at least 15 seconds).
 - The watch looks at up to 500 requests per check, oldest first, and the bot retries leaving up to 500 pending agent groups per run.

@@ -134,7 +134,7 @@ existingSecret: ""
 secrets:
   # App token issued by the Wire backend when the app was registered (scripts/register-app.mjs).
   wireApiToken: ""
-  # 32-byte key for the SDK's local crypto store, 64 hex characters (openssl rand -hex 32). Losing it loses the store.
+  # 32-byte key for the SDK's local crypto store, 64 hex characters (openssl rand -hex 32). It encrypts the store: if it is lost or changed, delete the store too.
   wireCryptoKey: ""
   # API token: a scoped token (Bearer), or a classic token together with jiraEmail (Basic).
   jiraApiToken: ""
@@ -228,7 +228,8 @@ config:
   defaultTimezone: "UTC"
 
 # Persistent volume for the Wire SDK store (SQLite database and CoreCrypto keystore) at /app/storage.
-# Losing this volume or WIRE_SDK_CRYPTO_KEY loses the end-to-end encryption state: back up both.
+# Without it the bot starts as a new device and cannot read messages sent while it had no store.
+# If WIRE_SDK_CRYPTO_KEY is lost or changed, delete the volume's contents too.
 persistence:
   # Name of an existing PersistentVolumeClaim to use; when set, the chart creates no claim.
   existingClaim: ""
