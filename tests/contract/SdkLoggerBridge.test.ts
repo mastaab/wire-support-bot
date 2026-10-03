@@ -322,9 +322,9 @@ describe("SDK log content notice at start-up", () => {
     expect(logger.info).not.toHaveBeenCalled();
   });
 
-  it("logs an info line naming the setting for messages", () => {
+  it("logs nothing for messages, the default", () => {
     const logger = notices({ level: "warn", content: "messages" });
-    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("WIRE_SUPPORT_BOT_SDK_LOG_CONTENT"), expect.anything());
+    expect(logger.info).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
   });
 

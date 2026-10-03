@@ -79,7 +79,7 @@ describe("numeric settings", () => {
     vi.stubEnv("LOG_FORMAT", "text");
     expect(() => loadConfig()).toThrow(/LOG_FORMAT must be json or ecs/);
     vi.stubEnv("LOG_FORMAT", "ecs");
-    expect(loadConfig().app).toMatchObject({ logFormat: "ecs", sdkLogLevel: "warn", sdkLogContent: "none" });
+    expect(loadConfig().app).toMatchObject({ logFormat: "ecs", sdkLogLevel: "warn", sdkLogContent: "messages" });
   });
 
   it("cap MESSAGE_BUFFER_SIZE at 500", () => {

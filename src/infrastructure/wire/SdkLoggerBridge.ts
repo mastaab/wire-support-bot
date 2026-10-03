@@ -240,19 +240,15 @@ export function makeSdkLoggerBridge(sdkLogger: Logger, options: SdkLogOptions) {
 }
 
 /**
- * Says at start-up when SDK logs carry content: a warning for `full`, an info line for `messages`;
- * nothing for `none` or with the SDK logs off.
+ * Warns at start-up when SDK logs carry the SDK's arguments (`full`); nothing for `messages` (the
+ * default, whose text holds IDs and backend error texts but no message content), for `none`, or
+ * with the SDK logs off.
  */
 export function logSdkLogContentNotice(logger: Logger, options: SdkLogOptions): void {
   if (options.level === "off") return;
   if (options.content === "full") {
     logger.warn(
       "WIRE_SUPPORT_BOT_SDK_LOG_CONTENT is full: Wire SDK logs may contain decrypted messages and HTTP bodies; use it for short troubleshooting only",
-      { sdkLogLevel: options.level, sdkLogContent: options.content },
-    );
-  } else if (options.content === "messages") {
-    logger.info(
-      "WIRE_SUPPORT_BOT_SDK_LOG_CONTENT is messages: Wire SDK logs include the SDK's message text",
       { sdkLogLevel: options.level, sdkLogContent: options.content },
     );
   }

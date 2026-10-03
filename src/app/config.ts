@@ -65,7 +65,7 @@ export interface Config {
     logFormat: LogFormat;
     /** Lowest Wire SDK severity logged (WIRE_SUPPORT_BOT_SDK_LOG_LEVEL), independent of logLevel; default warn. */
     sdkLogLevel: SdkLogLevel;
-    /** What Wire SDK log lines carry beyond content-free fields (WIRE_SUPPORT_BOT_SDK_LOG_CONTENT); default none. */
+    /** What Wire SDK log lines carry beyond content-free fields (WIRE_SUPPORT_BOT_SDK_LOG_CONTENT); default messages. */
     sdkLogContent: SdkLogContent;
     messageBufferSize: number;
     /** Timezone for channels the bot newly joins (WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE), canonical IANA name. Default UTC. */
@@ -331,7 +331,7 @@ const choices = (values: readonly string[]) => `${values.slice(0, -1).join(", ")
 
 /**
  * LOG_FORMAT, WIRE_SUPPORT_BOT_SDK_LOG_LEVEL and WIRE_SUPPORT_BOT_SDK_LOG_CONTENT, any case; the
- * defaults (json, warn, none) when unset or blank. An unknown value fails at startup.
+ * defaults (json, warn, messages) when unset or blank. An unknown value fails at startup.
  */
 export function resolveLogSettings(env: Record<string, string | undefined>): {
   logFormat: LogFormat; sdkLogLevel: SdkLogLevel; sdkLogContent: SdkLogContent;
@@ -345,7 +345,7 @@ export function resolveLogSettings(env: Record<string, string | undefined>): {
   return {
     logFormat: oneOf("LOG_FORMAT", LOG_FORMATS, "json"),
     sdkLogLevel: oneOf("WIRE_SUPPORT_BOT_SDK_LOG_LEVEL", SDK_LOG_LEVELS, "warn"),
-    sdkLogContent: oneOf("WIRE_SUPPORT_BOT_SDK_LOG_CONTENT", SDK_LOG_CONTENTS, "none"),
+    sdkLogContent: oneOf("WIRE_SUPPORT_BOT_SDK_LOG_CONTENT", SDK_LOG_CONTENTS, "messages"),
   };
 }
 

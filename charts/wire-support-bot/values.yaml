@@ -220,8 +220,8 @@ config:
   logFormat: "json"
   # Wire SDK log level, independent of logLevel: off, error, warn, info or debug.
   sdkLogLevel: "warn"
-  # What Wire SDK log lines carry: none (content-free fields), messages (also the SDK's message text) or full (also its arguments, which may contain decrypted messages and HTTP bodies; for short troubleshooting only).
-  sdkLogContent: "none"
+  # What Wire SDK log lines carry: messages (the SDK's message text, which holds IDs and backend error texts but no message content; the default), none (content-free fields only) or full (also its arguments, which may contain decrypted messages and HTTP bodies; for short troubleshooting only).
+  sdkLogContent: "messages"
   # Recent messages kept in memory per conversation as context (a positive whole number, capped at 500).
   messageBufferSize: 50
   # Timezone for conversations the bot newly joins (an IANA name); members can change it per conversation.

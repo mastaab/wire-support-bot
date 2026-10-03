@@ -3,9 +3,9 @@ import { resolveLogSettings } from "../../src/app/config";
 
 describe("resolveLogSettings", () => {
   it("defaults to json, SDK level warn and SDK content none", () => {
-    expect(resolveLogSettings({})).toEqual({ logFormat: "json", sdkLogLevel: "warn", sdkLogContent: "none" });
+    expect(resolveLogSettings({})).toEqual({ logFormat: "json", sdkLogLevel: "warn", sdkLogContent: "messages" });
     expect(resolveLogSettings({ LOG_FORMAT: " ", WIRE_SUPPORT_BOT_SDK_LOG_LEVEL: "", WIRE_SUPPORT_BOT_SDK_LOG_CONTENT: "" }))
-      .toEqual({ logFormat: "json", sdkLogLevel: "warn", sdkLogContent: "none" });
+      .toEqual({ logFormat: "json", sdkLogLevel: "warn", sdkLogContent: "messages" });
   });
 
   it("reads every value, in any case", () => {
