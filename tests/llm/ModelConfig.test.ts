@@ -74,6 +74,14 @@ describe("numeric settings", () => {
     expect(() => loadConfig()).toThrow(/WIRE_SUPPORT_BOT_JIRA_TIMEOUT_MS must be a positive whole number/);
   });
 
+  it("fail at startup on an unknown LOG_FORMAT, naming the setting", () => {
+    for (const [key, value] of Object.entries(REQUIRED_ENV)) vi.stubEnv(key, value);
+    vi.stubEnv("LOG_FORMAT", "text");
+    expect(() => loadConfig()).toThrow(/LOG_FORMAT must be json or ecs/);
+    vi.stubEnv("LOG_FORMAT", "ecs");
+    expect(loadConfig().app).toMatchObject({ logFormat: "ecs", sdkLogLevel: "warn", sdkLogContent: "none" });
+  });
+
   it("cap MESSAGE_BUFFER_SIZE at 500", () => {
     for (const [key, value] of Object.entries(REQUIRED_ENV)) vi.stubEnv(key, value);
     vi.stubEnv("MESSAGE_BUFFER_SIZE", "50");

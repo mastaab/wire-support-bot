@@ -1,14 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeSdkLoggerBridge } from "../../src/infrastructure/wire/SdkLoggerBridge";
-import { initLogging } from "../../src/app/logging";
+import {
+  SDK_ARGS_MAX, logSdkLogContentNotice, makeSdkLoggerBridge, serializeSdkArgs, type SdkLogOptions,
+} from "../../src/infrastructure/wire/SdkLoggerBridge";
+import { createLogger, initLogging } from "../../src/app/logging";
 
 const marker = "SDK_PRIVATE_CONTEXT_MARKER";
 
-/** Runs the calls against a debug-level bridge and returns the parsed stderr lines and raw output. */
-function capture(calls: (bridge: ReturnType<typeof makeSdkLoggerBridge>) => void) {
+/**
+ * Runs the calls against a bridge wired as in the container (a logger at debug, the SDK's level
+ * applied by the bridge) under LOG_LEVEL `logLevel`, and returns the parsed stderr lines and raw output.
+ */
+function capture(
+  calls: (bridge: ReturnType<typeof makeSdkLoggerBridge>) => void,
+  options: SdkLogOptions = { level: "debug", content: "none" },
+  logLevel = "debug",
+) {
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   try {
-    calls(makeSdkLoggerBridge(initLogging("debug")));
+    initLogging(logLevel, { format: "json", stream: "stderr" });
+    calls(makeSdkLoggerBridge(createLogger("debug"), options));
     const output = stderr.mock.calls.map(([line]) => String(line));
     return { raw: output.join(""), lines: output.map(line => JSON.parse(line) as Record<string, unknown>) };
   } finally {
@@ -50,10 +60,10 @@ describe("SDK logging privacy", () => {
     });
     expect(raw).not.toContain(marker);
     expect(lines).toEqual([
-      { level: "debug", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
-      { level: "info", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
-      { level: "warn", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String), errorName: "Error" },
-      { level: "error", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String), errorName: "Error" },
+      { level: "debug", severity: "DEBUG", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
+      { level: "info", severity: "INFO", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
+      { level: "warn", severity: "WARNING", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String), errorName: "Error" },
+      { level: "error", severity: "ERROR", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String), errorName: "Error" },
     ]);
   });
 
@@ -79,7 +89,7 @@ describe("SDK logging privacy", () => {
     expect(raw).not.toContain("DEEP_CODE");
     expect(raw).not.toContain("SAFE_BUT_NOT_AN_ERROR");
     expect(raw).not.toContain("BBBB");
-    const fields = lines.map(({ time: _time, level: _level, msg: _msg, component: _component, ...rest }) => rest);
+    const fields = lines.map(({ time: _time, level: _level, severity: _severity, msg: _msg, component: _component, ...rest }) => rest);
     expect(fields).toEqual([
       { errorName: "WireApiException", status: 403, code: 403, label: "access-denied" },
       { errorName: "Error" },
@@ -149,7 +159,7 @@ describe("SDK logging privacy", () => {
     expect(raw).not.toContain(marker);
     expect(raw).not.toContain("ECONNRESET");
     expect(raw).not.toContain("1006");
-    const fields = lines.map(({ time: _time, msg: _msg, component: _component, ...rest }) => rest);
+    const fields = lines.map(({ time: _time, severity: _severity, msg: _msg, component: _component, ...rest }) => rest);
     expect(fields).toEqual([
       { level: "error", objectType: "ErrorEvent", eventType: "error" },
       { level: "warn", objectType: "CloseEvent", eventType: "close" },
@@ -177,8 +187,152 @@ describe("SDK logging privacy", () => {
       bridge.info("info", new RetryableHttpStatusError(503, marker));
     });
     expect(lines).toEqual([
-      { level: "debug", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
-      { level: "info", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
+      { level: "debug", severity: "DEBUG", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
+      { level: "info", severity: "INFO", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String) },
     ]);
+  });
+});
+
+describe("SDK log level", () => {
+  const callAll = (bridge: ReturnType<typeof makeSdkLoggerBridge>) => {
+    for (const level of ["debug", "info", "warn", "error"] as const) bridge[level](level);
+  };
+
+  it("writes SDK debug lines at SDK level debug although LOG_LEVEL is info", () => {
+    const { lines } = capture(callAll, { level: "debug", content: "none" }, "info");
+    expect(lines.map(line => line.level)).toEqual(["debug", "info", "warn", "error"]);
+  });
+
+  it("writes no SDK debug or info lines at SDK level warn although LOG_LEVEL is debug", () => {
+    const { lines } = capture(callAll, { level: "warn", content: "none" }, "debug");
+    expect(lines.map(line => line.level)).toEqual(["warn", "error"]);
+  });
+
+  it("applies each SDK level, and off writes nothing", () => {
+    const levels = (level: SdkLogOptions["level"]) => capture(callAll, { level, content: "none" }, "error").lines.map(line => line.level);
+    expect(levels("info")).toEqual(["info", "warn", "error"]);
+    expect(levels("error")).toEqual(["error"]);
+    expect(levels("off")).toEqual([]);
+  });
+});
+
+describe("SDK log content", () => {
+  it("adds only the message text with messages, never the extra arguments", () => {
+    const { raw, lines } = capture(bridge => {
+      bridge.debug("Decrypted message", { content: marker });
+      bridge.error("Websocket Error:", new WireApiException(401, "invalid-credentials", marker));
+    }, { level: "debug", content: "messages" });
+    expect(raw).not.toContain(marker);
+    expect(lines).toEqual([
+      { level: "debug", severity: "DEBUG", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String), sdkMessage: "Decrypted message" },
+      {
+        level: "error", severity: "ERROR", msg: "Wire SDK diagnostic", component: "sdk", time: expect.any(String),
+        errorName: "WireApiException", code: 401, label: "invalid-credentials", sdkMessage: "Websocket Error:",
+      },
+    ]);
+  });
+
+  it("removes control characters from the message text and cuts it at 500 characters", () => {
+    const { lines } = capture(bridge => {
+      bridge.info("line one\nline two\r\t\u0000\u001b[31mred\u007f\u0085");
+      bridge.info("x".repeat(600));
+      bridge.info(`${"y".repeat(499)}\u{1F600}`);
+    }, { level: "debug", content: "messages" });
+    expect(lines[0]!.sdkMessage).toBe("line oneline two[31mred");
+    expect(lines[1]!.sdkMessage).toBe("x".repeat(500));
+    expect(lines[2]!.sdkMessage).toBe("y".repeat(499));
+  });
+
+  it("adds the extra arguments with full and keeps their nested keys, still removing top-level content keys", () => {
+    const { lines } = capture(bridge => {
+      bridge.warn("Request failed", { text: "nested text", response: { data: { prompt: "nested prompt" } } }, 42, null);
+    }, { level: "debug", content: "full" });
+    expect(lines[0]).toMatchObject({
+      level: "warn",
+      sdkMessage: "Request failed",
+      sdkArgs: [{ text: "nested text", response: { data: { prompt: "nested prompt" } } }, 42, null],
+    });
+    for (const key of ["text", "preview", "raw", "context", "prompt", "response", "stack"]) expect(lines[0]).not.toHaveProperty(key);
+  });
+
+  it("writes no sdkArgs without extra arguments", () => {
+    const { lines } = capture(bridge => bridge.info("Connected"), { level: "debug", content: "full" });
+    expect(lines[0]).not.toHaveProperty("sdkArgs");
+    expect(lines[0]).toMatchObject({ sdkMessage: "Connected" });
+  });
+});
+
+describe("serializeSdkArgs", () => {
+  it("marks circular references", () => {
+    const event: Record<string, unknown> = { type: "error" };
+    event.self = event;
+    event.list = [event];
+    expect(serializeSdkArgs([event])).toEqual([{ type: "error", self: "[Circular]", list: ["[Circular]"] }]);
+  });
+
+  it("keeps a value shared by two branches, which is not circular", () => {
+    const shared = { id: 1 };
+    expect(serializeSdkArgs([{ a: shared, b: shared }])).toEqual([{ a: { id: 1 }, b: { id: 1 } }]);
+  });
+
+  it("cuts deep objects", () => {
+    const deep = { l1: { l2: { l3: { l4: { l5: { l6: "deep" } } } } } };
+    expect(serializeSdkArgs([deep])).toEqual([{ l1: { l2: { l3: { l4: "[Object]" } } } }]);
+  });
+
+  it("keeps large strings and many values to about 4 KB", () => {
+    const big = serializeSdkArgs(["z".repeat(100_000), { body: "w".repeat(100_000) }, Array.from({ length: 1000 }, (_, i) => `item ${i}`)]);
+    const json = JSON.stringify(big);
+    expect(json.length).toBeLessThanOrEqual(SDK_ARGS_MAX + 512);
+    expect(json).toContain("[Truncated]");
+    const many = JSON.stringify(serializeSdkArgs([Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`k${i}`, i]))]));
+    expect(many.length).toBeLessThanOrEqual(SDK_ARGS_MAX + 512);
+    expect(many).toContain("[Truncated]");
+  });
+
+  it("writes Errors as name, message and stack", () => {
+    const error = new WireApiException(403, "access-denied", "Denied");
+    const [value] = serializeSdkArgs([error]) as [Record<string, unknown>];
+    expect(Object.keys(value)).toEqual(["name", "message", "stack"]);
+    expect(value).toMatchObject({ name: "WireApiException", message: "Denied" });
+    expect(value.stack).toEqual(expect.stringContaining("WireApiException: Denied"));
+  });
+
+  it("never throws, whatever the arguments hold", () => {
+    const throwing = Object.defineProperty({}, "secret", { enumerable: true, get() { throw new Error("getter"); } });
+    const proxy = new Proxy({}, { ownKeys() { throw new Error("proxy"); } });
+    const value = serializeSdkArgs([throwing, proxy, 10n, Symbol("s"), () => 1, undefined, NaN, new Date(0), new Uint8Array(3), new Map([["k", 1]]), new Set([1])]);
+    expect(value).toEqual([
+      { secret: "[Unreadable]" }, "[Unreadable]", "10n", "Symbol(s)", "[Function]", "[undefined]", "NaN",
+      "1970-01-01T00:00:00.000Z", "[Uint8Array 3 bytes]", [["k", 1]], [1],
+    ]);
+  });
+});
+
+describe("SDK log content notice at start-up", () => {
+  const notices = (options: SdkLogOptions) => {
+    const logger = { child: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    logSdkLogContentNotice(logger, options);
+    return logger;
+  };
+
+  it("warns for full and names the risk", () => {
+    const logger = notices({ level: "warn", content: "full" });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringMatching(/decrypted messages and HTTP bodies.*short troubleshooting/), expect.anything());
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it("logs an info line naming the setting for messages", () => {
+    const logger = notices({ level: "warn", content: "messages" });
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("WIRE_SUPPORT_BOT_SDK_LOG_CONTENT"), expect.anything());
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("says nothing for none or with the SDK logs off", () => {
+    for (const options of [{ level: "warn", content: "none" }, { level: "off", content: "full" }] as const) {
+      const logger = notices(options);
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.info).not.toHaveBeenCalled();
+    }
   });
 });

@@ -25,6 +25,9 @@ applies. tests/helm/chartConfig.test.ts fails when this mapping drifts from the 
   "WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS" $c.jiraUpdateQuestionHours
   "WIRE_SUPPORT_BOT_JIRA_FEEDBACK" $c.jiraFeedback
   "LOG_LEVEL" $c.logLevel
+  "LOG_FORMAT" $c.logFormat
+  "WIRE_SUPPORT_BOT_SDK_LOG_LEVEL" $c.sdkLogLevel
+  "WIRE_SUPPORT_BOT_SDK_LOG_CONTENT" $c.sdkLogContent
   "MESSAGE_BUFFER_SIZE" $c.messageBufferSize
   "WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE" $c.defaultTimezone
 }}

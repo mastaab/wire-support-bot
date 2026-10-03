@@ -1,9 +1,23 @@
 /**
  * Structured logging setup. Correlates by conversation ID, user ID, entity IDs.
- * Emits content-free structured diagnostic fields to stderr.
+ * Emits content-free structured diagnostic fields as one JSON line each, in the format of
+ * LOG_FORMAT: the bot writes them to stdout, the CLI to stderr (its stdout carries the replies).
  */
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+
+/** `json`: `level`, `msg` and `time`; `ecs`: Elastic Common Schema. Both add `severity`. */
+export const LOG_FORMATS = ["json", "ecs"] as const;
+export type LogFormat = (typeof LOG_FORMATS)[number];
+
+/** The ECS version the `ecs` format follows; entrypoint.sh writes the same. */
+export const ECS_VERSION = "9.0.0";
+
+/** Google Cloud Logging's severity names; most other collectors read `level` or `log.level`. */
+const SEVERITY: Record<LogLevel, string> = { debug: "DEBUG", info: "INFO", warn: "WARNING", error: "ERROR" };
+
+/** Top-level fields that may hold content; never written, in either format. */
+const FILTERED_KEYS = ["text", "preview", "raw", "context", "prompt", "response", "stack"];
 
 export interface Logger {
   child(bindings: Record<string, unknown>): Logger;
@@ -42,19 +56,53 @@ export function writeSafely(stream: NodeJS.WritableStream, text: string): void {
   }
 }
 
-function createConsoleLogger(level: LogLevel, bindings: Record<string, unknown> = {}): Logger {
-  guardAgainstBrokenPipe(process.stderr);
-  const numericLevel = { debug: 0, info: 1, warn: 2, error: 3 }[level];
-  const min = numericLevel;
-  const log = (l: string, msg: string, data?: Record<string, unknown>) => {
-    const fields = { ...bindings, ...data };
-    for (const key of ["text", "preview", "raw", "context", "prompt", "response", "stack"]) delete fields[key];
-    const out = { level: l, msg, time: new Date().toISOString(), ...fields };
-    writeSafely(process.stderr, JSON.stringify(out) + "\n");
+/** LOG_FORMAT when it is a known format (any case), otherwise undefined. */
+export function parseLogFormat(raw: string | undefined): LogFormat | undefined {
+  const value = raw?.trim().toLowerCase();
+  return (LOG_FORMATS as readonly string[]).includes(value ?? "") ? (value as LogFormat) : undefined;
+}
+
+/**
+ * One log line with its newline. The fixed fields come first and win over data fields of the
+ * same name; the content keys are removed from the top level (nested values are kept).
+ */
+export function formatLogLine(
+  format: LogFormat, level: LogLevel, msg: string, data: Record<string, unknown> = {}, time: Date = new Date(),
+): string {
+  const head: Record<string, unknown> = format === "ecs"
+    ? { "@timestamp": time.toISOString(), "log.level": level, message: msg, "ecs.version": ECS_VERSION, severity: SEVERITY[level] }
+    : { level, severity: SEVERITY[level], msg, time: time.toISOString() };
+  const line = { ...head };
+  for (const [key, value] of Object.entries(data)) {
+    if (!(key in head) && !FILTERED_KEYS.includes(key)) line[key] = value;
+  }
+  return JSON.stringify(line) + "\n";
+}
+
+/** Where log lines go: the bot uses stdout, the CLI and anything before `initLogging` stderr. */
+export type LogStream = "stdout" | "stderr";
+
+export interface LogOptions {
+  /** Default: LOG_FORMAT when valid, otherwise json. */
+  format?: LogFormat;
+  /** Default: stderr. */
+  stream?: LogStream;
+}
+
+interface LogOutput {
+  format: LogFormat;
+  stream: NodeJS.WritableStream;
+}
+
+function createConsoleLogger(level: LogLevel, output: LogOutput, bindings: Record<string, unknown> = {}): Logger {
+  guardAgainstBrokenPipe(output.stream);
+  const min = { debug: 0, info: 1, warn: 2, error: 3 }[level];
+  const log = (l: LogLevel, msg: string, data?: Record<string, unknown>) => {
+    writeSafely(output.stream, formatLogLine(output.format, l, msg, { ...bindings, ...data }));
   };
   return {
     child(childBindings: Record<string, unknown>) {
-      return createConsoleLogger(level, { ...bindings, ...childBindings });
+      return createConsoleLogger(level, output, { ...bindings, ...childBindings });
     },
     debug(msg: string, data?: Record<string, unknown>) {
       if (min <= 0) log("debug", msg, data);
@@ -72,16 +120,31 @@ function createConsoleLogger(level: LogLevel, bindings: Record<string, unknown> 
 }
 
 let rootLogger: Logger | null = null;
+let rootOutput: LogOutput | null = null;
 
-export function initLogging(logLevel: string): Logger {
+export function initLogging(logLevel: string, options: LogOptions = {}): Logger {
   const level = (logLevel in { debug: 1, info: 1, warn: 1, error: 1 }
     ? logLevel
     : "info") as LogLevel;
-  rootLogger = createConsoleLogger(level);
+  rootOutput = {
+    format: options.format ?? parseLogFormat(process.env.LOG_FORMAT) ?? "json",
+    stream: options.stream === "stdout" ? process.stdout : process.stderr,
+  };
+  rootLogger = createConsoleLogger(level, rootOutput);
   return rootLogger;
 }
 
+/** The root logger; before `initLogging`, one at LOG_LEVEL and LOG_FORMAT on stderr. */
 export function getLogger(): Logger {
   if (!rootLogger) return initLogging(process.env.LOG_LEVEL ?? "info");
   return rootLogger;
+}
+
+/**
+ * A logger at its own level, independent of LOG_LEVEL, writing to the root logger's stream in its
+ * format; for the Wire SDK, whose level is WIRE_SUPPORT_BOT_SDK_LOG_LEVEL.
+ */
+export function createLogger(level: LogLevel): Logger {
+  if (!rootOutput) getLogger();
+  return createConsoleLogger(level, rootOutput!);
 }

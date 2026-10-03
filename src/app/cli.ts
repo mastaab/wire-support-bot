@@ -100,9 +100,16 @@ function buildMessage(text: string, sender: QualifiedId): object {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const config = loadConfig();
-  // Suppress info logs to stderr so stdout stays clean for scripted use
-  initLogging(process.env.LOG_LEVEL ?? "warn");
+  let config: ReturnType<typeof loadConfig>;
+  try {
+    config = loadConfig();
+  } catch (error) {
+    // Configuration messages name the setting, never a secret value.
+    writeSafely(process.stderr, `Invalid configuration: ${error instanceof Error ? error.message : "unknown error"}\n`);
+    process.exit(1);
+  }
+  // Suppress info logs, and keep them on stderr so stdout stays clean for scripted use
+  initLogging(process.env.LOG_LEVEL ?? "warn", { format: config.app.logFormat, stream: "stderr" });
   const logger = getLogger();
 
   const prisma = getPrismaClient();

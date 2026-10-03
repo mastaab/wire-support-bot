@@ -2,7 +2,7 @@ import "reflect-metadata";
 import type { WireAppSdk } from "@wireapp/wire-apps-js-sdk";
 import { QualifiedId as SdkQualifiedId } from "@wireapp/wire-apps-js-sdk";
 import type { Config } from "./config";
-import type { Logger } from "./logging";
+import { createLogger, type Logger } from "./logging";
 import { createWireOutboundAdapter, type HandlerManagerRef } from "../infrastructure/wire/WireOutboundAdapter";
 import { WireReplyContext } from "../infrastructure/wire/WireReplyContext";
 import { WireEventRouter } from "../infrastructure/wire/WireEventRouter";
@@ -229,7 +229,8 @@ export function createContainer(config: Config, logger: Logger): Container {
   return {
     async getWireClient(): Promise<WireAppSdk> {
       if (!sdkPromise) {
-        sdkPromise = createWireClient(config, router, logger).then(async (sdk) => {
+        // The SDK logs at its own level (WIRE_SUPPORT_BOT_SDK_LOG_LEVEL), applied by the bridge, not at LOG_LEVEL.
+        sdkPromise = createWireClient(config, router, createLogger("debug")).then(async (sdk) => {
           // Before the router receives events (main starts listening after this): groups still owed
           // a leave are ignored like freshly created ones.
           try {

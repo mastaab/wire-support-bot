@@ -1,0 +1,6 @@
+# Expected failure: an unknown log format.
+# expect-schema: at '/config/logFormat': value must be one of 'json', 'ecs'
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+config:
+  logFormat: text

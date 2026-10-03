@@ -10,18 +10,20 @@ import { makeSdkLoggerBridge } from "./SdkLoggerBridge";
  *
  * The SDK stores its SQLite database and CoreCrypto keystore under ./storage
  * relative to process.cwd(); this is not configurable through the public API.
+ *
+ * `sdkLogger` must let every severity through: the bridge applies WIRE_SUPPORT_BOT_SDK_LOG_LEVEL.
  */
 export async function createWireClient(
   config: Config,
   handler: WireEventsHandler,
-  logger: Logger,
+  sdkLogger: Logger,
 ): Promise<WireAppSdk> {
   const sdk = await WireAppSdk.create(
     config.wire.apiToken,
     config.wire.apiHost,
     config.wire.cryptoKey,
     handler,
-    makeSdkLoggerBridge(logger),
+    makeSdkLoggerBridge(sdkLogger, { level: config.app.sdkLogLevel, content: config.app.sdkLogContent }),
   );
 
   const actual = sdk.getApplicationManager().getApplicationQualifiedId();

@@ -10,6 +10,10 @@ import {
 import type { PartAssetWording, SupportRequestKind } from "../domain/entities/SupportRequest";
 import { canonicalTimeZone } from "../domain/services/timeZone";
 import { AGENT_CHAT_MODE_DEFAULT, type AgentChatMode } from "../application/usecases/jira/AskForAgentConversation";
+import { LOG_FORMATS, type LogFormat } from "./logging";
+import {
+  SDK_LOG_CONTENTS, SDK_LOG_LEVELS, type SdkLogContent, type SdkLogLevel,
+} from "../infrastructure/wire/SdkLoggerBridge";
 
 /**
  * Per-slot model config. Each slot has a primary model and a fallback; all share one
@@ -52,6 +56,12 @@ export interface Config {
   };
   app: {
     logLevel: string;
+    /** Format of the log lines (LOG_FORMAT): json (default) or ecs. */
+    logFormat: LogFormat;
+    /** Lowest Wire SDK severity logged (WIRE_SUPPORT_BOT_SDK_LOG_LEVEL), independent of logLevel; default warn. */
+    sdkLogLevel: SdkLogLevel;
+    /** What Wire SDK log lines carry beyond content-free fields (WIRE_SUPPORT_BOT_SDK_LOG_CONTENT); default none. */
+    sdkLogContent: SdkLogContent;
     messageBufferSize: number;
     /** Timezone for channels the bot newly joins (WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE), canonical IANA name. Default UTC. */
     defaultTimezone: string;
@@ -302,6 +312,29 @@ export function resolveDefaultTimezone(env: Record<string, string | undefined>):
   return zone;
 }
 
+/** "a, b or c" */
+const choices = (values: readonly string[]) => `${values.slice(0, -1).join(", ")} or ${values[values.length - 1]}`;
+
+/**
+ * LOG_FORMAT, WIRE_SUPPORT_BOT_SDK_LOG_LEVEL and WIRE_SUPPORT_BOT_SDK_LOG_CONTENT, any case; the
+ * defaults (json, warn, none) when unset or blank. An unknown value fails at startup.
+ */
+export function resolveLogSettings(env: Record<string, string | undefined>): {
+  logFormat: LogFormat; sdkLogLevel: SdkLogLevel; sdkLogContent: SdkLogContent;
+} {
+  const oneOf = <T extends string>(name: string, values: readonly T[], fallback: T): T => {
+    const raw = env[name]?.trim().toLowerCase();
+    if (!raw) return fallback;
+    if (!(values as readonly string[]).includes(raw)) throw new Error(`${name} must be ${choices(values)}`);
+    return raw as T;
+  };
+  return {
+    logFormat: oneOf("LOG_FORMAT", LOG_FORMATS, "json"),
+    sdkLogLevel: oneOf("WIRE_SUPPORT_BOT_SDK_LOG_LEVEL", SDK_LOG_LEVELS, "warn"),
+    sdkLogContent: oneOf("WIRE_SUPPORT_BOT_SDK_LOG_CONTENT", SDK_LOG_CONTENTS, "none"),
+  };
+}
+
 function getEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set`);
@@ -382,6 +415,7 @@ export function loadConfig(): Config {
   getEnv("DATABASE_URL");
 
   const logLevel = process.env.LOG_LEVEL ?? "info";
+  const logSettings = resolveLogSettings(process.env);
   const messageBufferSize = Math.min(resolvePositiveInt(process.env, "MESSAGE_BUFFER_SIZE", 50), 500);
 
   const defaultTimezone = resolveDefaultTimezone(process.env);
@@ -392,7 +426,7 @@ export function loadConfig(): Config {
 
   return {
     wire,
-    app: { logLevel, messageBufferSize, defaultTimezone },
+    app: { logLevel, ...logSettings, messageBufferSize, defaultTimezone },
     llm,
     jira,
     partAsset,

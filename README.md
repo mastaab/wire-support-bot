@@ -160,9 +160,14 @@ Stored in Postgres:
 
 Held in memory only, and lost on restart: the recent messages of each conversation (`MESSAGE_BUFFER_SIZE`), pending offers, the IDs of the bot's button messages with who was asked and the question as sent (so the message can be closed), and the member cache.
 
-Logs are structured JSON on stderr. Fields named `text`, `preview`, `raw`, `context`, `prompt`, `response` and `stack` are removed, and the use cases log error names and ticket keys rather than content. Log lines can carry conversation and user IDs and the sender's display name.
+Logs are structured JSON lines, on stdout for the bot and on stderr for the CLI. Fields named `text`, `preview`, `raw`, `context`, `prompt`, `response` and `stack` are removed, and the use cases log error names and ticket keys rather than content. Log lines can carry conversation and user IDs and the sender's display name.
 
 The Wire SDK's own log calls are recorded as "Wire SDK diagnostic" at their severity, without their text or data; for warnings and errors the line adds only the error's class name (`errorName`) and an HTTP `status`, error `code` or backend `label` when the error carries one as a number or a short identifier. A warning or error without an error object adds the class name of its first object argument (`objectType`, never a plain object) and that object's `type` when it is a short identifier (`eventType`). A dropped WebSocket connection, which the SDK reconnects by itself, therefore shows as an error with `objectType` "ErrorEvent" and `eventType` "error", followed by a warning without fields ("WebSocket Closed" in the SDK).
+
+That is the default, `WIRE_SUPPORT_BOT_SDK_LOG_CONTENT=none`. Two other modes write more, at the SDK's own level (`WIRE_SUPPORT_BOT_SDK_LOG_LEVEL`, default `warn`):
+
+- `messages` adds the SDK's message text as `sdkMessage` (control characters removed, at most 500 characters), but none of its other arguments. The text is written by the SDK and can contain conversation, user and message IDs, backend URLs and error messages from the backend; the bot logs an info line at start-up naming the setting.
+- `full` also adds the SDK's other arguments as `sdkArgs` (about 4 KB at most per line, errors with their message and stack). These can contain decrypted messages, events and HTTP request and response bodies, so the logs then hold message content and possibly tokens. The bot logs a warning at start-up; use it only for short troubleshooting and switch back to `none`.
 
 Sent to the model endpoint:
 
@@ -353,6 +358,10 @@ config:
 ```
 
 Every setting in "Configuration" has a value under `config:` (or under `secrets:` for credentials, and under `database:` for the database); `values.yaml` lists them with their defaults and comments, and `values.schema.json` rejects unknown keys and invalid values. Quote `on` and `off`, because YAML reads a bare `on` as true. An empty value leaves the setting unset, so the bot's own default applies. A change to the values restarts the pod on `helm upgrade`.
+
+#### Logs
+
+The bot writes one JSON object per line to stdout; only Prisma's migration output at start-up is plain text, and a missing or invalid database setting is reported as one JSON line on stderr before the container stops. Each line has `severity` (`DEBUG`, `INFO`, `WARNING`, `ERROR`), which Google Cloud Logging reads, and `level`, which Loki, Datadog and most other tools read. For Elastic, set `config.logFormat: ecs` for Elastic Common Schema fields (`@timestamp`, `log.level`, `message`, `ecs.version`) instead of `level`, `msg` and `time`. Collectors such as Fluent Bit, Vector, Grafana Alloy or the OpenTelemetry Collector need no parser setup beyond JSON. `config.sdkLogLevel` and `config.sdkLogContent` control the Wire SDK's own lines (see "What is stored and what is sent where").
 
 #### Database connection
 
@@ -550,6 +559,9 @@ All settings are environment variables; `.env.example` lists them with comments.
 | Setting | Required | Default | Meaning |
 |---|---|---|---|
 | `LOG_LEVEL` | no | `info` (`warn` in the CLI) | `debug`, `info`, `warn` or `error`. |
+| `LOG_FORMAT` | no | `json` | `json` (fields `level`, `msg`, `time`) or `ecs` (Elastic Common Schema: `@timestamp`, `log.level`, `message`, `ecs.version`). Both add `severity` (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `WIRE_SUPPORT_BOT_SDK_LOG_LEVEL` | no | `warn` | Level of the Wire SDK's own log lines, independent of `LOG_LEVEL`: `off`, `error`, `warn`, `info` or `debug`. |
+| `WIRE_SUPPORT_BOT_SDK_LOG_CONTENT` | no | `none` | What the Wire SDK's log lines carry: `none` (content-free fields), `messages` (also the SDK's message text) or `full` (also its arguments, which may contain decrypted messages and HTTP bodies; for short troubleshooting only). See "What is stored and what is sent where". |
 | `MESSAGE_BUFFER_SIZE` | no | `50` | Recent messages kept in memory per conversation; a positive whole number, capped at 500. |
 | `WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE` | no | `UTC` | IANA timezone for conversations the bot newly joins; members can change it per conversation. |
 

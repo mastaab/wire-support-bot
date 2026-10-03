@@ -15,6 +15,8 @@
  * An empty value counts as unset. Error messages name the setting and never contain a value.
  */
 
+import { formatLogLine, type LogFormat } from "./logging";
+
 export type DatabaseEnv = Readonly<Record<string, string | undefined>>;
 
 const DEFAULT_PORT = "5432";
@@ -58,4 +60,13 @@ export function resolveDatabaseUrl(env: DatabaseEnv): string {
   const options = optional(env, "DATABASE_OPTIONS")?.replace(/^[?&]+/, "");
   if (!options) return url;
   return `${url}${url.includes("?") ? "&" : "?"}${options}`;
+}
+
+/**
+ * The error line `printDatabaseUrl.ts` writes to stderr: one log line in the given format with
+ * severity ERROR, holding only the message, which names the setting and never contains a value.
+ */
+export function databaseUrlErrorLine(error: unknown, format: LogFormat, time?: Date): string {
+  const msg = error instanceof Error ? error.message : "Invalid database settings";
+  return formatLogLine(format, "error", msg, { component: "database-url" }, time);
 }

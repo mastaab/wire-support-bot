@@ -636,6 +636,34 @@
           ],
           "description": "LOG_LEVEL."
         },
+        "logFormat": {
+          "type": "string",
+          "enum": [
+            "json",
+            "ecs"
+          ],
+          "description": "LOG_FORMAT."
+        },
+        "sdkLogLevel": {
+          "type": "string",
+          "enum": [
+            "off",
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ],
+          "description": "WIRE_SUPPORT_BOT_SDK_LOG_LEVEL: off, error, warn, info or debug. Quote off: YAML reads a bare off as a boolean."
+        },
+        "sdkLogContent": {
+          "type": "string",
+          "enum": [
+            "none",
+            "messages",
+            "full"
+          ],
+          "description": "WIRE_SUPPORT_BOT_SDK_LOG_CONTENT."
+        },
         "messageBufferSize": {
           "type": [
             "integer",

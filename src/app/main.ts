@@ -1,14 +1,26 @@
 import dotenv from "dotenv";
-import { loadConfig } from "./config";
+import { loadConfig, type Config } from "./config";
 import { initLogging, getLogger } from "./logging";
 import { createContainer } from "./container";
+import { logSdkLogContentNotice } from "../infrastructure/wire/SdkLoggerBridge";
 
 dotenv.config();
 
 async function main(): Promise<void> {
-  const config = loadConfig();
-  const logger = initLogging(config.app.logLevel);
-  logger.info("Wire Support Bot starting", { logLevel: config.app.logLevel });
+  let config: Config;
+  try {
+    config = loadConfig();
+  } catch (error) {
+    // Configuration messages name the setting, never a secret value.
+    getLogger().error("Invalid configuration", { reason: error instanceof Error ? error.message : undefined });
+    process.exit(1);
+  }
+  // Log lines go to stdout: collectors such as GKE's Cloud Logging class every stderr line as an
+  // error unless it is parsed. Anything logged before this point (a configuration error) goes to stderr.
+  const logger = initLogging(config.app.logLevel, { format: config.app.logFormat, stream: "stdout" });
+  const { logLevel, logFormat, sdkLogLevel, sdkLogContent } = config.app;
+  logger.info("Wire Support Bot starting", { logLevel, logFormat, sdkLogLevel, sdkLogContent });
+  logSdkLogContentNotice(logger, { level: sdkLogLevel, content: sdkLogContent });
 
   const container = createContainer(config, logger);
   let sdk: Awaited<ReturnType<typeof container.getWireClient>> | null = null;

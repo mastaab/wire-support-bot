@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDatabaseUrl } from "../../src/app/databaseUrl";
+import { databaseUrlErrorLine, resolveDatabaseUrl } from "../../src/app/databaseUrl";
 
 const PASSWORD = "p@ss/w:rd#?%";
 
@@ -83,5 +83,40 @@ describe("resolveDatabaseUrl", () => {
 
   it("names the first missing part when nothing is set", () => {
     expect(() => resolveDatabaseUrl({})).toThrow("DATABASE_HOST is required when DATABASE_URL is not set");
+  });
+});
+
+describe("databaseUrlErrorLine", () => {
+  const TIME = new Date("2026-01-02T03:04:05.000Z");
+  const failure = () => {
+    try {
+      resolveDatabaseUrl({ ...parts, DATABASE_NAME: "" });
+    } catch (error) {
+      return error;
+    }
+    throw new Error("expected a failure");
+  };
+
+  it("is one json line with severity ERROR and only the message", () => {
+    const line = databaseUrlErrorLine(failure(), "json", TIME);
+    expect(line.endsWith("\n")).toBe(true);
+    expect(line.slice(0, -1)).not.toContain("\n");
+    expect(JSON.parse(line)).toEqual({
+      level: "error", severity: "ERROR", msg: "DATABASE_NAME is required when DATABASE_URL is not set",
+      time: TIME.toISOString(), component: "database-url",
+    });
+  });
+
+  it("is one ecs line with severity ERROR in the ecs format", () => {
+    expect(JSON.parse(databaseUrlErrorLine(failure(), "ecs", TIME))).toMatchObject({
+      "@timestamp": TIME.toISOString(), "log.level": "error", severity: "ERROR",
+      message: "DATABASE_NAME is required when DATABASE_URL is not set",
+    });
+  });
+
+  it("holds no value of any setting", () => {
+    const line = databaseUrlErrorLine(failure(), "json", TIME);
+    for (const value of Object.values(parts)) expect(line).not.toContain(value);
+    expect(JSON.parse(databaseUrlErrorLine("not an error", "json", TIME)).msg).toBe("Invalid database settings");
   });
 });

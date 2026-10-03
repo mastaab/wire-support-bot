@@ -75,20 +75,181 @@ export function sdkObjectDetails(args: unknown[]): Record<string, string> {
   return typeof type === "string" && SHORT_IDENTIFIER.test(type) ? { objectType, eventType: type } : { objectType };
 }
 
-/** SDK messages and metadata can include decrypted events and HTTP bodies. */
-export function makeSdkLoggerBridge(botLogger: Logger) {
-  const log = botLogger.child({ component: "sdk" });
-  // Keep severity visible without persisting third-party free-form content; warnings and
-  // errors add only the content-free fields from sdkErrorDetails (for a non-Error object such
-  // as a WebSocket error event, its class name and event type).
-  const details = (args: unknown[]) => {
-    const fields = sdkErrorDetails(args);
-    return Object.keys(fields).length > 0 ? fields : undefined;
+/** WIRE_SUPPORT_BOT_SDK_LOG_LEVEL: the lowest SDK severity written, or `off`. */
+export const SDK_LOG_LEVELS = ["off", "error", "warn", "info", "debug"] as const;
+export type SdkLogLevel = (typeof SDK_LOG_LEVELS)[number];
+
+/**
+ * WIRE_SUPPORT_BOT_SDK_LOG_CONTENT: `none` writes only the content-free fields, `messages` adds the
+ * SDK's message text (`sdkMessage`), `full` also its extra arguments (`sdkArgs`).
+ */
+export const SDK_LOG_CONTENTS = ["none", "messages", "full"] as const;
+export type SdkLogContent = (typeof SDK_LOG_CONTENTS)[number];
+
+export interface SdkLogOptions {
+  level: SdkLogLevel;
+  content: SdkLogContent;
+}
+
+/** Longest `sdkMessage`, in UTF-16 code units. */
+export const SDK_MESSAGE_MAX = 500;
+
+/** The SDK's message text for `sdkMessage`: control characters removed, at most `SDK_MESSAGE_MAX` long. */
+export function sanitizeSdkMessage(message: string): string {
+  return clip(message.replace(/[\u0000-\u001f\u007f-\u009f]/g, ""), SDK_MESSAGE_MAX);
+}
+
+/** The first `max` code units of `text`, without a lone high surrogate at the end. */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+
+/** About the largest `sdkArgs` as JSON, in characters. */
+export const SDK_ARGS_MAX = 4096;
+const ARGS_MAX_DEPTH = 5;
+const ARGS_MAX_ENTRIES = 50;
+const ARGS_MAX_STRING = 1000;
+const TRUNCATED = "[Truncated]";
+const UNREADABLE = Symbol("unreadable");
+
+/** One property, or UNREADABLE when its getter throws. */
+function readOrMark(source: object, key: string): unknown {
+  try {
+    return (source as Record<string, unknown>)[key];
+  } catch {
+    return UNREADABLE;
+  }
+}
+
+/**
+ * The SDK's extra arguments as a JSON-safe value for `sdkArgs` (content mode `full` only):
+ * circular references as "[Circular]", objects deeper than `ARGS_MAX_DEPTH` as "[Object]" or
+ * "[Array]", at most `ARGS_MAX_ENTRIES` entries per object or array, strings clipped, and
+ * "[Truncated]" once about `SDK_ARGS_MAX` characters are used. Errors become their name, message
+ * and stack. Throwing getters and proxies become "[Unreadable]"; never throws.
+ */
+export function serializeSdkArgs(args: unknown[]): unknown {
+  let budget = SDK_ARGS_MAX;
+  const ancestors: object[] = [];
+  const spend = (value: unknown) => {
+    budget -= JSON.stringify(value)?.length ?? 4;
+    return value;
+  };
+  const entries = (pairs: Iterable<[string, unknown]>, depth: number): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    let count = 0;
+    for (const [key, value] of pairs) {
+      if (budget <= 0 || count++ >= ARGS_MAX_ENTRIES) {
+        out["[more]"] = TRUNCATED;
+        break;
+      }
+      spend(key);
+      out[key] = visit(value, depth + 1);
+    }
+    return out;
+  };
+  const items = (values: Iterable<unknown>, depth: number): unknown[] => {
+    const out: unknown[] = [];
+    for (const value of values) {
+      if (budget <= 0 || out.length >= ARGS_MAX_ENTRIES) {
+        out.push(TRUNCATED);
+        break;
+      }
+      out.push(visit(value, depth + 1));
+    }
+    return out;
+  };
+  const visit = (value: unknown, depth: number): unknown => {
+    if (budget <= 0) return TRUNCATED;
+    if (value === UNREADABLE) return spend("[Unreadable]");
+    switch (typeof value) {
+      case "string": return spend(clip(value, Math.min(ARGS_MAX_STRING, budget)));
+      case "number": return spend(Number.isFinite(value) ? value : String(value));
+      case "boolean": return spend(value);
+      case "bigint": return spend(`${value}n`);
+      case "undefined": return spend("[undefined]");
+      case "symbol": return spend(String(value));
+      case "function": return spend("[Function]");
+    }
+    if (value === null) return spend(null);
+    const object = value as object;
+    if (ancestors.includes(object)) return spend("[Circular]");
+    if (depth >= ARGS_MAX_DEPTH) return spend(Array.isArray(object) ? "[Array]" : "[Object]");
+    ancestors.push(object);
+    try {
+      if (object instanceof Error) {
+        return entries(["name", "message", "stack"].map((key): [string, unknown] => [key, readOrMark(object, key)]), depth);
+      }
+      if (object instanceof Date) return spend(Number.isNaN(object.getTime()) ? "Invalid Date" : object.toISOString());
+      if (ArrayBuffer.isView(object) || object instanceof ArrayBuffer) {
+        return spend(`[${object.constructor?.name ?? "Binary"} ${object.byteLength} bytes]`);
+      }
+      if (object instanceof Map) return items(object.entries(), depth);
+      if (object instanceof Set) return items(object.values(), depth);
+      if (Array.isArray(object)) return items(object, depth);
+      return entries(Object.keys(object).map((key): [string, unknown] => [key, readOrMark(object, key)]), depth);
+    } catch {
+      return spend("[Unreadable]");
+    } finally {
+      ancestors.pop();
+    }
+  };
+  try {
+    const result = visit(args, 0);
+    const json = JSON.stringify(result);
+    // The budget is spent per value; escaped characters can still make the JSON longer.
+    return json.length <= SDK_ARGS_MAX + 512 ? result : clip(json, SDK_ARGS_MAX);
+  } catch {
+    return "[Unreadable]";
+  }
+}
+
+const SEVERITY_RANK = { debug: 0, info: 1, warn: 2, error: 3 } as const;
+const LEVEL_THRESHOLD: Record<SdkLogLevel, number> = { off: Infinity, error: 3, warn: 2, info: 1, debug: 0 };
+
+/**
+ * SDK messages and metadata can include decrypted events and HTTP bodies. `sdkLogger` must let
+ * every severity through: the SDK's own level (`options.level`) is applied here, independent of
+ * LOG_LEVEL.
+ */
+export function makeSdkLoggerBridge(sdkLogger: Logger, options: SdkLogOptions) {
+  const log = sdkLogger.child({ component: "sdk" });
+  // In content mode none, keep severity visible without persisting third-party free-form content;
+  // warnings and errors add only the content-free fields from sdkErrorDetails (for a non-Error
+  // object such as a WebSocket error event, its class name and event type). The other modes add
+  // the message text and, with full, the extra arguments.
+  const write = (severity: keyof typeof SEVERITY_RANK, msg: unknown, rest: unknown[]) => {
+    if (SEVERITY_RANK[severity] < LEVEL_THRESHOLD[options.level]) return;
+    const fields: Record<string, unknown> = severity === "warn" || severity === "error" ? sdkErrorDetails([msg, ...rest]) : {};
+    if (options.content !== "none" && typeof msg === "string") fields.sdkMessage = sanitizeSdkMessage(msg);
+    if (options.content === "full" && rest.length > 0) fields.sdkArgs = serializeSdkArgs(rest);
+    log[severity]("Wire SDK diagnostic", Object.keys(fields).length > 0 ? fields : undefined);
   };
   return {
-    debug: (_msg: string, ..._rest: unknown[]) => log.debug("Wire SDK diagnostic"),
-    info: (_msg: string, ..._rest: unknown[]) => log.info("Wire SDK diagnostic"),
-    warn: (msg: string, ...rest: unknown[]) => log.warn("Wire SDK diagnostic", details([msg, ...rest])),
-    error: (msg: string, ...rest: unknown[]) => log.error("Wire SDK diagnostic", details([msg, ...rest])),
+    debug: (msg: string, ...rest: unknown[]) => write("debug", msg, rest),
+    info: (msg: string, ...rest: unknown[]) => write("info", msg, rest),
+    warn: (msg: string, ...rest: unknown[]) => write("warn", msg, rest),
+    error: (msg: string, ...rest: unknown[]) => write("error", msg, rest),
   };
+}
+
+/**
+ * Says at start-up when SDK logs carry content: a warning for `full`, an info line for `messages`;
+ * nothing for `none` or with the SDK logs off.
+ */
+export function logSdkLogContentNotice(logger: Logger, options: SdkLogOptions): void {
+  if (options.level === "off") return;
+  if (options.content === "full") {
+    logger.warn(
+      "WIRE_SUPPORT_BOT_SDK_LOG_CONTENT is full: Wire SDK logs may contain decrypted messages and HTTP bodies; use it for short troubleshooting only",
+      { sdkLogLevel: options.level, sdkLogContent: options.content },
+    );
+  } else if (options.content === "messages") {
+    logger.info(
+      "WIRE_SUPPORT_BOT_SDK_LOG_CONTENT is messages: Wire SDK logs include the SDK's message text",
+      { sdkLogLevel: options.level, sdkLogContent: options.content },
+    );
+  }
 }
