@@ -53,6 +53,11 @@ export interface Config {
     /** Qualified ID of the application; verified against the backend at startup. */
     appId: string;
     appDomain: string;
+    /**
+     * Minutes without a Wire connection before the watchdog restarts the connection, and as many
+     * again before it ends the process (WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES); 0 turns it off. Default 5.
+     */
+    watchdogMinutes: number;
   };
   app: {
     logLevel: string;
@@ -359,6 +364,24 @@ export function resolveMetricsConfig(env: Record<string, string | undefined>): M
   return { port, host };
 }
 
+/** Default and largest value of WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES. */
+export const WIRE_WATCHDOG_MINUTES_DEFAULT = 5;
+export const WIRE_WATCHDOG_MINUTES_MAX = 60;
+
+/**
+ * WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES: a whole number from 0 (off) to 60; the default (5) when
+ * unset or blank. Anything else fails at startup, naming the setting.
+ */
+export function resolveWireWatchdogMinutes(env: Record<string, string | undefined>): number {
+  const raw = env.WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES?.trim();
+  if (!raw) return WIRE_WATCHDOG_MINUTES_DEFAULT;
+  const n = /^\d{1,2}$/.test(raw) ? parseInt(raw, 10) : NaN;
+  if (!(n >= 0 && n <= WIRE_WATCHDOG_MINUTES_MAX)) {
+    throw new Error(`WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES must be a whole number from 0 to ${WIRE_WATCHDOG_MINUTES_MAX}`);
+  }
+  return n;
+}
+
 function getEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set`);
@@ -433,6 +456,7 @@ export function loadConfig(): Config {
     cryptoKey: parseCryptoKey("WIRE_SDK_CRYPTO_KEY"),
     appId: getEnv("WIRE_SDK_APP_ID"),
     appDomain: getEnv("WIRE_SDK_APP_DOMAIN"),
+    watchdogMinutes: resolveWireWatchdogMinutes(process.env),
   };
 
   // Read by Prisma directly; checked here so a missing URL fails with a clear message.

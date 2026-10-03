@@ -7,6 +7,7 @@ import { createWireOutboundAdapter, type HandlerManagerRef } from "../infrastruc
 import { WireReplyContext } from "../infrastructure/wire/WireReplyContext";
 import { WireEventRouter } from "../infrastructure/wire/WireEventRouter";
 import { createWireClient } from "../infrastructure/wire/WireClient";
+import type { WireConnectionObserver } from "../infrastructure/wire/WireConnectionWatchdog";
 import { PrismaChannelConfigRepository } from "../infrastructure/persistence/postgres/PrismaChannelConfigRepository";
 import { PrismaAuditLogRepository } from "../infrastructure/persistence/postgres/PrismaAuditLogRepository";
 import { InMemoryMemberCache } from "../infrastructure/services/InMemoryMemberCache";
@@ -54,8 +55,13 @@ export interface Container {
   shutdown(): Promise<void>;
 }
 
-/** `metrics` records what the adapters and use cases do; NO_METRICS when metrics are off. */
-export function createContainer(config: Config, logger: Logger, metrics: MetricsPort = NO_METRICS): Container {
+/**
+ * `metrics` records what the adapters and use cases do; NO_METRICS when metrics are off.
+ * `wireConnection` (the connection watchdog) gets the Wire SDK's connection events.
+ */
+export function createContainer(
+  config: Config, logger: Logger, metrics: MetricsPort = NO_METRICS, wireConnection?: WireConnectionObserver,
+): Container {
   const handlerRef: HandlerManagerRef = { current: null };
 
   const replyContext = new WireReplyContext();
@@ -239,7 +245,7 @@ export function createContainer(config: Config, logger: Logger, metrics: Metrics
     async getWireClient(): Promise<WireAppSdk> {
       if (!sdkPromise) {
         // The SDK logs at its own level (WIRE_SUPPORT_BOT_SDK_LOG_LEVEL), applied by the bridge, not at LOG_LEVEL.
-        sdkPromise = createWireClient(config, router, createLogger("debug"), metrics).then(async (sdk) => {
+        sdkPromise = createWireClient(config, router, createLogger("debug"), metrics, wireConnection).then(async (sdk) => {
           // Before the router receives events (main starts listening after this): groups still owed
           // a leave are ignored like freshly created ones.
           try {

@@ -4,6 +4,7 @@ import type { Config } from "../../app/config";
 import type { Logger } from "../../application/ports/Logger";
 import { NO_METRICS, type MetricsPort } from "../../application/ports/MetricsPort";
 import { makeSdkLoggerBridge } from "./SdkLoggerBridge";
+import type { WireConnectionObserver } from "./WireConnectionWatchdog";
 
 /**
  * Creates the Wire SDK instance with app-token authentication and verifies the
@@ -14,13 +15,15 @@ import { makeSdkLoggerBridge } from "./SdkLoggerBridge";
  *
  * `sdkLogger` must let every severity through: the bridge applies WIRE_SUPPORT_BOT_SDK_LOG_LEVEL.
  * `metrics` counts the SDK's warnings and errors and follows the WebSocket connection through the
- * SDK's backend connection listener.
+ * SDK's backend connection listener. `connection` (the watchdog) gets the same events: the SDK
+ * accepts only one listener.
  */
 export async function createWireClient(
   config: Config,
   handler: WireEventsHandler,
   sdkLogger: Logger,
   metrics: MetricsPort = NO_METRICS,
+  connection?: WireConnectionObserver,
 ): Promise<WireAppSdk> {
   const sdk = await WireAppSdk.create(
     config.wire.apiToken,
@@ -38,9 +41,24 @@ export async function createWireClient(
     );
   }
 
-  sdk.setBackendConnectionListener({
-    onConnected: () => metrics.wireConnection("connected"),
-    onDisconnected: () => metrics.wireConnection("disconnected"),
-  });
+  listenForConnection(sdk, metrics, connection);
   return sdk;
+}
+
+/** Sets the SDK's one backend connection listener, which feeds the metrics and the optional observer. */
+export function listenForConnection(
+  sdk: Pick<WireAppSdk, "setBackendConnectionListener">,
+  metrics: MetricsPort,
+  connection?: WireConnectionObserver,
+): void {
+  sdk.setBackendConnectionListener({
+    onConnected: () => {
+      metrics.wireConnection("connected");
+      connection?.onConnected();
+    },
+    onDisconnected: () => {
+      metrics.wireConnection("disconnected");
+      connection?.onDisconnected();
+    },
+  });
 }

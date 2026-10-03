@@ -508,6 +508,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 | `WIRE_SDK_CRYPTO_KEY` | yes | | 32-byte key for the SDK's local crypto store, as 64 hex characters (`openssl rand -hex 32`). |
 | `WIRE_SDK_APP_ID` | yes | | The app's user ID; checked against the backend at start-up. |
 | `WIRE_SDK_APP_DOMAIN` | yes | | The app's domain; checked at start-up. Agent handles are looked up on this domain. |
+| `WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES` | no | `5` | Minutes without a Wire connection, from start-up or from a lost connection, before the bot restarts the connection; after as many minutes again without a connection it exits with code 1, so Docker Compose or Kubernetes starts it again. A whole number from 0 to 60; `0` turns the watchdog off. See "Limitations and notes". |
 | `WIRE_ADMIN_EMAIL` | no | | Only for `scripts/register-app.mjs`: the team admin's e-mail. |
 | `WIRE_ADMIN_PASSWORD` | no | prompted | Only for `scripts/register-app.mjs`: the admin's password. |
 
@@ -607,7 +608,7 @@ The service scope tells the classifier and the answer model what counts as a ser
 With `WIRE_SUPPORT_BOT_METRICS_PORT` set, the bot serves an HTTP endpoint on that port (on `WIRE_SUPPORT_BOT_METRICS_HOST`, default every interface) from start-up on, before it connects to Wire:
 
 - `GET /metrics`: the metrics in the Prometheus text format.
-- `GET /healthz`: `200 ok` as long as the process answers. It does not check Wire, Jira, the model endpoint or the database, so a dropped WebSocket or a Jira outage never gets the bot restarted; watch those through the metrics instead.
+- `GET /healthz`: `200 ok` as long as the process answers. It does not check Wire, Jira, the model endpoint or the database, so a Jira outage never gets the bot restarted; watch it through the metrics instead. A lost Wire connection is handled by the connection watchdog (`WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES`), which ends the process when restarting the connection does not help.
 - Anything else: 404.
 
 Locally, set `WIRE_SUPPORT_BOT_METRICS_PORT=9464` in `.env`, start the bot and open `http://localhost:9464/metrics`. With Docker Compose, also publish the port (a commented mapping is in `docker-compose.yml`). In Kubernetes, set `metrics.enabled` in the chart (see "Kubernetes (Helm)"). The endpoint has no authentication: keep it inside the cluster or on a local address. A port that cannot be bound stops start-up with an error line naming the port.
@@ -619,6 +620,7 @@ Every metric name starts with `wire_support_bot_`. The Node runtime metrics of p
 | `wire_support_bot_wire_messages_received_total` | counter | `kind`: `text`, `file`, `button_click`, `other` | Events received from Wire. A file counts once, when it is uploaded; `other` is edits, pings, locations, reactions and deletions. |
 | `wire_support_bot_wire_connection_events_total` | counter | `event`: `connected`, `disconnected` | WebSocket connections opened and lost, as the Wire SDK reports them; each reconnect adds one of each. |
 | `wire_support_bot_wire_connected` | gauge | | 1 while the WebSocket is connected, 0 before the first connection and after a loss until the SDK has reconnected. |
+| `wire_support_bot_wire_watchdog_actions_total` | counter | `action`: `restart`, `exit` | What the connection watchdog did after `WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES` without a Wire connection: restarted the connection, or ended the process after a second period. |
 | `wire_support_bot_wire_sdk_problems_total` | counter | `severity`: `warn`, `error` | Warnings and errors the Wire SDK logged, also those below `WIRE_SUPPORT_BOT_SDK_LOG_LEVEL`. |
 | `wire_support_bot_model_calls_total` | counter | `slot`: `classify`, `respond`; `outcome`: `ok`, `fallback`, `timeout`, `error` | Model calls. `fallback`: the fallback model answered after the primary was unavailable or timed out; `timeout`: the last attempt timed out. |
 | `wire_support_bot_model_call_duration_seconds` | histogram | `slot` | Duration of a model call, fallback included; buckets from 0.25 s to 120 s. |
@@ -657,6 +659,9 @@ sum(increase(wire_support_bot_wire_messages_received_total[6h])) == 0
 # The WebSocket has been down for 10 minutes
 max_over_time(wire_support_bot_wire_connected[10m]) == 0
 
+# The connection watchdog had to act
+increase(wire_support_bot_wire_watchdog_actions_total[1h]) > 0
+
 # The watch keeps failing
 increase(wire_support_bot_watch_checks_total{outcome="error"}[30m]) > 3
 ```
@@ -694,6 +699,7 @@ dropdb wire_support_bot_test
 - Offers live in memory, so after a restart a click on an earlier question does nothing, and a question still open at the restart keeps its buttons (it is not closed).
 - Only photos and documents of the listed types, up to 10 MB, are offered for attaching.
 - With a remote model provider and sharing on, ticket content leaves your infrastructure; see "What is stored and what is sent where".
+- The Wire SDK stops reconnecting after about 10 failed attempts in a row (about 3.5 minutes of outage) and does not report it, so the bot would stay up without receiving messages. The connection watchdog (`WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES`, default 5 minutes) restarts the connection and, when that does not help, exits with code 1; Docker Compose (`restart: unless-stopped`) and Kubernetes (the pod's restart policy) then start the bot again. Run it elsewhere only under a supervisor that restarts it.
 
 ## License
 

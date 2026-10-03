@@ -1,0 +1,6 @@
+# Expected failure: a watchdog period above 60 minutes.
+# expect-schema: at '/config/wireWatchdogMinutes': maximum: got 61, want 60
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+config:
+  wireWatchdogMinutes: 61

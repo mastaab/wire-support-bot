@@ -15,6 +15,13 @@ export type WireMessageKind = (typeof WIRE_MESSAGE_KINDS)[number];
 export const WIRE_CONNECTION_EVENTS = ["connected", "disconnected"] as const;
 export type WireConnectionEvent = (typeof WIRE_CONNECTION_EVENTS)[number];
 
+/**
+ * What the Wire connection watchdog did: `restart` (asked the SDK to listen again after a period
+ * without a connection), `exit` (ended the process after a second period, for a restart from outside).
+ */
+export const WIRE_WATCHDOG_ACTIONS = ["restart", "exit"] as const;
+export type WireWatchdogAction = (typeof WIRE_WATCHDOG_ACTIONS)[number];
+
 /** Severities of Wire SDK log calls that are counted, whatever the SDK's log level. */
 export const WIRE_SDK_PROBLEMS = ["warn", "error"] as const;
 export type WireSdkProblem = (typeof WIRE_SDK_PROBLEMS)[number];
@@ -75,6 +82,7 @@ export type CollectedGauge = (typeof COLLECTED_GAUGES)[number];
 export interface MetricsPort {
   wireMessageReceived(kind: WireMessageKind): void;
   wireConnection(event: WireConnectionEvent): void;
+  wireWatchdogAction(action: WireWatchdogAction): void;
   wireSdkProblem(severity: WireSdkProblem): void;
   /** One model call through a slot, fallback included, with its duration in seconds. */
   modelCall(slot: ModelSlotLabel, outcome: ModelCallOutcome, seconds: number): void;
@@ -98,6 +106,7 @@ const ignore = (): void => {};
 export const NO_METRICS: MetricsPort = {
   wireMessageReceived: ignore,
   wireConnection: ignore,
+  wireWatchdogAction: ignore,
   wireSdkProblem: ignore,
   modelCall: ignore,
   jiraRequest: ignore,

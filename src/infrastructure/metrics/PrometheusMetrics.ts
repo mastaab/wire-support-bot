@@ -9,7 +9,7 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom
 import { SUPPORT_REQUEST_KINDS } from "../../domain/entities/SupportRequest";
 import {
   BUTTON_CLICK_OUTCOMES, JIRA_OPERATIONS, JIRA_OUTCOMES, MODEL_CALL_OUTCOMES, MODEL_SLOTS, OFFER_EVENTS, RATING_OUTCOMES,
-  WATCH_CHECK_OUTCOMES, WIRE_CONNECTION_EVENTS, WIRE_MESSAGE_KINDS, WIRE_SDK_PROBLEMS,
+  WATCH_CHECK_OUTCOMES, WIRE_CONNECTION_EVENTS, WIRE_MESSAGE_KINDS, WIRE_SDK_PROBLEMS, WIRE_WATCHDOG_ACTIONS,
   type CollectedGauge, type MetricsPort,
 } from "../../application/ports/MetricsPort";
 
@@ -58,6 +58,9 @@ export function createPrometheusMetrics(): PrometheusMetrics {
   const connected = new Gauge({
     name: `${METRIC_PREFIX}wire_connected`, help: "1 while the Wire WebSocket is connected, 0 otherwise.", registers,
   });
+  const watchdogActions = counter("wire_watchdog_actions_total", "What the Wire connection watchdog did after a period without a connection.", {
+    action: WIRE_WATCHDOG_ACTIONS,
+  });
   const sdkProblems = counter("wire_sdk_problems_total", "Warnings and errors the Wire SDK logged, whatever the SDK log level.", {
     severity: WIRE_SDK_PROBLEMS,
   });
@@ -100,6 +103,7 @@ export function createPrometheusMetrics(): PrometheusMetrics {
       connectionEvents.inc({ event });
       connected.set(event === "connected" ? 1 : 0);
     },
+    wireWatchdogAction: (action) => watchdogActions.inc({ action }),
     wireSdkProblem: (severity) => sdkProblems.inc({ severity }),
     modelCall: (slot, outcome, seconds) => {
       modelCalls.inc({ slot, outcome });

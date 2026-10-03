@@ -5,6 +5,7 @@ applies. tests/helm/chartConfig.test.ts fails when this mapping drifts from the 
 */}}
 {{- $c := .Values.config }}
 {{- $optional := dict
+  "WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES" $c.wireWatchdogMinutes
   "WIRE_SUPPORT_BOT_LLM_BASE_URL" $c.llmBaseUrl
   "WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS" $c.llmTimeoutMs
   "WIRE_SUPPORT_BOT_LLM_REASONING_EFFORT" $c.llmReasoningEffort

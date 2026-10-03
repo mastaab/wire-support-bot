@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import type { WireAppSdk } from "@wireapp/wire-apps-js-sdk";
 import { loadConfig, type Config } from "./config";
 import { initLogging, getLogger } from "./logging";
 import { createContainer } from "./container";
@@ -6,6 +7,7 @@ import { logSdkLogContentNotice } from "../infrastructure/wire/SdkLoggerBridge";
 import { NO_METRICS, type MetricsPort } from "../application/ports/MetricsPort";
 import { createPrometheusMetrics } from "../infrastructure/metrics/PrometheusMetrics";
 import { startMetricsServer, type MetricsServer } from "../infrastructure/metrics/MetricsServer";
+import { WireConnectionWatchdog } from "../infrastructure/wire/WireConnectionWatchdog";
 
 dotenv.config();
 
@@ -42,19 +44,30 @@ async function main(): Promise<void> {
     logger.info("Metrics server listening", { host: config.metrics.host, port: metricsServer.port });
   }
 
-  const container = createContainer(config, logger, metrics);
-  let sdk: Awaited<ReturnType<typeof container.getWireClient>> | null = null;
+  let sdk: WireAppSdk | null = null;
+  // Restarts the SDK's WebSocket loop, which gives up after 10 failed reconnects, and exits with
+  // code 1 when that does not help, so Docker Compose or Kubernetes starts the bot again.
+  const watchdog = new WireConnectionWatchdog({
+    minutes: config.wire.watchdogMinutes,
+    restart: async () => { await sdk?.startListening(); },
+    exit: () => void shutdown(1),
+    logger,
+    metrics,
+  });
+  const container = createContainer(config, logger, metrics, watchdog);
 
-  const shutdown = async (signal: string): Promise<void> => {
+  /** `signal` is absent when the bot ends itself (the watchdog, with exit code 1). */
+  const shutdown = async (exitCode: number, signal?: string): Promise<void> => {
     // Exit even if a cleanup step hangs, so Ctrl+C or a stop signal always ends the process.
-    setTimeout(() => process.exit(0), 5_000).unref();
-    logger.info("Shutdown requested", { signal });
+    setTimeout(() => process.exit(exitCode), 5_000).unref();
+    logger.info("Shutdown requested", signal ? { signal, exitCode } : { exitCode });
+    watchdog.stop();
     await Promise.allSettled([container.shutdown(), metricsServer?.close()]);
-    process.exit(0);
+    process.exit(exitCode);
   };
 
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown(0, "SIGINT"));
+  process.on("SIGTERM", () => void shutdown(0, "SIGTERM"));
   process.on("unhandledRejection", () => {
     getLogger().error("Unhandled rejection");
   });
@@ -62,6 +75,8 @@ async function main(): Promise<void> {
   try {
     sdk = await container.getWireClient();
     logger.info("Wire client connected, listening for events");
+    // A failed first connect reports no event, so the watchdog counts from here.
+    watchdog.start();
     await sdk.startListening();
   } catch {
     getLogger().error("Failed to start; verify configuration and service availability");

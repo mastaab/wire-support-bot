@@ -22,6 +22,7 @@ describe("createPrometheusMetrics", () => {
       "wire_support_bot_wire_messages_received_total counter",
       "wire_support_bot_wire_connection_events_total counter",
       "wire_support_bot_wire_connected gauge",
+      "wire_support_bot_wire_watchdog_actions_total counter",
       "wire_support_bot_wire_sdk_problems_total counter",
       "wire_support_bot_model_calls_total counter",
       "wire_support_bot_model_call_duration_seconds histogram",
@@ -51,6 +52,8 @@ describe("createPrometheusMetrics", () => {
     expect(samples).toContain('wire_support_bot_jira_requests_total{operation="submit_feedback",outcome="timeout"} 0');
     expect(samples).toContain('wire_support_bot_support_requests_raised_total{kind="part"} 0');
     expect(samples).toContain("wire_support_bot_support_replies_sent_total 0");
+    expect(samples).toContain('wire_support_bot_wire_watchdog_actions_total{action="restart"} 0');
+    expect(samples).toContain('wire_support_bot_wire_watchdog_actions_total{action="exit"} 0');
     expect(samples.filter((s) => s.startsWith("wire_support_bot_jira_requests_total{"))).toHaveLength(8 * 5);
     expect(samples.filter((s) => s.startsWith("wire_support_bot_model_calls_total{"))).toHaveLength(2 * 4);
   });
@@ -64,6 +67,7 @@ describe("createPrometheusMetrics", () => {
     metrics.wireMessageReceived("text");
     metrics.wireConnection("connected");
     metrics.wireSdkProblem("error");
+    metrics.wireWatchdogAction("restart");
     metrics.modelCall("respond", "fallback", 12.5);
     metrics.jiraRequest("get_issue", "4xx", 0.2);
     metrics.watchCheck("ok", 1.5, 7);
@@ -80,6 +84,8 @@ describe("createPrometheusMetrics", () => {
       'wire_support_bot_wire_connection_events_total{event="connected"} 1',
       "wire_support_bot_wire_connected 1",
       'wire_support_bot_wire_sdk_problems_total{severity="error"} 1',
+      'wire_support_bot_wire_watchdog_actions_total{action="restart"} 1',
+      'wire_support_bot_wire_watchdog_actions_total{action="exit"} 0',
       'wire_support_bot_model_calls_total{slot="respond",outcome="fallback"} 1',
       'wire_support_bot_model_call_duration_seconds_bucket{le="10",slot="respond"} 0',
       'wire_support_bot_model_call_duration_seconds_bucket{le="20",slot="respond"} 1',
