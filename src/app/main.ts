@@ -3,6 +3,9 @@ import { loadConfig, type Config } from "./config";
 import { initLogging, getLogger } from "./logging";
 import { createContainer } from "./container";
 import { logSdkLogContentNotice } from "../infrastructure/wire/SdkLoggerBridge";
+import { NO_METRICS, type MetricsPort } from "../application/ports/MetricsPort";
+import { createPrometheusMetrics } from "../infrastructure/metrics/PrometheusMetrics";
+import { startMetricsServer, type MetricsServer } from "../infrastructure/metrics/MetricsServer";
 
 dotenv.config();
 
@@ -22,14 +25,31 @@ async function main(): Promise<void> {
   logger.info("Wire Support Bot starting", { logLevel, logFormat, sdkLogLevel, sdkLogContent });
   logSdkLogContentNotice(logger, { level: sdkLogLevel, content: sdkLogContent });
 
-  const container = createContainer(config, logger);
+  // The metrics and health endpoint starts before Wire, so the liveness probe answers during start-up.
+  let metrics: MetricsPort = NO_METRICS;
+  let metricsServer: MetricsServer | undefined;
+  if (config.metrics) {
+    const prometheus = createPrometheusMetrics();
+    try {
+      metricsServer = await startMetricsServer({ ...config.metrics, source: prometheus, logger });
+    } catch (error) {
+      logger.error("Metrics server could not listen", {
+        port: config.metrics.port, err: (error as NodeJS.ErrnoException)?.code ?? (error instanceof Error ? error.name : "UnknownError"),
+      });
+      process.exit(1);
+    }
+    metrics = prometheus.metrics;
+    logger.info("Metrics server listening", { host: config.metrics.host, port: metricsServer.port });
+  }
+
+  const container = createContainer(config, logger, metrics);
   let sdk: Awaited<ReturnType<typeof container.getWireClient>> | null = null;
 
   const shutdown = async (signal: string): Promise<void> => {
     // Exit even if a cleanup step hangs, so Ctrl+C or a stop signal always ends the process.
     setTimeout(() => process.exit(0), 5_000).unref();
     logger.info("Shutdown requested", { signal });
-    await container.shutdown();
+    await Promise.allSettled([container.shutdown(), metricsServer?.close()]);
     process.exit(0);
   };
 

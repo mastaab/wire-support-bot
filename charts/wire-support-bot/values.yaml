@@ -1,5 +1,6 @@
 # Wire Support Bot chart values. The bot runs as exactly one pod: two instances must never share
-# the SDK store, and offers live in memory. It has no inbound traffic, so there is no Service.
+# the SDK store, and offers live in memory. It has no inbound traffic, so there is no Service
+# unless metrics are enabled (metrics.enabled), for scraping.
 
 # Overrides the chart name in resource names and labels.
 nameOverride: ""
@@ -233,3 +234,35 @@ persistence:
   size: 1Gi
   # Storage class of the claim the chart creates; empty: the cluster default.
   storageClass: ""
+
+# Prometheus metrics and the liveness probe. When enabled, the bot serves GET /metrics and GET
+# /healthz on metrics.port (WIRE_SUPPORT_BOT_METRICS_PORT, on every interface), and the chart adds a
+# ClusterIP Service for that port and a liveness probe on /healthz. The probe only checks that the
+# process answers, never Wire, Jira, the model or the database, so a lost connection to one of them
+# does not restart the pod. Metrics carry no message content and no conversation, user or ticket IDs.
+metrics:
+  # Whether the metrics and health endpoint, its Service and the liveness probe are added.
+  enabled: false
+  # Port of the endpoint in the container and of the Service.
+  port: 9464
+  # Liveness probe on /healthz. The endpoint starts before the bot connects to Wire, so the initial
+  # delay only has to cover the database migrations at start-up.
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+  # Adds the annotations prometheus.io/scrape, prometheus.io/port and prometheus.io/path to the pod,
+  # for a Prometheus that discovers pods by them.
+  podAnnotations: false
+  serviceMonitor:
+    # Whether a ServiceMonitor (monitoring.coreos.com/v1) is created for the Prometheus Operator; its
+    # CustomResourceDefinition must be installed.
+    enabled: false
+    # Scrape interval.
+    interval: 30s
+    # Scrape timeout; at most the interval.
+    scrapeTimeout: 10s
+    # Extra labels on the ServiceMonitor, for example the label your Prometheus selects
+    # ServiceMonitors by: {release: prometheus}.
+    labels: {}

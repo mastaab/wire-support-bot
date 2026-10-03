@@ -1,0 +1,21 @@
+{{- /*
+The metrics endpoint inside the cluster, for scraping; only with metrics.enabled. The bot takes no
+other inbound traffic.
+*/}}
+{{- if .Values.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wire-support-bot.fullname" . }}
+  labels:
+    {{- include "wire-support-bot.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "wire-support-bot.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ int .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

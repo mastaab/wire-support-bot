@@ -11,7 +11,7 @@ The code follows a hexagonal (ports and adapters) layout. Keep the dependency di
 - `src/infrastructure/` implements ports and repositories (Wire, Jira, the model endpoint, Postgres, in-memory stores, the passive-help pipeline).
 - `src/app/` is the composition root: configuration, logging, the entry point, the CLI and `src/app/container.ts`.
 
-`eslint.config.mjs` reports an error, and `npm run lint` fails, when the domain or application layer imports from an outer layer, the Wire SDK or Prisma.
+`eslint.config.mjs` reports an error, and `npm run lint` fails, when the domain or application layer imports from an outer layer, the Wire SDK, Prisma or prom-client.
 
 ## Where things go
 
@@ -22,6 +22,7 @@ The code follows a hexagonal (ports and adapters) layout. Keep the dependency di
 - Wiring: `src/app/container.ts`, and `src/app/cli.ts` when the CLI should have the feature too.
 - Settings: read only in `src/app/config.ts`, validated at start-up, and listed in `.env.example` with a comment. Secrets come from the environment and are never committed.
 - Schema changes: `prisma/schema.prisma` plus a migration in `prisma/migrations/`.
+- Metrics: record through `MetricsPort` (`src/application/ports/MetricsPort.ts`), never prom-client directly, at the narrowest place that sees every event: an adapter for calls to the outside (the Jira adapter, the model client), the use case or store that decides an outcome. A new metric needs a method on the port, its definition in `src/infrastructure/metrics/PrometheusMetrics.ts`, a test with the fake in `tests/metrics/fakeMetrics.ts`, and a row in the README's "Metrics" table. Label values come only from the port's small fixed sets: never a conversation, user, message, ticket or request ID, and never text.
 
 Keep one concern per module, use explicit types, and match the existing style. Add a dependency only when it is clearly needed.
 

@@ -34,13 +34,14 @@ export default tseslint.config(
             { group: ["**/app/**"], message: "domain must not import from app" },
             { group: ["wire-apps-js-sdk"], message: "domain must not import the Wire SDK" },
             { group: ["@prisma/client"], message: "domain must not import Prisma" },
+            { group: ["prom-client"], message: "domain must not import prom-client" },
           ],
         },
       ],
     },
   },
   {
-    // application layer must not import infrastructure or app, and must never use the Wire SDK or Prisma directly.
+    // application layer must not import infrastructure or app, and must never use the Wire SDK, Prisma or prom-client directly.
     files: ["src/application/**/*.ts"],
     rules: {
       "no-restricted-imports": [
@@ -51,6 +52,7 @@ export default tseslint.config(
             { group: ["**/app/**"], message: "application must not import from app" },
             { group: ["wire-apps-js-sdk"], message: "application must not import the Wire SDK directly" },
             { group: ["@prisma/client"], message: "application must not import Prisma directly" },
+            { group: ["prom-client"], message: "application must not import prom-client; record through MetricsPort" },
           ],
         },
       ],

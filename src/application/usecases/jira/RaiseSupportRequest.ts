@@ -9,6 +9,7 @@ import { trackerErrorFields } from "../../ports/IssueTrackerPort";
 import type { CreateIssueRequest, CreatedIssue, IssueTrackerPort } from "../../ports/IssueTrackerPort";
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
+import { NO_METRICS, type MetricsPort } from "../../ports/MetricsPort";
 import { appendAuditSafely, wasRefused } from "./supportRequestStatus";
 import { rememberLastMessage } from "./supportRequestMarkers";
 
@@ -51,6 +52,8 @@ export class RaiseSupportRequest {
     private readonly requestTypes: Partial<Record<SupportRequestKind, string>> = {},
     /** How the asset essential of a part order is named and asked for. */
     private readonly partAsset: PartAssetWording = DEFAULT_PART_ASSET,
+    /** Counts the requests raised with the service desk, by kind. */
+    private readonly metrics: MetricsPort = NO_METRICS,
   ) {}
 
   async execute(input: RaiseSupportRequestInput): Promise<SupportRequest | null> {
@@ -116,6 +119,8 @@ export class RaiseSupportRequest {
         : `I'm afraid I couldn't confirm that the request reached the service desk. Please check the ${this.tracker.projectKey} queue before raising it again.`);
       return null;
     }
+    // Counted once the tracker has the ticket, also when it cannot be recorded here.
+    this.metrics.supportRequestRaised(kind);
     const key = created.key.toUpperCase();
     const now = new Date();
 

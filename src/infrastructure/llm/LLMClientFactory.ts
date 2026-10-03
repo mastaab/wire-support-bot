@@ -6,6 +6,9 @@
  *   - On 503/529 or AbortError (timeout): retry once with the slot's fallback model.
  *   - Both attempts are logged.
  *
+ * Each call is recorded in the metrics once, by slot, with its outcome (ok, fallback, timeout or
+ * error) and its duration including the fallback attempt.
+ *
  * A model that rejects `temperature` as deprecated or unsupported is remembered for
  * the life of the instance, and later requests to it omit the parameter. Share one
  * instance across adapters so each model is learned once per process.
@@ -17,6 +20,7 @@
 
 import type { LLMConfig, ModelSlot } from "../../app/config";
 import type { Logger } from "../../application/ports/Logger";
+import { NO_METRICS, secondsSince, type MetricsPort, type ModelCallOutcome } from "../../application/ports/MetricsPort";
 
 export type SlotName = keyof LLMConfig["slots"];
 
@@ -46,6 +50,7 @@ export class LLMClientFactory {
   constructor(
     private readonly config: LLMConfig,
     private readonly logger: Logger,
+    private readonly metrics: MetricsPort = NO_METRICS,
   ) {
     this.url = `${config.baseUrl}/chat/completions`;
     this.headers = {
@@ -58,6 +63,25 @@ export class LLMClientFactory {
     slot: SlotName,
     messages: ChatMessage[],
     options: ChatCompletionOptions = {},
+  ): Promise<ChatCompletionResult> {
+    const started = performance.now();
+    let outcome: ModelCallOutcome = "error";
+    try {
+      const result = await this.completeWithFallback(slot, messages, options);
+      outcome = result.usedFallback ? "fallback" : "ok";
+      return result;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") outcome = "timeout";
+      throw err;
+    } finally {
+      this.metrics.modelCall(slot, outcome, secondsSince(started));
+    }
+  }
+
+  private async completeWithFallback(
+    slot: SlotName,
+    messages: ChatMessage[],
+    options: ChatCompletionOptions,
   ): Promise<ChatCompletionResult> {
     const slotCfg: ModelSlot = this.config.slots[slot];
 

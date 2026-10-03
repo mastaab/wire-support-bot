@@ -699,6 +699,76 @@
           "description": "Storage class; empty: the cluster default."
         }
       }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the metrics and health endpoint, its Service and the liveness probe are added."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "WIRE_SUPPORT_BOT_METRICS_PORT, the port of the endpoint and the Service."
+        },
+        "livenessProbe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "initialDelaySeconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "periodSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "failureThreshold": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "description": "Liveness probe on /healthz."
+        },
+        "podAnnotations": {
+          "type": "boolean",
+          "description": "Whether the pod gets the prometheus.io/scrape, port and path annotations."
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether a ServiceMonitor for the Prometheus Operator is created."
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h))+$",
+              "description": "Scrape interval, for example 30s."
+            },
+            "scrapeTimeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h))+$",
+              "description": "Scrape timeout, for example 10s."
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Extra labels on the ServiceMonitor."
+            }
+          }
+        }
+      }
     }
   }
 }

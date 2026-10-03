@@ -1,6 +1,8 @@
 import { sameQualifiedId } from "../../domain/ids/QualifiedId";
 import type { QualifiedId } from "../../domain/ids/QualifiedId";
-import type { AssetMessage, Conversation, ConversationMember, TextMessage, CompositeButtonAction, TextEditedMessage } from "@wireapp/wire-apps-js-sdk";
+import type {
+  AssetMessage, Conversation, ConversationMember, TextMessage, CompositeButtonAction, TextEditedMessage, DeletedMessage, Location, Ping, Reaction,
+} from "@wireapp/wire-apps-js-sdk";
 import { WireEventsHandler, ConversationRole } from "@wireapp/wire-apps-js-sdk";
 import type { AnswerQuestion } from "../../application/usecases/general/AnswerQuestion";
 import type { RaiseSupportRequest } from "../../application/usecases/jira/RaiseSupportRequest";
@@ -17,6 +19,7 @@ import type { ConversationMemberCache, CachedMember } from "../../domain/service
 import type { ChannelConfigRepository } from "../../domain/repositories/ChannelConfigRepository";
 import type { WireOutboundPort } from "../../application/ports/WireOutboundPort";
 import type { Logger } from "../../application/ports/Logger";
+import { NO_METRICS, type MetricsPort } from "../../application/ports/MetricsPort";
 import type { InMemoryProcessingQueue } from "../queue/InMemoryProcessingQueue";
 import type { ProcessingPipeline, MessageJob } from "../pipeline/ProcessingPipeline";
 import { toChannelId } from "../../domain/ids/channelId";
@@ -96,6 +99,8 @@ export interface WireEventRouterDeps {
   /** Passive service-desk help for unaddressed messages; absent when passive help is off. */
   processingQueue?: InMemoryProcessingQueue<MessageJob>;
   pipeline?: ProcessingPipeline;
+  /** Counts messages received by kind and button clicks by outcome; nothing when absent. */
+  metrics?: MetricsPort;
 }
 
 /** The details of a file preview that an upload event may lack. */
@@ -108,8 +113,11 @@ interface AssetPreview {
 }
 
 export class WireEventRouter extends WireEventsHandler {
+  private readonly metrics: MetricsPort;
+
   constructor(private readonly deps: WireEventRouterDeps) {
     super();
+    this.metrics = deps.metrics ?? NO_METRICS;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -119,6 +127,7 @@ export class WireEventRouter extends WireEventsHandler {
   private readonly handlers = new Map<string, Promise<void>>();
 
   async onTextMessageReceived(wireMessage: TextMessage): Promise<void> {
+    this.metrics.wireMessageReceived("text");
     await this.inOrder(wireMessage.conversationId as QualifiedId, () => {
       const process = () => this.processTextMessage(wireMessage);
       return this.deps.replyContext ? this.deps.replyContext.withMessage(wireMessage, process) : process();
@@ -526,6 +535,8 @@ export class WireEventRouter extends WireEventsHandler {
    * ID; only the uploaded event (with download data) counts, once.
    */
   async onAssetMessageReceived(received: AssetMessage): Promise<void> {
+    // Counted once per file: the preview before the upload carries no download data.
+    if (received.remoteData) this.metrics.wireMessageReceived("file");
     const wireMessage = this.withPreview(received);
     await this.inOrder(wireMessage.conversationId as QualifiedId, () => {
       const process = () => this.processAssetMessage(wireMessage);
@@ -623,6 +634,17 @@ export class WireEventRouter extends WireEventsHandler {
   async onTextMessageEdited(_wireMessage: TextEditedMessage): Promise<void> {
     // Edits are intentionally ignored: an edited message could otherwise raise a second offer
     // or answer for the same message.
+    this.otherMessage();
+  }
+
+  // Pings, locations, reactions and deletions are only counted.
+  async onPingReceived(_wireMessage: Ping): Promise<void> { this.otherMessage(); }
+  async onLocationMessageReceived(_wireMessage: Location): Promise<void> { this.otherMessage(); }
+  async onMessageReactionReceived(_wireMessage: Reaction): Promise<void> { this.otherMessage(); }
+  async onMessageDeleted(_wireMessage: DeletedMessage): Promise<void> { this.otherMessage(); }
+
+  private otherMessage(): void {
+    this.metrics.wireMessageReceived("other");
   }
 
   /**
@@ -637,6 +659,7 @@ export class WireEventRouter extends WireEventsHandler {
    * answer. Repeats stay silent.
    */
   async onButtonClicked(wireMessage: CompositeButtonAction): Promise<void> {
+    this.metrics.wireMessageReceived("button_click");
     const convId = wireMessage.conversationId as QualifiedId;
     await this.inOrder(convId, () => this.processButtonClick(wireMessage));
   }
@@ -655,6 +678,7 @@ export class WireEventRouter extends WireEventsHandler {
 
       if (prompt && open && !sameQualifiedId(sender, prompt.requesterId)) {
         log.info("Button: click by a member who was not asked");
+        this.metrics.buttonClick("not_asked");
         if (offers.claimNotice(convId, referenceMessageId, "others")) {
           await this.deps.wireOutbound.sendPlainText(convId, `Only ${this.memberName(convId, prompt.requesterId) ?? "the person who was asked"} can answer this.`);
         }
@@ -663,16 +687,19 @@ export class WireEventRouter extends WireEventsHandler {
       if (!prompt || !open || !live) {
         // Silent: the message is closed or about to be, and a client may not have applied the edit yet.
         log.info("Button: click on a question that is no longer open", { known: !!prompt, answered: prompt?.answered ?? false });
+        this.metrics.buttonClick("late");
         return;
       }
 
       const parsed = parseOfferButtonId(buttonId);
       if (!parsed || parsed.offerId !== live.id || !decisionAt(live, parsed.index)) {
         log.warn("Button: the button does not belong to the offer");
+        this.metrics.buttonClick("invalid");
         return;
       }
 
       // Accepted: this click decides. It is marked first, so any later click finds it answered.
+      this.metrics.buttonClick("accepted");
       offers.markAnswered(convId, parsed.offerId);
       try {
         await this.deps.wireOutbound.sendButtonConfirmation(convId, referenceMessageId, buttonId);

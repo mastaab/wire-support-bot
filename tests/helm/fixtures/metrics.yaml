@@ -1,0 +1,7 @@
+# Placeholder overrides: metrics on, with the prometheus.io pod annotations and another port.
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+metrics:
+  enabled: true
+  port: 9100
+  podAnnotations: true

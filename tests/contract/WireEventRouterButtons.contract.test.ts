@@ -14,6 +14,8 @@ import { addToChoice, cancelChoice, keyChoice, raiseNewChoice } from "../../src/
 import { sweepEndedOfferPrompts } from "../../src/application/services/offerPromptClosing";
 import type { OfferCommand, PendingOffer } from "../../src/application/ports/PendingOfferPort";
 import type { QualifiedId } from "../../src/domain/ids/QualifiedId";
+import type { MetricsPort } from "../../src/application/ports/MetricsPort";
+import { fakeMetrics } from "../metrics/fakeMetrics";
 
 const convId: QualifiedId = { id: "conv-1", domain: "example.com" };
 const alice: QualifiedId = { id: "user-1", domain: "example.com" };
@@ -29,8 +31,8 @@ const QUESTION = "Shall I resolve **SD-6**?";
 /** The closed message of the question, with its closing line. */
 const closed = (line: string): string => `${QUESTION}\n\n${line}`;
 
-function setup(options: { aliceName?: string } = {}) {
-  const pendingOffers = new InMemoryPendingOfferStore();
+function setup(options: { aliceName?: string; metrics?: MetricsPort } = {}) {
+  const pendingOffers = new InMemoryPendingOfferStore(options.metrics);
   /** Conversations the typing indicator was shown in. */
   const typing: QualifiedId[] = [];
   const memberCache = new InMemoryMemberCache();
@@ -54,7 +56,7 @@ function setup(options: { aliceName?: string } = {}) {
     withTyping: <T>(c: QualifiedId, work: () => Promise<T>): Promise<T> => { typing.push(c); return work(); },
   };
   const logger = { child: vi.fn().mockReturnThis(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-  const confirmOffer = new ConfirmOffer(pendingOffers, handlers as unknown as ConfirmOfferHandlers, wireOutbound, undefined, undefined, [], logger);
+  const confirmOffer = new ConfirmOffer(pendingOffers, handlers as unknown as ConfirmOfferHandlers, wireOutbound, undefined, undefined, [], logger, options.metrics);
   const messageBuffer = { clear: vi.fn(), push: vi.fn(), getLastN: vi.fn().mockReturnValue([]) };
   const deps = {
     logger,
@@ -73,6 +75,7 @@ function setup(options: { aliceName?: string } = {}) {
     pendingOffers,
     confirmOffer,
     supportWelcome: { projectKey: "SD", passive: false, watching: false },
+    metrics: options.metrics,
   } as unknown as WireEventRouterDeps;
   const router = new WireEventRouter(deps);
   /** Stores an offer asked of Alice with buttons, as the use cases do after sending the question. */
@@ -380,5 +383,36 @@ describe("WireEventRouter contract: button clicks on offers", () => {
       await router.onTextMessageReceived(text(alice, "the printer on floor 2 is fine now"));
       expect(deps.answerQuestion.execute).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("WireEventRouter contract: metrics of button clicks", () => {
+  it("counts each click by outcome, every click as a message received, and the offer as made and accepted", async () => {
+    const { metrics, of } = fakeMetrics();
+    const { router, ask } = setup({ metrics });
+    ask();
+
+    await router.onButtonClicked(click(bob, `${OFFER_ID}:0`));
+    await router.onButtonClicked(click(alice, "offer-other:0"));
+    await router.onButtonClicked(click(alice, `${OFFER_ID}:0`));
+    await router.onButtonClicked(click(alice, `${OFFER_ID}:1`));
+    await router.onButtonClicked(click(bob, `${OFFER_ID}:0`, "unknown-msg"));
+
+    expect(of("buttonClick")).toEqual([["not_asked"], ["invalid"], ["accepted"], ["late"], ["late"]]);
+    expect(of("wireMessageReceived")).toEqual(Array(5).fill(["button_click"]));
+    expect(of("offer")).toEqual([["made"], ["accepted"]]);
+  });
+
+  it("counts a declining click as declined, and texts and other events by kind", async () => {
+    const { metrics, of } = fakeMetrics();
+    const { router, ask } = setup({ metrics });
+    ask();
+    await router.onButtonClicked(click(alice, `${OFFER_ID}:1`));
+    await router.onTextMessageReceived(text(bob, "hello"));
+    await router.onTextMessageEdited({} as never);
+    await router.onPingReceived({} as never);
+    await router.onMessageReactionReceived({} as never);
+    expect(of("offer")).toEqual([["made"], ["declined"]]);
+    expect(of("wireMessageReceived")).toEqual([["button_click"], ["text"], ["other"], ["other"], ["other"]]);
   });
 });

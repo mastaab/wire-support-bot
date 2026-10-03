@@ -47,13 +47,15 @@ import { ProcessingPipeline } from "../infrastructure/pipeline/ProcessingPipelin
 import type { MessageJob } from "../infrastructure/pipeline/ProcessingPipeline";
 import { AnswerQuestion } from "../application/usecases/general/AnswerQuestion";
 import { SetChannelTimezone } from "../application/usecases/general/SetChannelTimezone";
+import { NO_METRICS, type MetricsPort } from "../application/ports/MetricsPort";
 
 export interface Container {
   getWireClient(): Promise<WireAppSdk>;
   shutdown(): Promise<void>;
 }
 
-export function createContainer(config: Config, logger: Logger): Container {
+/** `metrics` records what the adapters and use cases do; NO_METRICS when metrics are off. */
+export function createContainer(config: Config, logger: Logger, metrics: MetricsPort = NO_METRICS): Container {
   const handlerRef: HandlerManagerRef = { current: null };
 
   const replyContext = new WireReplyContext();
@@ -66,13 +68,14 @@ export function createContainer(config: Config, logger: Logger): Container {
   const messageBuffer = new ConversationMessageBuffer(config.app.messageBufferSize);
 
   // One factory for every adapter, so models that reject temperature are learned once.
-  const llmFactory = new LLMClientFactory(config.llm, logger);
+  const llmFactory = new LLMClientFactory(config.llm, logger, metrics);
   // The service desk (Jira Service Management). Ticket content reaches the answer model only
   // when WIRE_SUPPORT_BOT_JIRA_SHARE_WITH_MODEL is on.
   const jira = config.jira;
-  const issueTracker = new JiraServiceManagementAdapter(jira, logger);
+  const issueTracker = new JiraServiceManagementAdapter(jira, logger, { metrics });
   logger.info("Service desk connected", { projectKey: issueTracker.projectKey, shareWithModel: jira.shareWithModel, passive: jira.passive });
-  const pendingOffers = new InMemoryPendingOfferStore();
+  const pendingOffers = new InMemoryPendingOfferStore(metrics);
+  metrics.collect("pending_offers", () => pendingOffers.pendingCount());
   const supportRequestsRepo = new PrismaSupportRequestRepository();
   const generalAnswerAdapter = new OpenAIGeneralAnswerAdapter(llmFactory, logger, {
     jiraProjectKey: jira.projectKey, jiraShareWithModel: jira.shareWithModel, jiraServiceScope: jira.serviceScope, partAsset: config.partAsset,
@@ -98,6 +101,8 @@ export function createContainer(config: Config, logger: Logger): Container {
     });
     processingQueue = new InMemoryProcessingQueue<MessageJob>((msg, meta) => logger.warn(msg, meta));
     processingQueue.setWorker((job) => passivePipeline.process(job.payload, job.signal));
+    const queue = processingQueue;
+    metrics.collect("queue_length", () => queue.depth);
     pipeline = passivePipeline;
   }
 
@@ -112,11 +117,13 @@ export function createContainer(config: Config, logger: Logger): Container {
   );
 
   // Support requests, built once so ConfirmOffer shares the router's instances.
-  const raiseSupportRequest = new RaiseSupportRequest(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, jira.requestTypes, config.partAsset);
+  const raiseSupportRequest = new RaiseSupportRequest(
+    supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, jira.requestTypes, config.partAsset, metrics,
+  );
   const listSupportRequests = new ListSupportRequests(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger);
   // Shared by resolve and the watch, so a resolve from Wire is never announced as the desk's.
   const supportRequestWrites = new SupportRequestWrites();
-  const replyToServiceDesk = new ReplyToServiceDesk(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger);
+  const replyToServiceDesk = new ReplyToServiceDesk(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, metrics);
   // Direct conversations between requester and desk agent: groups the app creates and leaves.
   // The router ignores a group until the app has left it; a leave still owed is retried at
   // start-up and before each watch check, also when the agent mapping has since been removed.
@@ -154,6 +161,7 @@ export function createContainer(config: Config, logger: Logger): Container {
         ? { agents: { handles: agentHandles, open: openAgentConversation, ...(askForAgentConversation ? { ask: askForAgentConversation } : {}) } }
         : {}),
       ...(deskUpdateQuestions ? { questions: deskUpdateQuestions } : {}),
+      metrics,
     })
     : undefined;
   if (agentHandles && !watchSupportRequests) logger.warn("WIRE_SUPPORT_BOT_JIRA_AGENTS needs WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS; direct conversations are off");
@@ -166,12 +174,12 @@ export function createContainer(config: Config, logger: Logger): Container {
   const feedback = feedbackOn
     ? {
       questions: new FeedbackQuestions({ offers: pendingOffers, wireOutbound, lifetimeMs: questionHours * 60 * 60 * 1000, logger }),
-      submit: new SubmitFeedback(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger),
+      submit: new SubmitFeedback(supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, undefined, metrics),
     }
     : undefined;
   // Every resolve from Wire that reached done asks the requester for a rating, when ratings are on.
   const resolveSupportRequest = new ResolveSupportRequest(
-    supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, supportRequestWrites, feedback?.questions,
+    supportRequestsRepo, issueTracker, wireOutbound, auditLogRepo, logger, supportRequestWrites, feedback?.questions, metrics,
   );
   // Photos and documents to the service desk: offered only with passive help, since a file cannot carry a mention.
   const attachFileToRequest = new AttachFileToRequest(supportRequestsRepo, issueTracker, createWireAssetAdapter(handlerRef), wireOutbound, auditLogRepo, logger);
@@ -183,7 +191,7 @@ export function createContainer(config: Config, logger: Logger): Container {
       ...(askForAgentConversation ? { agentConversation: askForAgentConversation } : {}),
       ...(feedback ? { feedback } : {}),
     },
-    wireOutbound, undefined, config.partAsset, config.partDeliveryLocations, logger,
+    wireOutbound, undefined, config.partAsset, config.partDeliveryLocations, logger, metrics,
   );
 
   const router = new WireEventRouter({
@@ -210,6 +218,7 @@ export function createContainer(config: Config, logger: Logger): Container {
     channelConfig: channelConfigRepo,
     processingQueue,
     pipeline,
+    metrics,
   });
   handlerRef.current = router as unknown as HandlerManagerRef["current"];
 
@@ -230,7 +239,7 @@ export function createContainer(config: Config, logger: Logger): Container {
     async getWireClient(): Promise<WireAppSdk> {
       if (!sdkPromise) {
         // The SDK logs at its own level (WIRE_SUPPORT_BOT_SDK_LOG_LEVEL), applied by the bridge, not at LOG_LEVEL.
-        sdkPromise = createWireClient(config, router, createLogger("debug")).then(async (sdk) => {
+        sdkPromise = createWireClient(config, router, createLogger("debug"), metrics).then(async (sdk) => {
           // Before the router receives events (main starts listening after this): groups still owed
           // a leave are ignored like freshly created ones.
           try {

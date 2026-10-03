@@ -3,8 +3,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 /**
- * Keeps the Helm chart's ConfigMap, Secret and database environment in step with the settings the
- * app reads, by plain text parsing of `.env.example`, `src/` and the chart templates.
+ * Keeps the Helm chart's ConfigMap, Secret, database and metrics environment in step with the
+ * settings the app reads, by plain text parsing of `.env.example`, `src/` and the chart templates.
  */
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -36,6 +36,12 @@ const DATABASE_NAMES = [
   "DATABASE_PASSWORD",
   "DATABASE_OPTIONS",
 ];
+
+/**
+ * The metrics endpoint, set in the Deployment's env from metrics.* (only with metrics.enabled),
+ * since the container port, the liveness probe and the Service follow the same port.
+ */
+const METRICS_NAMES = ["WIRE_SUPPORT_BOT_METRICS_PORT", "WIRE_SUPPORT_BOT_METRICS_HOST"];
 
 /** Settings in `.env.example`, commented or not. */
 function envExampleNames(): Set<string> {
@@ -98,7 +104,8 @@ describe("Helm chart configuration", () => {
   const configMap = templateNames("configmap.yaml");
   const secret = templateNames("secret.yaml");
   const databaseEnv = templateNames("_helpers.tpl");
-  const chart = new Set([...configMap, ...secret, ...databaseEnv]);
+  const deployment = templateNames("deployment.yaml");
+  const chart = new Set([...configMap, ...secret, ...databaseEnv, ...deployment]);
   const app = appNames();
   const envExample = envExampleNames();
 
@@ -133,5 +140,14 @@ describe("Helm chart configuration", () => {
     expect(sorted(quotedNames("src/app/databaseUrl.ts"))).toEqual(sorted(DATABASE_NAMES));
     expect(read(path.join(TEMPLATES, "deployment.yaml"))).toContain('include "wire-support-bot.databaseEnv"');
     expect(sorted([...databaseEnv].filter((name) => configMap.has(name) || secret.has(name)))).toEqual([]);
+  });
+
+  it("sets the metrics settings in the Deployment's env and nowhere else", () => {
+    expect(sorted(deployment)).toEqual(sorted(METRICS_NAMES));
+    for (const name of METRICS_NAMES) {
+      expect(app).toContain(name);
+      expect(envExample).toContain(name);
+      expect(configMap.has(name) || secret.has(name) || databaseEnv.has(name)).toBe(false);
+    }
   });
 });

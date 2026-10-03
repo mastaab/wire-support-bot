@@ -76,6 +76,15 @@ export interface Config {
    * (WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS). Empty: the location is asked in text.
    */
   partDeliveryLocations: string[];
+  /** The metrics and health endpoint; absent when WIRE_SUPPORT_BOT_METRICS_PORT is unset (no HTTP server). */
+  metrics?: MetricsConfig;
+}
+
+export interface MetricsConfig {
+  /** WIRE_SUPPORT_BOT_METRICS_PORT, 1 to 65535. */
+  port: number;
+  /** WIRE_SUPPORT_BOT_METRICS_HOST, the address to listen on; default 0.0.0.0 (every IPv4 interface). */
+  host: string;
 }
 
 export interface JiraConfig {
@@ -335,6 +344,21 @@ export function resolveLogSettings(env: Record<string, string | undefined>): {
   };
 }
 
+/**
+ * WIRE_SUPPORT_BOT_METRICS_PORT and WIRE_SUPPORT_BOT_METRICS_HOST. An unset or blank port turns
+ * the HTTP server off (undefined); otherwise it must be a whole number from 1 to 65535. The host
+ * defaults to 0.0.0.0 and must not contain spaces.
+ */
+export function resolveMetricsConfig(env: Record<string, string | undefined>): MetricsConfig | undefined {
+  const rawPort = env.WIRE_SUPPORT_BOT_METRICS_PORT?.trim();
+  if (!rawPort) return undefined;
+  const port = /^\d{1,5}$/.test(rawPort) ? parseInt(rawPort, 10) : NaN;
+  if (!(port >= 1 && port <= 65535)) throw new Error("WIRE_SUPPORT_BOT_METRICS_PORT must be a port number from 1 to 65535");
+  const host = env.WIRE_SUPPORT_BOT_METRICS_HOST?.trim() || "0.0.0.0";
+  if (/\s/.test(host)) throw new Error("WIRE_SUPPORT_BOT_METRICS_HOST must be a host name or IP address");
+  return { port, host };
+}
+
 function getEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set`);
@@ -423,6 +447,7 @@ export function loadConfig(): Config {
   const jira = resolveJiraConfig(process.env);
   const partAsset = resolvePartAsset(process.env);
   const partDeliveryLocations = resolvePartDeliveryLocations(process.env);
+  const metrics = resolveMetricsConfig(process.env);
 
   return {
     wire,
@@ -431,5 +456,6 @@ export function loadConfig(): Config {
     jira,
     partAsset,
     partDeliveryLocations,
+    ...(metrics ? { metrics } : {}),
   };
 }

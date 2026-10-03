@@ -5,6 +5,7 @@ import { isFeedbackRating, trackerErrorFields } from "../../ports/IssueTrackerPo
 import type { IssueTrackerPort } from "../../ports/IssueTrackerPort";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
+import { NO_METRICS, type MetricsPort, type RatingOutcome } from "../../ports/MetricsPort";
 import { findSupportRequestInConversation } from "./supportRequestScope";
 import { appendAuditSafely, wasRefused } from "./supportRequestStatus";
 
@@ -39,13 +40,16 @@ export class SubmitFeedback {
     private readonly auditLog: AuditLogRepository,
     private readonly logger?: Logger,
     private readonly now: () => Date = () => new Date(),
+    /** Counts the ratings by outcome. */
+    private readonly metrics: MetricsPort = NO_METRICS,
   ) {}
 
   /** True when Jira accepted the rating. */
   async execute(input: SubmitFeedbackInput): Promise<boolean> {
     const { conversationId, rating } = input;
     const key = input.issueKey.trim().toUpperCase();
-    const fail = async (): Promise<false> => {
+    const fail = async (outcome: RatingOutcome): Promise<false> => {
+      this.metrics.ratingSent(outcome);
       try {
         await this.wireOutbound.sendPlainText(conversationId, FEEDBACK_FAILED, { replyToMessageId: input.replyToMessageId });
       } catch (err) {
@@ -55,18 +59,18 @@ export class SubmitFeedback {
     };
     if (!isFeedbackRating(rating)) {
       this.logger?.warn(`${SOURCE}: the rating is out of range`, { key });
-      return fail();
+      return fail("not_sent");
     }
     let found;
     try {
       found = await findSupportRequestInConversation(this.requests, key, conversationId, this.tracker.projectKey);
     } catch (err) {
       this.logger?.warn(`${SOURCE}: reading the request failed`, { key, err: errorName(err) });
-      return fail();
+      return fail("not_sent");
     }
     if (!found) {
       this.logger?.info(`${SOURCE}: not a request of this conversation`, { key });
-      return fail();
+      return fail("not_sent");
     }
     const entry = {
       actorId: input.actorId,
@@ -79,11 +83,13 @@ export class SubmitFeedback {
       await this.tracker.submitFeedback(found.key, rating);
     } catch (err) {
       this.logger?.warn(`${SOURCE}: submitFeedback failed`, { key: found.key, ...trackerErrorFields(err) });
-      if (!wasRefused(err)) {
+      const refused = wasRefused(err);
+      if (!refused) {
         await appendAuditSafely(this.auditLog, { ...entry, timestamp: this.now(), details: { rating, outcome: "feedback_unconfirmed" } }, SOURCE, this.logger);
       }
-      return fail();
+      return fail(refused ? "refused" : "unconfirmed");
     }
+    this.metrics.ratingSent("ok");
     await appendAuditSafely(this.auditLog, { ...entry, timestamp: this.now(), details: { rating } }, SOURCE, this.logger);
     return true;
   }

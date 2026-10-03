@@ -169,6 +169,8 @@ That is the default, `WIRE_SUPPORT_BOT_SDK_LOG_CONTENT=none`. Two other modes wr
 - `messages` adds the SDK's message text as `sdkMessage` (control characters removed, at most 500 characters), but none of its other arguments. The text is written by the SDK and can contain conversation, user and message IDs, backend URLs and error messages from the backend; the bot logs an info line at start-up naming the setting.
 - `full` also adds the SDK's other arguments as `sdkArgs` (about 4 KB at most per line, errors with their message and stack). These can contain decrypted messages, events and HTTP request and response bodies, so the logs then hold message content and possibly tokens. The bot logs a warning at start-up; use it only for short troubleshooting and switch back to `none`.
 
+Metrics (see "Metrics"), when turned on, are counts, durations and a few current values, labeled only from small fixed sets such as the message kind, the model slot, the Jira operation and an outcome. They carry no message text, no ticket content and no conversation, user, message or ticket IDs, and nothing that tells conversations or people apart.
+
 Sent to the model endpoint:
 
 - for an answer: the member's message, up to nine earlier messages with the senders' display names, the conversation's member names and IDs, the requester, and the conversation's stored support request records;
@@ -204,7 +206,7 @@ The code follows a hexagonal (ports and adapters) layout:
 
 - `src/domain/`: entities, identifiers and repository contracts. It depends on nothing else in the project.
 - `src/application/`: use cases (`usecases/`), shared application services (`services/`) and ports (`ports/`), the interfaces the use cases need from the outside world. It depends on the domain and its own ports only, never on Wire, Prisma or HTTP clients.
-- `src/infrastructure/`: adapters that implement the ports and repositories: Wire (`wire/`), Jira (`jira/`), the model endpoint (`llm/`), Postgres through Prisma (`persistence/postgres/`), the in-memory queue, offer store and member cache, and the passive-help pipeline (`pipeline/`).
+- `src/infrastructure/`: adapters that implement the ports and repositories: Wire (`wire/`), Jira (`jira/`), the model endpoint (`llm/`), Postgres through Prisma (`persistence/postgres/`), the in-memory queue, offer store and member cache, the passive-help pipeline (`pipeline/`), and Prometheus metrics with the metrics and health endpoint (`metrics/`).
 - `src/app/`: configuration (`config.ts`), logging, the entry point (`main.ts`), the CLI (`cli.ts`) and the composition root `src/app/container.ts`, which builds every adapter and use case and wires them together.
 
 ### Main modules
@@ -231,6 +233,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/infrastructure/pipeline/ProcessingPipeline.ts` | Classifies an unaddressed message and hands service-desk matters to passive help. |
 | `src/infrastructure/jira/JiraServiceManagementAdapter.ts` | `IssueTrackerPort` for Jira Service Management. |
 | `src/infrastructure/llm/` | Model adapters for answers, classification and triage, and the shared OpenAI-compatible client. |
+| `src/application/ports/MetricsPort.ts`, `src/infrastructure/metrics/` | The metrics port with its fixed label sets, the prom-client adapter, and the HTTP server for `/metrics` and `/healthz`. |
 | `prisma/schema.prisma` | The database schema; migrations are in `prisma/migrations/`. |
 
 ### How a message flows
@@ -318,7 +321,7 @@ The container's entry point applies the migrations (`prisma migrate deploy`) and
 
 ### Kubernetes (Helm)
 
-The chart in `charts/wire-support-bot/` runs the bot as one pod with a persistent volume for the Wire SDK store. It needs Helm 3 or newer and an external Postgres: the chart contains no database, so use a managed Postgres or an operator such as CloudNativePG and name the Secret that holds its connection URL or credentials (see "Database connection" below). The bot has no inbound traffic (it connects out to the Wire backend, Jira and the model endpoint), so the chart has no Service and no Ingress. Point `config.llmBaseUrl` at a model endpoint the pod can reach; the default `http://localhost:11434/v1` is the pod itself.
+The chart in `charts/wire-support-bot/` runs the bot as one pod with a persistent volume for the Wire SDK store. It needs Helm 3 or newer and an external Postgres: the chart contains no database, so use a managed Postgres or an operator such as CloudNativePG and name the Secret that holds its connection URL or credentials (see "Database connection" below). The bot has no inbound traffic (it connects out to the Wire backend, Jira and the model endpoint), so the chart has no Ingress, and a Service only for scraping metrics when `metrics.enabled` is set (see "Metrics"). Point `config.llmBaseUrl` at a model endpoint the pod can reach; the default `http://localhost:11434/v1` is the pod itself.
 
 Keep the Wire and Jira credentials in a Secret of your own and name it in `existingSecret`. It holds `WIRE_SDK_API_TOKEN`, `WIRE_SDK_CRYPTO_KEY` and `WIRE_SUPPORT_BOT_JIRA_API_TOKEN`, and optionally `WIRE_SUPPORT_BOT_LLM_API_KEY` and `WIRE_SUPPORT_BOT_JIRA_EMAIL`. Without `existingSecret`, the chart creates the Secret from `secrets.*` in your values. The database credentials come from `database.*` (see "Database connection" below); this example keeps the database password in a Secret of its own.
 
@@ -362,6 +365,18 @@ Every setting in "Configuration" has a value under `config:` (or under `secrets:
 #### Logs
 
 The bot writes one JSON object per line to stdout; only Prisma's migration output at start-up is plain text, and a missing or invalid database setting is reported as one JSON line on stderr before the container stops. Each line has `severity` (`DEBUG`, `INFO`, `WARNING`, `ERROR`), which Google Cloud Logging reads, and `level`, which Loki, Datadog and most other tools read. For Elastic, set `config.logFormat: ecs` for Elastic Common Schema fields (`@timestamp`, `log.level`, `message`, `ecs.version`) instead of `level`, `msg` and `time`. Collectors such as Fluent Bit, Vector, Grafana Alloy or the OpenTelemetry Collector need no parser setup beyond JSON. `config.sdkLogLevel` and `config.sdkLogContent` control the Wire SDK's own lines (see "What is stored and what is sent where").
+
+#### Metrics
+
+Set `metrics.enabled: true` for Prometheus metrics, a ClusterIP Service on `metrics.port` (default 9464) and a liveness probe on `/healthz`. With the Prometheus Operator, also set `metrics.serviceMonitor.enabled: true` (and `metrics.serviceMonitor.labels` to the labels your Prometheus selects ServiceMonitors by); for a Prometheus that discovers pods by annotations, set `metrics.podAnnotations: true`. See "Metrics" for the metrics themselves.
+
+```yaml
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels: { release: prometheus }
+```
 
 #### Database connection
 
@@ -452,7 +467,8 @@ How the chart runs the bot:
 - Exactly one replica, replaced with the `Recreate` strategy, so an upgrade stops the old pod before the new one starts. Two instances must never use the same Wire app and store; do not run the bot elsewhere (Docker Compose, a local process) with the same app while the release is installed.
 - The entry point applies the migrations and starts the bot, as with Docker Compose.
 - The SDK store is a `ReadWriteOnce` claim mounted at `/app/storage` (`persistence.size`, default 1Gi; `persistence.storageClass`; or `persistence.existingClaim`). `helm uninstall` keeps the claim. Losing it or `WIRE_SDK_CRYPTO_KEY` loses the end-to-end encryption state, so back up both.
-- The pod runs as user and group 1000 (the `node` user of the base image) with `fsGroup` 1000, no privilege escalation and no capabilities, and does not mount a service account token. There are no probes: a failed start exits the process, and Kubernetes restarts the pod.
+- The pod runs as user and group 1000 (the `node` user of the base image) with `fsGroup` 1000, no privilege escalation and no capabilities, and does not mount a service account token.
+- A failed start exits the process, and Kubernetes restarts the pod. With `metrics.enabled` the pod also has a liveness probe on `/healthz`, which only checks that the process answers (see "Metrics"); there is no readiness probe, since nothing routes traffic to the pod.
 
 ### Container image
 
@@ -565,6 +581,13 @@ All settings are environment variables; `.env.example` lists them with comments.
 | `MESSAGE_BUFFER_SIZE` | no | `50` | Recent messages kept in memory per conversation; a positive whole number, capped at 500. |
 | `WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE` | no | `UTC` | IANA timezone for conversations the bot newly joins; members can change it per conversation. |
 
+### Metrics
+
+| Setting | Required | Default | Meaning |
+|---|---|---|---|
+| `WIRE_SUPPORT_BOT_METRICS_PORT` | no | unset (no HTTP server) | Port of the HTTP endpoint with `GET /metrics` and `GET /healthz`, from 1 to 65535. See "Metrics". |
+| `WIRE_SUPPORT_BOT_METRICS_HOST` | no | `0.0.0.0` | Address the endpoint listens on; `127.0.0.1` keeps it local to the host. |
+
 ### Example: premium support for a truck manufacturer
 
 The code speaks of a generic service desk; tailoring happens in the configuration. For a truck manufacturer's premium support desk that handles faults and replacement parts for its customers' fleets, the end of `.env.example` has this example:
@@ -578,6 +601,65 @@ WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS=Depot north; Depot south
 ```
 
 The service scope tells the classifier and the answer model what counts as a service-desk matter. The request types map questions, part orders and faults to the project's own request types (replace the IDs with yours). The asset label and question make a part order ask for the vehicle ("To order it I need the vehicle (fleet or chassis number) ...") and show "Vehicle: ..." in the confirmation and the ticket; the delivery locations become buttons ([Depot north] [Depot south] [Other]). With passive help, the watch and the agent mapping turned on as well, drivers can report a breakdown in their own words, send a photo of the damage and talk to the assigned agent directly.
+
+## Metrics
+
+With `WIRE_SUPPORT_BOT_METRICS_PORT` set, the bot serves an HTTP endpoint on that port (on `WIRE_SUPPORT_BOT_METRICS_HOST`, default every interface) from start-up on, before it connects to Wire:
+
+- `GET /metrics`: the metrics in the Prometheus text format.
+- `GET /healthz`: `200 ok` as long as the process answers. It does not check Wire, Jira, the model endpoint or the database, so a dropped WebSocket or a Jira outage never gets the bot restarted; watch those through the metrics instead.
+- Anything else: 404.
+
+Locally, set `WIRE_SUPPORT_BOT_METRICS_PORT=9464` in `.env`, start the bot and open `http://localhost:9464/metrics`. With Docker Compose, also publish the port (a commented mapping is in `docker-compose.yml`). In Kubernetes, set `metrics.enabled` in the chart (see "Kubernetes (Helm)"). The endpoint has no authentication: keep it inside the cluster or on a local address. A port that cannot be bound stops start-up with an error line naming the port.
+
+Every metric name starts with `wire_support_bot_`. The Node runtime metrics of prom-client (`wire_support_bot_process_*`, `wire_support_bot_nodejs_*`: CPU, memory, event loop lag, garbage collection) come first; the bot's own are:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `wire_support_bot_wire_messages_received_total` | counter | `kind`: `text`, `file`, `button_click`, `other` | Events received from Wire. A file counts once, when it is uploaded; `other` is edits, pings, locations, reactions and deletions. |
+| `wire_support_bot_wire_connection_events_total` | counter | `event`: `connected`, `disconnected` | WebSocket connections opened and lost, as the Wire SDK reports them; each reconnect adds one of each. |
+| `wire_support_bot_wire_connected` | gauge | | 1 while the WebSocket is connected, 0 before the first connection and after a loss until the SDK has reconnected. |
+| `wire_support_bot_wire_sdk_problems_total` | counter | `severity`: `warn`, `error` | Warnings and errors the Wire SDK logged, also those below `WIRE_SUPPORT_BOT_SDK_LOG_LEVEL`. |
+| `wire_support_bot_model_calls_total` | counter | `slot`: `classify`, `respond`; `outcome`: `ok`, `fallback`, `timeout`, `error` | Model calls. `fallback`: the fallback model answered after the primary was unavailable or timed out; `timeout`: the last attempt timed out. |
+| `wire_support_bot_model_call_duration_seconds` | histogram | `slot` | Duration of a model call, fallback included; buckets from 0.25 s to 120 s. |
+| `wire_support_bot_jira_requests_total` | counter | `operation`: `create_issue`, `get_issue`, `resolve_issue`, `list_customer_replies`, `add_customer_reply`, `list_changed_since`, `add_customer_attachment`, `submit_feedback`; `outcome`: `2xx`, `4xx`, `5xx`, `timeout`, `error` | Jira HTTP requests, by the tracker operation that made them (one operation can make several, such as reading the SLAs or following transitions). `error`: no response, such as a DNS or connection failure. |
+| `wire_support_bot_jira_request_duration_seconds` | histogram | `operation` | Duration of a Jira HTTP request; buckets from 25 ms to 15 s. |
+| `wire_support_bot_watch_checks_total` | counter | `outcome`: `ok`, `error` | Watch checks; `error` when the watched requests or Jira's changes could not be read. |
+| `wire_support_bot_watch_check_duration_seconds` | histogram | | Duration of a watch check, including the updates it posts. |
+| `wire_support_bot_watched_requests` | gauge | | Requests the last successful watch check looked at. |
+| `wire_support_bot_support_requests_raised_total` | counter | `kind`: `question`, `part`, `fault` | Requests raised with the service desk. |
+| `wire_support_bot_support_replies_sent_total` | counter | | Replies sent to the service desk from Wire. |
+| `wire_support_bot_support_requests_resolved_total` | counter | | Resolves from Wire that reached done. |
+| `wire_support_bot_offers_total` | counter | `event`: `made`, `accepted`, `declined`, `expired` | Offers and questions put to a member (yes-or-no offers, choices, part-order steps, questions after a desk update, ratings) and how they ended. Offers replaced, dropped or lost on a restart are not counted as ended. |
+| `wire_support_bot_button_clicks_total` | counter | `outcome`: `accepted`, `not_asked`, `late`, `invalid` | Button clicks: the deciding click, a click by a member who was not asked, a click on a question that is no longer open, a button that does not belong to the question. |
+| `wire_support_bot_ratings_total` | counter | `outcome`: `ok`, `refused`, `unconfirmed`, `not_sent` | Satisfaction ratings: accepted, rejected by Jira, a timeout or server error (it may have arrived), or stopped before Jira. |
+| `wire_support_bot_pending_offers` | gauge | | Offers and questions waiting for an answer, read at each scrape. |
+| `wire_support_bot_queue_length` | gauge | | Messages waiting in the passive-help queue, read at each scrape; 0 with passive help off. |
+
+The counters with labels start at 0 for every label value, so rates and absence checks work from the start. The metrics carry no content and no IDs (see "What is stored and what is sent where").
+
+Example queries and alert ideas:
+
+```promql
+# Share of Jira requests that failed (4xx, 5xx, timeout, no response) over 15 minutes
+sum(rate(wire_support_bot_jira_requests_total{outcome!="2xx"}[15m]))
+  / sum(rate(wire_support_bot_jira_requests_total[15m])) > 0.2
+
+# 95th percentile of model call duration per slot
+histogram_quantile(0.95, sum by (slot, le) (rate(wire_support_bot_model_call_duration_seconds_bucket[30m])))
+
+# Model calls that needed the fallback or failed
+sum by (slot, outcome) (increase(wire_support_bot_model_calls_total{outcome!="ok"}[1h]))
+
+# No message from Wire for 6 hours (adjust to how busy your conversations are)
+sum(increase(wire_support_bot_wire_messages_received_total[6h])) == 0
+
+# The WebSocket has been down for 10 minutes
+max_over_time(wire_support_bot_wire_connected[10m]) == 0
+
+# The watch keeps failing
+increase(wire_support_bot_watch_checks_total{outcome="error"}[30m]) > 3
+```
 
 ## Development
 

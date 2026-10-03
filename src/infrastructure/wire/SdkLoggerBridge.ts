@@ -1,4 +1,5 @@
 import type { Logger } from "../../application/ports/Logger";
+import type { MetricsPort } from "../../application/ports/MetricsPort";
 
 const SAFE_TOKEN = /^[A-Za-z0-9._:-]+$/;
 const MAX_TOKEN_LENGTH = 64;
@@ -89,6 +90,8 @@ export type SdkLogContent = (typeof SDK_LOG_CONTENTS)[number];
 export interface SdkLogOptions {
   level: SdkLogLevel;
   content: SdkLogContent;
+  /** Counts the SDK's warnings and errors, also those below `level`. */
+  metrics?: Pick<MetricsPort, "wireSdkProblem">;
 }
 
 /** Longest `sdkMessage`, in UTF-16 code units. */
@@ -221,6 +224,7 @@ export function makeSdkLoggerBridge(sdkLogger: Logger, options: SdkLogOptions) {
   // object such as a WebSocket error event, its class name and event type). The other modes add
   // the message text and, with full, the extra arguments.
   const write = (severity: keyof typeof SEVERITY_RANK, msg: unknown, rest: unknown[]) => {
+    if (severity === "warn" || severity === "error") options.metrics?.wireSdkProblem(severity);
     if (SEVERITY_RANK[severity] < LEVEL_THRESHOLD[options.level]) return;
     const fields: Record<string, unknown> = severity === "warn" || severity === "error" ? sdkErrorDetails([msg, ...rest]) : {};
     if (options.content !== "none" && typeof msg === "string") fields.sdkMessage = sanitizeSdkMessage(msg);

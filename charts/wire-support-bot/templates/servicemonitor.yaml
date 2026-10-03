@@ -1,0 +1,28 @@
+{{- /*
+A ServiceMonitor for the Prometheus Operator, scraping /metrics through the metrics Service; only
+with metrics.enabled and metrics.serviceMonitor.enabled. Needs the operator's CustomResourceDefinition.
+*/}}
+{{- $metrics := .Values.metrics }}
+{{- if and $metrics.enabled $metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "wire-support-bot.fullname" . }}
+  labels:
+    {{- include "wire-support-bot.labels" . | nindent 4 }}
+    {{- with $metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "wire-support-bot.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ $metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ $metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}

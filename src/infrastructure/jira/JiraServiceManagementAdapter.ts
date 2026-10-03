@@ -6,6 +6,8 @@
  *   accepts fields on the customer request form.
  * - Status is read by category only. Status names are localized and never used.
  * - Errors and logs never include request bodies, response bodies or credentials.
+ * - Every HTTP request is recorded in the metrics by the tracker operation that made it, with its
+ *   status class (or timeout or error) and duration.
  */
 
 import {
@@ -22,6 +24,9 @@ import {
   type SlaSummary,
 } from "../../application/ports/IssueTrackerPort";
 import type { Logger } from "../../application/ports/Logger";
+import {
+  NO_METRICS, secondsSince, type JiraOperation, type JiraOutcome, type MetricsPort,
+} from "../../application/ports/MetricsPort";
 import type { JiraConfig } from "../../app/config";
 import { JIRA_KEY_PATTERN, isKeyInProject } from "../../domain/ids/jiraLink";
 
@@ -29,6 +34,7 @@ export interface JiraAdapterOptions {
   sleep?: (ms: number) => Promise<void>;
   slaPollAttempts?: number;
   slaPollIntervalMs?: number;
+  metrics?: MetricsPort;
 }
 
 const SUMMARY_MAX_LENGTH = 255;
@@ -161,6 +167,16 @@ function sanitizeFileName(name: string): string {
   return cleaned.slice(0, FILE_NAME_MAX - extension.length) + extension;
 }
 
+/** The status class of a response for the metrics; a status outside 2xx, 4xx and 5xx counts as an error. */
+function statusClass(status: number): JiraOutcome {
+  if (status >= 200 && status < 300) return "2xx";
+  if (status >= 400 && status < 500) return "4xx";
+  if (status >= 500 && status < 600) return "5xx";
+  return "error";
+}
+
+const isAbort = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
+
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class JiraServiceManagementAdapter implements IssueTrackerPort {
@@ -169,6 +185,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly slaPollAttempts: number;
   private readonly slaPollIntervalMs: number;
+  private readonly metrics: MetricsPort;
   /** The service account's own Jira account ID, cached after the first successful lookup. */
   private ownAccountId: string | undefined;
   /** The lookup in progress, shared by concurrent reads so /myself is requested once. */
@@ -186,10 +203,11 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     this.sleep = options.sleep ?? defaultSleep;
     this.slaPollAttempts = options.slaPollAttempts ?? 5;
     this.slaPollIntervalMs = options.slaPollIntervalMs ?? 2000;
+    this.metrics = options.metrics ?? NO_METRICS;
   }
 
   async createIssue(request: CreateIssueRequest): Promise<CreatedIssue> {
-    const created = await this.request<{ issueKey?: unknown }>("POST", "/rest/servicedeskapi/request", {
+    const created = await this.request<{ issueKey?: unknown }>("create_issue", "POST", "/rest/servicedeskapi/request", {
       serviceDeskId: this.config.serviceDeskId,
       requestTypeId: request.requestTypeId ?? this.config.requestTypes.fault,
       requestFieldValues: {
@@ -208,7 +226,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     let fieldsApplied = true;
     if (Object.keys(fields).length > 0) {
       try {
-        await this.request("PUT", `/rest/api/3/issue/${key}`, { fields });
+        await this.request("create_issue", "PUT", `/rest/api/3/issue/${key}`, { fields });
       } catch (err) {
         fieldsApplied = false;
         this.logger.warn("Jira issue created but field update failed", {
@@ -220,34 +238,38 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
   }
 
   async getIssue(key: string): Promise<IssueSnapshot | null> {
+    return this.readIssue(key, "get_issue");
+  }
+
+  private async readIssue(key: string, operation: JiraOperation): Promise<IssueSnapshot | null> {
     this.assertInProject(key);
-    const issue = await this.request<JiraIssue>("GET", `/rest/api/3/issue/${key}?fields=summary,status`, undefined, true);
+    const issue = await this.request<JiraIssue>(operation, "GET", `/rest/api/3/issue/${key}?fields=summary,status`, undefined, true);
     if (issue.status === 404 || !issue.data) return null;
     return {
       key,
       url: this.browseUrl(key),
       summary: issue.data.fields?.summary ?? "",
       statusCategory: toCategory(issue.data.fields?.status?.statusCategory?.key),
-      slas: await this.readSlas(key),
+      slas: await this.readSlas(key, operation),
     };
   }
 
   async resolveIssue(key: string): Promise<IssueSnapshot> {
     this.assertInProject(key);
-    const initial = await this.request<JiraIssue>("GET", `/rest/api/3/issue/${key}?fields=status`);
+    const initial = await this.request<JiraIssue>("resolve_issue", "GET", `/rest/api/3/issue/${key}?fields=status`);
     let current: JiraStatus = initial.data?.fields?.status ?? {};
     const visited = new Set<string>();
 
     for (let hop = 0; hop < MAX_TRANSITION_HOPS; hop++) {
       if (toCategory(current.statusCategory?.key) === "done") break;
       if (current.id) visited.add(current.id);
-      const list = await this.request<{ transitions?: JiraTransition[] }>("GET", `/rest/api/3/issue/${key}/transitions`);
+      const list = await this.request<{ transitions?: JiraTransition[] }>("resolve_issue", "GET", `/rest/api/3/issue/${key}/transitions`);
       const transitions = (list.data?.transitions ?? []).filter((t) => typeof t.id === "string");
       const next =
         transitions.find((t) => t.to?.statusCategory?.key === "done") ??
         transitions.find((t) => t.to?.statusCategory?.key === "indeterminate" && !!t.to.id && !visited.has(t.to.id));
       if (!next?.id) break;
-      await this.request("POST", `/rest/api/3/issue/${key}/transitions`, { transition: { id: next.id } });
+      await this.request("resolve_issue", "POST", `/rest/api/3/issue/${key}/transitions`, { transition: { id: next.id } });
       current = next.to ?? {};
     }
 
@@ -257,7 +279,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     // stop. The status is already done; only the SLAs need re-reading.
     for (let attempt = 1; attempt < this.slaPollAttempts && snapshot.slas.some((s) => s.state === "running"); attempt++) {
       await this.sleep(this.slaPollIntervalMs);
-      snapshot = { ...snapshot, slas: await this.readSlas(key) };
+      snapshot = { ...snapshot, slas: await this.readSlas(key, "resolve_issue") };
     }
     return snapshot;
   }
@@ -305,7 +327,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     const jql = `project = ${this.projectKey} AND key in (${batch.join(", ")})${bound}`;
     let nextPageToken: string | undefined;
     for (let page = 0; page < MAX_SEARCH_PAGES; page++) {
-      const res = await this.request<JiraSearchPage>("POST", "/rest/api/3/search/jql", {
+      const res = await this.request<JiraSearchPage>("list_changed_since", "POST", "/rest/api/3/search/jql", {
         jql,
         fields: ["status", "updated", "assignee"],
         maxResults: SEARCH_BATCH_SIZE,
@@ -341,6 +363,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     // Copied into a plain ArrayBuffer view, since Blob does not accept a shared buffer.
     form.append("file", new Blob([new Uint8Array(file.data)], { type: file.mimeType }), sanitizeFileName(file.name));
     const uploaded = await this.request<{ temporaryAttachments?: Array<{ temporaryAttachmentId?: unknown }> }>(
+      "add_customer_attachment",
       "POST",
       `/rest/servicedeskapi/servicedesk/${this.config.serviceDeskId}/attachTemporaryFile`,
       form,
@@ -353,6 +376,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
       throw new IssueTrackerError("Jira returned an unexpected response", uploaded.status);
     }
     await this.request(
+      "add_customer_attachment",
       "POST",
       `/rest/servicedeskapi/request/${key}/attachment`,
       // The service account is an agent: send the public flag explicitly, as for replies.
@@ -368,6 +392,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     const replies: Array<IssueReply & { accountId?: string }> = [];
     for (let page = 0; page < MAX_COMMENT_PAGES; page++) {
       const res = await this.request<{ values?: JiraComment[]; isLastPage?: boolean }>(
+        "list_customer_replies",
         "GET",
         `/rest/servicedeskapi/request/${key}/comment?public=true&internal=false&start=${page * COMMENT_PAGE_SIZE}&limit=${COMMENT_PAGE_SIZE}`,
       );
@@ -400,7 +425,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     this.assertInProject(key);
     // The service account is an agent, so the comment is an internal note unless it is
     // explicitly marked public. Always send the flag; never rely on the default.
-    await this.request("POST", `/rest/servicedeskapi/request/${key}/comment`, { body, public: true });
+    await this.request("add_customer_reply", "POST", `/rest/servicedeskapi/request/${key}/comment`, { body, public: true });
   }
 
   /**
@@ -411,18 +436,18 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
   async submitFeedback(key: string, rating: number): Promise<void> {
     this.assertInProject(key);
     if (!isFeedbackRating(rating)) throw new IssueTrackerError("Feedback rating must be a whole number from 1 to 5");
-    await this.request("POST", `/rest/servicedeskapi/request/${key}/feedback`, { type: "csat", rating }, false, { "X-ExperimentalApi": "opt-in" });
+    await this.request("submit_feedback", "POST", `/rest/servicedeskapi/request/${key}/feedback`, { type: "csat", rating }, false, { "X-ExperimentalApi": "opt-in" });
   }
 
   private async requireIssue(key: string): Promise<IssueSnapshot> {
-    const snapshot = await this.getIssue(key);
+    const snapshot = await this.readIssue(key, "resolve_issue");
     if (!snapshot) throw new IssueTrackerError("Jira request failed (404)", 404);
     return snapshot;
   }
 
-  private async readSlas(key: string): Promise<SlaSummary[]> {
+  private async readSlas(key: string, operation: JiraOperation): Promise<SlaSummary[]> {
     try {
-      const res = await this.request<{ values?: JiraSla[] }>("GET", `/rest/servicedeskapi/request/${key}/sla`);
+      const res = await this.request<{ values?: JiraSla[] }>(operation, "GET", `/rest/servicedeskapi/request/${key}/sla`);
       return (res.data?.values ?? []).map(toSla).filter((s): s is SlaSummary => s !== null);
     } catch (err) {
       this.logger.warn("Jira SLA read failed; reporting no SLAs", {
@@ -445,7 +470,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
 
   private async lookUpOwnAccountId(): Promise<string | undefined> {
     try {
-      const res = await this.request<{ accountId?: unknown }>("GET", "/rest/api/3/myself");
+      const res = await this.request<{ accountId?: unknown }>("list_customer_replies", "GET", "/rest/api/3/myself");
       const accountId = res.data?.accountId;
       if (typeof accountId === "string" && accountId) this.ownAccountId = accountId;
       return this.ownAccountId;
@@ -468,10 +493,11 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
   }
 
   /**
-   * One Jira call. A FormData body is sent as multipart without an explicit Content-Type, so
-   * fetch sets the boundary; any other body is sent as JSON.
+   * One Jira call, recorded in the metrics under `operation`. A FormData body is sent as multipart
+   * without an explicit Content-Type, so fetch sets the boundary; any other body is sent as JSON.
    */
   private async request<T>(
+    operation: JiraOperation,
     method: string,
     path: string,
     body?: unknown,
@@ -490,6 +516,8 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), isForm ? Math.max(this.config.timeoutMs, UPLOAD_TIMEOUT_MS) : this.config.timeoutMs);
+    const started = performance.now();
+    let outcome: JiraOutcome = "error";
     try {
       let res: Response;
       try {
@@ -498,8 +526,10 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
           body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
         });
       } catch (err) {
+        if (isAbort(err)) outcome = "timeout";
         throw this.transportError(err);
       }
+      outcome = statusClass(res.status);
       if (allowNotFound && res.status === 404) return { status: 404, data: null };
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
@@ -512,6 +542,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
       try {
         text = await res.text();
       } catch (err) {
+        if (isAbort(err)) outcome = "timeout";
         throw this.transportError(err);
       }
       if (!text) return { status: res.status, data: null };
@@ -522,11 +553,12 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
       }
     } finally {
       clearTimeout(timeout);
+      this.metrics.jiraRequest(operation, outcome, secondsSince(started));
     }
   }
 
   private transportError(err: unknown): IssueTrackerError {
-    if (err instanceof Error && err.name === "AbortError") return new IssueTrackerError("Jira request timed out");
+    if (isAbort(err)) return new IssueTrackerError("Jira request timed out");
     return new IssueTrackerError("Jira is unreachable");
   }
 }

@@ -6,6 +6,7 @@ import { trackerErrorFields } from "../../ports/IssueTrackerPort";
 import type { IssueSnapshot, IssueTrackerPort } from "../../ports/IssueTrackerPort";
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
+import { NO_METRICS, type MetricsPort } from "../../ports/MetricsPort";
 import { REPLY_BODY_MAX } from "../../services/offers";
 import type { FeedbackQuestions } from "../../services/feedbackQuestions";
 import { SupportRequestWrites } from "../../services/SupportRequestWrites";
@@ -53,6 +54,8 @@ export class ResolveSupportRequest {
     private readonly writes: SupportRequestWrites = new SupportRequestWrites(),
     /** The rating question after a resolve (WIRE_SUPPORT_BOT_JIRA_FEEDBACK=on); absent asks nothing. */
     private readonly feedback?: Pick<FeedbackQuestions, "ask">,
+    /** Counts the resolves that reached done. */
+    private readonly metrics: MetricsPort = NO_METRICS,
   ) {}
 
   /** The final snapshot, or null when nothing was resolved. Exactly one Wire message is sent. */
@@ -145,6 +148,7 @@ export class ResolveSupportRequest {
     if (!refreshed) {
       await appendAuditSafely(this.auditLog, { ...entry, details: { statusCategory: snapshot.statusCategory } }, "ResolveSupportRequest", this.logger);
     }
+    if (snapshot.statusCategory === "done") this.metrics.supportRequestResolved();
     await replyAbout(resolutionReply(snapshot, comment));
     if (snapshot.statusCategory === "done") await this.askFeedback(request);
     return snapshot;

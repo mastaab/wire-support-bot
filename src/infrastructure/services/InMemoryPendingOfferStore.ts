@@ -3,6 +3,7 @@ import type {
   EndedOfferPrompt, OfferCommand, OfferPrompt, OfferPromptEnding, OfferPromptNotice, PendingOffer, PendingOfferStore,
 } from "../../application/ports/PendingOfferPort";
 import { RECENT_DROP_MS } from "../../application/services/offers";
+import { NO_METRICS, type MetricsPort } from "../../application/ports/MetricsPort";
 
 function key(q: QualifiedId): string {
   return `${q.id}@${q.domain}`;
@@ -35,6 +36,9 @@ const PROMPTS_PER_CONVERSATION = 200;
  * whether the offer was answered or its message closed, and which one-off notices it had. A button
  * question that expires or is replaced by a newer one to the same requester is queued for closing
  * when the store notices it (`takeEndedPrompts`), marked closed so it is closed once.
+ *
+ * Metrics: an offer is counted as made the first time it is stored (storing the same offer again,
+ * as after an acknowledgment, does not count) and as expired when the store notices its expiry.
  */
 export class InMemoryPendingOfferStore implements PendingOfferStore {
   /** Conversation key to (requester key to offer). */
@@ -45,8 +49,25 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
   private readonly prompts = new Map<string, Map<string, PromptEntry>>();
   /** Button messages whose question ended without an answer, waiting to be closed. */
   private ended: EndedOfferPrompt[] = [];
+  /** Offers stored so far, so storing one again is not counted as made. */
+  private readonly counted = new WeakSet<PendingOffer>();
+
+  constructor(private readonly metrics: MetricsPort = NO_METRICS) {}
+
+  /** Unexpired offers in every conversation, for the pending-offers gauge. */
+  pendingCount(now: Date = new Date()): number {
+    let count = 0;
+    for (const byRequester of this.offers.values()) {
+      for (const offer of byRequester.values()) if (isLive(offer, now)) count++;
+    }
+    return count;
+  }
 
   put(offer: PendingOffer): void {
+    if (!this.counted.has(offer)) {
+      this.counted.add(offer);
+      this.metrics.offer("made");
+    }
     // Measured by the caller's clock, like every other method, not the system clock.
     this.purgeExpired(offer.createdAt);
     this.forget(offer.conversationId, offer.requesterId);
@@ -161,6 +182,7 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
     if (!offer) return null;
     if (isLive(offer, now)) return offer;
     this.remove(conversationId, requesterId);
+    this.metrics.offer("expired");
     this.endPrompt(offer, "expired");
     this.remember(conversationId, requesterId, offer.command, offer.expiresAt);
     return null;
@@ -219,6 +241,7 @@ export class InMemoryPendingOfferStore implements PendingOfferStore {
       for (const [requesterKey, offer] of byRequester) {
         if (isLive(offer, now)) continue;
         byRequester.delete(requesterKey);
+        this.metrics.offer("expired");
         this.endPrompt(offer, "expired");
         const remembered = this.dropped.get(conversationKey) ?? new Map<string, DroppedOffer>();
         remembered.set(requesterKey, { command: withoutFileRef(offer.command), droppedAt: offer.expiresAt });

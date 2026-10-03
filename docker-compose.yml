@@ -18,6 +18,9 @@ services:
       # Wire SDK store (SQLite + CoreCrypto keystore): must persist across restarts.
       # Losing it means the bot loses all end-to-end encryption session state.
       - wire-support-bot-crypto:/app/storage
+    # Metrics and health endpoint: set WIRE_SUPPORT_BOT_METRICS_PORT=9464 in .env and uncomment.
+    # ports:
+    #   - "127.0.0.1:9464:9464"
 
   postgres:
     image: postgres:16

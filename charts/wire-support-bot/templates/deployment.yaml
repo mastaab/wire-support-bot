@@ -1,10 +1,14 @@
 {{- /*
 Exactly one pod: two SDK instances must never use the same store, and offers live in memory.
 Recreate stops the old pod before the new one starts. The process exits within 5 seconds of
-SIGTERM. There is no HTTP endpoint, so no probes and no ports; a failing start exits with code 1
-and Kubernetes restarts the pod. The entrypoint builds DATABASE_URL (from the database settings in
-env) and runs the database migrations before the bot starts.
+SIGTERM. A failing start exits with code 1 and Kubernetes restarts the pod. With metrics.enabled
+the bot serves /metrics and /healthz on the port named metrics, set here rather than in the
+ConfigMap since the port, the probe and the Service all follow metrics.port; /healthz is the
+liveness probe. There is no readiness probe: nothing routes traffic to the pod. The entrypoint
+builds DATABASE_URL (from the database settings in env) and runs the database migrations before
+the bot starts.
 */}}
+{{- $metrics := .Values.metrics }}
 {{- $readOnlyRoot := dig "readOnlyRootFilesystem" false (.Values.securityContext | default dict) }}
 apiVersion: apps/v1
 kind: Deployment
@@ -25,6 +29,11 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- if not .Values.existingSecret }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if and $metrics.enabled $metrics.podAnnotations }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ include "wire-support-bot.envValue" $metrics.port }}
+        prometheus.io/path: /metrics
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -62,9 +71,26 @@ spec:
           {{- /* env overrides envFrom: the database settings, then extraEnv. */}}
           env:
             {{- include "wire-support-bot.databaseEnv" . | trim | nindent 12 }}
+            {{- if $metrics.enabled }}
+            - name: WIRE_SUPPORT_BOT_METRICS_PORT
+              value: {{ include "wire-support-bot.envValue" $metrics.port }}
+            - name: WIRE_SUPPORT_BOT_METRICS_HOST
+              value: "0.0.0.0"
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- if $metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ int $metrics.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            {{- toYaml $metrics.livenessProbe | nindent 12 }}
+          {{- end }}
           volumeMounts:
             - name: storage
               mountPath: /app/storage

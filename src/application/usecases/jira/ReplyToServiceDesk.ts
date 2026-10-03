@@ -5,6 +5,7 @@ import { trackerErrorFields } from "../../ports/IssueTrackerPort";
 import type { IssueTrackerPort } from "../../ports/IssueTrackerPort";
 import type { SentMessageRef, WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
+import { NO_METRICS, type MetricsPort } from "../../ports/MetricsPort";
 import { REPLY_BODY_MAX } from "../../services/offers";
 import { REPLY_FOOTER } from "./formatIssue";
 import { findSupportRequestInConversation } from "./supportRequestScope";
@@ -32,6 +33,8 @@ export class ReplyToServiceDesk {
     private readonly wireOutbound: WireOutboundPort,
     private readonly auditLog: AuditLogRepository,
     private readonly logger?: Logger,
+    /** Counts the replies sent. */
+    private readonly metrics: MetricsPort = NO_METRICS,
   ) {}
 
   /** True when the reply was sent. Exactly one Wire message is sent either way. */
@@ -75,6 +78,7 @@ export class ReplyToServiceDesk {
       return false;
     }
 
+    this.metrics.supportReplySent();
     // The reply is public in Jira now, so an audit failure must not suggest otherwise.
     await this.audit(input, key, { supportRequest: key });
     await replyAbout(`Sent your reply to **${key}** in Jira.`);

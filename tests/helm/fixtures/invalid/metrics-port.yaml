@@ -1,0 +1,7 @@
+# Expected failure: a metrics port outside 1 to 65535.
+# expect-schema: at '/metrics/port': maximum: got 70,000, want 65,535
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+metrics:
+  enabled: true
+  port: 70000

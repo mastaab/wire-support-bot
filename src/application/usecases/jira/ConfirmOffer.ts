@@ -13,6 +13,7 @@ import {
 import { REPLY_TEXT_CANCELED, replyTextQuestion } from "../../services/deskUpdateQuestions";
 import { answeredLine, closeOfferPrompt } from "../../services/offerPromptClosing";
 import type { Logger } from "../../ports/Logger";
+import { NO_METRICS, type MetricsPort } from "../../ports/MetricsPort";
 import { askPartOrderStep, partOrderTextQuestion } from "../../services/partOrderSteps";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { RaiseSupportRequest } from "./RaiseSupportRequest";
@@ -141,6 +142,8 @@ export class ConfirmOffer {
     /** Delivery locations of part orders offered as buttons; empty asks for the location in text. */
     private readonly deliveryLocations: readonly string[] = [],
     private readonly logger?: Logger,
+    /** Counts every answered offer as accepted or declined. */
+    private readonly metrics: MetricsPort = NO_METRICS,
   ) {}
 
   /**
@@ -226,6 +229,7 @@ export class ConfirmOffer {
     if (!waiting) return false;
     const reply = (text: string) => this.wireOutbound.sendPlainText(input.conversationId, text, { replyToMessageId: input.replyToMessageId });
     if (classifyConfirmation(body) === "no") {
+      this.metrics.offer("declined");
       await reply(REPLY_TEXT_CANCELED);
       return true;
     }
@@ -234,6 +238,7 @@ export class ConfirmOffer {
       await reply(`I'm afraid that is too long for Jira; please keep it under ${REPLY_BODY_MAX} characters and send it again.`);
       return true;
     }
+    this.metrics.offer("accepted");
     const command: OfferCommand = { kind: "reply", issueKey: target.issueKey, body };
     const question = formatReplyQuestion(target.issueKey, target.summary, body);
     const offerId = newOfferId();
@@ -312,6 +317,7 @@ export class ConfirmOffer {
     choice?: OfferChoice,
   ): Promise<void> {
     const asksReplyText = choice?.asksReplyText;
+    this.metrics.offer(command || asksReplyText || choice?.then ? "accepted" : "declined");
     if (offer.id) this.offers.markAnswered(offer.conversationId, offer.id);
     const { conversationId, requesterId: actorId, replyToMessageId } = context;
     await closeOfferPrompt(

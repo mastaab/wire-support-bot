@@ -9,6 +9,7 @@ import { trackerErrorFields } from "../../ports/IssueTrackerPort";
 import type { IssueChange, IssueReply, IssueSnapshot, IssueTrackerPort } from "../../ports/IssueTrackerPort";
 import type { WireOutboundPort } from "../../ports/WireOutboundPort";
 import type { Logger } from "../../ports/Logger";
+import { secondsSince, type MetricsPort } from "../../ports/MetricsPort";
 import { SupportRequestWrites } from "../../services/SupportRequestWrites";
 import type { DeskUpdateKind, DeskUpdateQuestions } from "../../services/deskUpdateQuestions";
 import type { OpenAgentConversation } from "./OpenAgentConversation";
@@ -60,6 +61,8 @@ export interface WatchGuards {
    * message that is never stored as the request's last message. Absent: no such questions.
    */
   questions?: DeskUpdateQuestions;
+  /** Records each check's duration and outcome, and the number of requests watched. */
+  metrics?: Pick<MetricsPort, "watchCheck">;
 }
 
 const NEW_REPLIES_HEADING: RepliesHeading = {
@@ -102,6 +105,18 @@ export class WatchSupportRequests {
   ) {}
 
   async check(): Promise<WatchCheckResult> {
+    const started = performance.now();
+    const seen: { watched?: number } = {};
+    try {
+      return await this.runCheck(seen);
+    } finally {
+      // The check failed when the watched requests or the tracker's changes could not be read.
+      this.guards.metrics?.watchCheck(seen.watched !== undefined ? "ok" : "error", secondsSince(started), seen.watched);
+    }
+  }
+
+  /** One check; sets `seen.watched` once the watched requests and their changes were read. */
+  private async runCheck(seen: { watched?: number }): Promise<WatchCheckResult> {
     let watched: SupportRequest[];
     try {
       watched = (await this.requests.listWatched(new Date(this.now().getTime() - RESOLVED_WATCH_MS)))
@@ -127,6 +142,7 @@ export class WatchSupportRequests {
     const checkTime = this.now();
     if (watched.length === 0) {
       this.lastCheck = checkTime;
+      seen.watched = 0;
       return this.result(0);
     }
 
@@ -139,6 +155,7 @@ export class WatchSupportRequests {
     }
     const since = this.askFrom();
     this.lastCheck = checkTime;
+    seen.watched = watched.length;
 
     const toExamine = new Map(this.pending);
     for (const change of changes) {

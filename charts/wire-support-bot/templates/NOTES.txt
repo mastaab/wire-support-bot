@@ -1,5 +1,11 @@
 The Wire Support Bot is deployed as one pod ({{ include "wire-support-bot.fullname" . }}) in namespace {{ .Release.Namespace }}.
-It has no Service: it connects out to the Wire backend, Jira and the model endpoint.
+It connects out to the Wire backend, Jira and the model endpoint.
+{{- if .Values.metrics.enabled }}
+Metrics: http://{{ include "wire-support-bot.fullname" . }}.{{ .Release.Namespace }}.svc:{{ int .Values.metrics.port }}/metrics (Service {{ include "wire-support-bot.fullname" . }}){{ if .Values.metrics.serviceMonitor.enabled }}, scraped through a ServiceMonitor{{ end }}.
+The liveness probe checks /healthz on the same port.
+{{- else }}
+It has no Service; set metrics.enabled for Prometheus metrics and a liveness probe.
+{{- end }}
 
 Follow the start-up (database migrations, then the bot):
   kubectl logs --namespace {{ .Release.Namespace }} deployment/{{ include "wire-support-bot.fullname" . }} --follow
