@@ -1,0 +1,12 @@
+The Wire Support Bot is deployed as one pod ({{ include "wire-support-bot.fullname" . }}) in namespace {{ .Release.Namespace }}.
+It has no Service: it connects out to the Wire backend, Jira and the model endpoint.
+
+Follow the start-up (database migrations, then the bot):
+  kubectl logs --namespace {{ .Release.Namespace }} deployment/{{ include "wire-support-bot.fullname" . }} --follow
+
+The Wire SDK store (SQLite database and CoreCrypto keystore) is on the PersistentVolumeClaim
+{{ include "wire-support-bot.claimName" . }}{{ if not .Values.persistence.existingClaim }}, which helm uninstall keeps{{ end }}.
+Losing this volume or WIRE_SDK_CRYPTO_KEY loses the end-to-end encryption state: back up both.
+
+Never run a second instance of the bot (another release, docker compose or a local process) with
+the same Wire app: two SDK instances must not share one app and store.

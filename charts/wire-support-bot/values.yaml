@@ -1,0 +1,172 @@
+# Wire Support Bot chart values. The bot runs as exactly one pod: two instances must never share
+# the SDK store, and offers live in memory. It has no inbound traffic, so there is no Service.
+
+# Overrides the chart name in resource names and labels.
+nameOverride: ""
+# Overrides the full resource name (release name plus chart name).
+fullnameOverride: ""
+
+image:
+  # Container image built from this repository's Dockerfile.
+  repository: quay.io/wire/wire-support-bot
+  # Image tag; empty: the chart's appVersion.
+  tag: ""
+  # Image pull policy.
+  pullPolicy: IfNotPresent
+
+# Secrets for pulling the image from a private registry, for example [{name: my-registry}].
+imagePullSecrets: []
+
+serviceAccount:
+  # Whether the chart creates a service account for the pod (its token is never mounted).
+  create: true
+  # Name of the service account; empty: the full name when created, "default" otherwise.
+  name: ""
+
+# Extra annotations on the pod.
+podAnnotations: {}
+# Extra labels on the pod.
+podLabels: {}
+
+# Pod security context. User and group 1000 are the node user of the base image; fsGroup makes the
+# store volume writable for it.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context. With readOnlyRootFilesystem true an emptyDir is mounted at /tmp; the
+# default is false because Prisma and the Wire SDK are not verified with a read-only root.
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+# Container resources; empty: none set. Example:
+#   requests:
+#     cpu: 100m
+#     memory: 256Mi
+#   limits:
+#     memory: 512Mi
+resources: {}
+
+# Node selector for the pod.
+nodeSelector: {}
+# Tolerations for the pod.
+tolerations: []
+# Affinity rules for the pod.
+affinity: {}
+
+# Extra environment variables for the container, as a list of Kubernetes EnvVar objects.
+extraEnv: []
+
+# Name of an existing Secret holding WIRE_SDK_API_TOKEN, WIRE_SDK_CRYPTO_KEY, DATABASE_URL and
+# WIRE_SUPPORT_BOT_JIRA_API_TOKEN, optionally WIRE_SUPPORT_BOT_LLM_API_KEY and
+# WIRE_SUPPORT_BOT_JIRA_EMAIL. When set, the chart creates no Secret and secrets.* is ignored.
+existingSecret: ""
+
+# Values for the Secret the chart creates when existingSecret is empty. The first four are required.
+secrets:
+  # App token issued by the Wire backend when the app was registered (scripts/register-app.mjs).
+  wireApiToken: ""
+  # 32-byte key for the SDK's local crypto store, 64 hex characters (openssl rand -hex 32). Losing it loses the store.
+  wireCryptoKey: ""
+  # Postgres connection URL, for example postgres://wirebot:password@postgres.example.com:5432/wire_support_bot.
+  databaseUrl: ""
+  # API token: a scoped token (Bearer), or a classic token together with jiraEmail (Basic).
+  jiraApiToken: ""
+  # Account e-mail for a classic token; leave empty for a scoped token.
+  jiraEmail: ""
+  # API key for the model endpoint; Ollama ignores it, so it may stay empty there.
+  llmApiKey: ""
+
+# Non-secret settings, rendered into a ConfigMap. An empty value (or null) is left out, so the app's
+# own default applies. on/off settings are strings: quote them, since YAML reads a bare on as true.
+config:
+  # ── Wire app ──
+  # Base URL of the Wire backend the app is registered on, for example https://wire-backend.example.com. Required.
+  wireApiHost: ""
+  # The app's user ID on the Wire backend; checked at start-up. Required.
+  wireAppId: ""
+  # The app's domain on the Wire backend, for example wire.example.com; checked at start-up. Required.
+  wireAppDomain: ""
+
+  # ── Model endpoint and slots ──
+  # OpenAI-compatible chat-completions endpoint; the default is a local Ollama, which inside a pod
+  # means the pod itself, so point this at a reachable endpoint such as http://ollama.example.svc:11434/v1.
+  llmBaseUrl: "http://localhost:11434/v1"
+  # Timeout per model call in milliseconds.
+  llmTimeoutMs: 60000
+  # Sent as reasoning_effort (none, low, medium or high); local thinking models such as Qwen under Ollama need none. Empty: not sent.
+  llmReasoningEffort: "none"
+  # Model for classifying messages for passive help and for the support triage.
+  modelClassify: "qwen3-next:80b"
+  # Model used when the classify model fails.
+  fallbackClassify: "qwen3-next:80b"
+  # Model for answers to questions addressed to the bot.
+  modelRespond: "qwen3-next:80b"
+  # Model used when the respond model fails.
+  fallbackRespond: "qwen3-next:80b"
+
+  # ── Jira (required) ──
+  # REST base URL; for a scoped service-account token https://api.atlassian.com/ex/jira/<cloud id>. Required.
+  jiraBaseUrl: ""
+  # Site URL for links to tickets, for example https://example.atlassian.net. Required.
+  jiraSiteUrl: ""
+  # Key of the Jira Service Management project, for example DESK. Required.
+  jiraProjectKey: ""
+  # Numeric ID of the service desk, for example "1". Required.
+  jiraServiceDeskId: ""
+  # Request type ID per request kind (question, part, fault), for example question=10001,part=10002,fault=10003; fault is required and used for any kind without its own. Required.
+  jiraRequestTypes: ""
+  # Timeout per Jira call in milliseconds (a positive whole number; raised to 1000 if lower).
+  jiraTimeoutMs: 15000
+  # Whether live ticket status, SLAs and desk replies may reach the answer model (on or off); with a remote model this sends ticket content to it.
+  jiraShareWithModel: "off"
+  # What the service desk handles, in plain words, for the model prompts (at most 500 characters); generic wording when empty.
+  jiraServiceScope: ""
+  # Desk agents who get a direct Wire conversation with the requester when assigned: <jira account id>=<wire handle>, comma-separated; needs the watch.
+  jiraAgents: ""
+  # What a newly assigned mapped agent gets: ask (ask the requester first), auto (open the direct conversation at once) or off.
+  jiraAgentChat: "ask"
+
+  # ── Part orders ──
+  # Label of the item a part is for, shown in confirmations and tickets (at most 40 characters).
+  partAssetLabel: "Asset"
+  # How the bot asks for that item, completing "To order it I need ..." (at most 200 characters).
+  partAssetQuestion: "the item the part is for (for example a machine, vehicle or device)"
+  # Delivery locations offered as buttons, plus [Other]: up to 5, separated by ";", each one line of at most 40 characters; empty: the location is asked in text.
+  partDeliveryLocations: ""
+
+  # ── Passive help and watch ──
+  # Whether the bot reads unaddressed messages and offers to raise, add to or resolve requests (on or off).
+  jiraPassive: "off"
+  # Seconds between checks of open requests for desk replies, status and assignee changes (at least 15); null: no watch.
+  jiraWatchSeconds: 30
+  # Hours the requester can answer the question after a desk reply or resolve (0 to 72, 0: none); null: 4.
+  jiraUpdateQuestionHours: null
+  # Whether the requester is asked for a 1 to 5 rating after answering [Solved], sent to the request's feedback in Jira (on or off).
+  jiraFeedback: "off"
+
+  # ── Logging and channels ──
+  # Log level: debug, info, warn or error.
+  logLevel: "info"
+  # Recent messages kept in memory per conversation as context (a positive whole number, capped at 500).
+  messageBufferSize: 50
+  # Timezone for conversations the bot newly joins (an IANA name); members can change it per conversation.
+  defaultTimezone: "UTC"
+
+# Persistent volume for the Wire SDK store (SQLite database and CoreCrypto keystore) at /app/storage.
+# Losing this volume or WIRE_SDK_CRYPTO_KEY loses the end-to-end encryption state: back up both.
+persistence:
+  # Name of an existing PersistentVolumeClaim to use; when set, the chart creates no claim.
+  existingClaim: ""
+  # Size of the claim the chart creates.
+  size: 1Gi
+  # Storage class of the claim the chart creates; empty: the cluster default.
+  storageClass: ""

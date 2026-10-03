@@ -272,7 +272,7 @@ The use cases talk to the service desk only through `IssueTrackerPort` in `src/a
 ### Requirements
 
 - Node.js 22.12 or newer (`engines` in `package.json`; the Docker image uses Node 22 on Debian trixie). The Wire SDK uses a native crypto library that needs glibc 2.38 or newer on Linux x86-64; the provided Dockerfile meets this.
-- PostgreSQL (the Compose file uses Postgres 16).
+- PostgreSQL (the Compose file uses Postgres 16; on Kubernetes an external one, see "Kubernetes (Helm)").
 - An OpenAI-compatible chat-completions endpoint, for example a local Ollama (`http://localhost:11434/v1`) with a model such as `qwen3-next:80b`, or a hosted provider.
 - A Wire app registered on your Wire backend by a team admin with `scripts/register-app.mjs` (see below). The team needs the apps feature enabled.
 - A Jira Service Management project and an API token for an account that can, in that project: raise requests through the service desk API, edit issues (to set the label), read issues and their SLAs, follow workflow transitions, read and add public comments, and add attachments. Use either a scoped service-account token (Bearer, with the base URL `https://api.atlassian.com/ex/jira/<cloud id>`) or a classic API token together with the account's e-mail (Basic). You also need the service desk ID and the request type IDs.
@@ -311,6 +311,60 @@ docker compose up -d --build
 
 The container's entry point applies the migrations (`prisma migrate deploy`) and starts the bot. Compose overrides `DATABASE_URL` to point at its own database, binds Postgres to `127.0.0.1` only, and keeps the Wire SDK store in a named volume mounted at `/app/storage`. An Ollama service is included as a commented-out block; to use it, uncomment it and set `WIRE_SUPPORT_BOT_LLM_BASE_URL=http://ollama:11434/v1`.
 
+### Kubernetes (Helm)
+
+The chart in `charts/wire-support-bot/` runs the bot as one pod with a persistent volume for the Wire SDK store. It needs Helm 3 or newer and an external Postgres: the chart contains no database, so use a managed Postgres or an operator such as CloudNativePG and pass its connection URL. The bot has no inbound traffic (it connects out to the Wire backend, Jira and the model endpoint), so the chart has no Service and no Ingress. Point `config.llmBaseUrl` at a model endpoint the pod can reach; the default `http://localhost:11434/v1` is the pod itself.
+
+Keep the credentials in a Secret of your own and name it in `existingSecret`. It holds `WIRE_SDK_API_TOKEN`, `WIRE_SDK_CRYPTO_KEY`, `DATABASE_URL` and `WIRE_SUPPORT_BOT_JIRA_API_TOKEN`, and optionally `WIRE_SUPPORT_BOT_LLM_API_KEY` and `WIRE_SUPPORT_BOT_JIRA_EMAIL`. Without `existingSecret`, the chart creates the Secret from `secrets.*` in your values.
+
+```bash
+kubectl create namespace support-bot
+kubectl create secret generic wire-support-bot-credentials --namespace support-bot \
+  --from-literal=WIRE_SDK_API_TOKEN=... \
+  --from-literal=WIRE_SDK_CRYPTO_KEY=... \
+  --from-literal=DATABASE_URL=postgres://user:password@postgres.example.com:5432/wire_support_bot \
+  --from-literal=WIRE_SUPPORT_BOT_JIRA_API_TOKEN=...
+helm install wire-support-bot ./charts/wire-support-bot --namespace support-bot \
+  --set existingSecret=wire-support-bot-credentials -f my-values.yaml
+kubectl logs --namespace support-bot deployment/wire-support-bot --follow
+```
+
+`my-values.yaml` sets the non-secret settings under `config:`, for example:
+
+```yaml
+config:
+  wireApiHost: https://wire-backend.example.com
+  wireAppId: 00000000-0000-0000-0000-000000000000
+  wireAppDomain: wire.example.com
+  llmBaseUrl: http://ollama.ollama.svc:11434/v1
+  jiraBaseUrl: https://api.atlassian.com/ex/jira/<cloud id>
+  jiraSiteUrl: https://your-site.atlassian.net
+  jiraProjectKey: SD
+  jiraServiceDeskId: "1"
+  jiraRequestTypes: question=10001,part=10002,fault=10003
+  jiraPassive: "on"
+```
+
+Every setting in "Configuration" has a value under `config:` (or under `secrets:` for credentials); `values.yaml` lists them with their defaults and comments, and `values.schema.json` rejects unknown keys and invalid values. Quote `on` and `off`, because YAML reads a bare `on` as true. An empty value leaves the setting unset, so the bot's own default applies. A change to the values restarts the pod on `helm upgrade`.
+
+How the chart runs the bot:
+
+- Exactly one replica, replaced with the `Recreate` strategy, so an upgrade stops the old pod before the new one starts. Two instances must never use the same Wire app and store; do not run the bot elsewhere (Docker Compose, a local process) with the same app while the release is installed.
+- The entry point applies the migrations and starts the bot, as with Docker Compose.
+- The SDK store is a `ReadWriteOnce` claim mounted at `/app/storage` (`persistence.size`, default 1Gi; `persistence.storageClass`; or `persistence.existingClaim`). `helm uninstall` keeps the claim. Losing it or `WIRE_SDK_CRYPTO_KEY` loses the end-to-end encryption state, so back up both.
+- The pod runs as user and group 1000 (the `node` user of the base image) with `fsGroup` 1000, no privilege escalation and no capabilities, and does not mount a service account token. There are no probes: a failed start exits the process, and Kubernetes restarts the pod.
+
+### Container image
+
+The workflow `.github/workflows/image.yml` builds the image from the `Dockerfile` and pushes it to `quay.io/wire/wire-support-bot`, for `linux/amd64` only (the Wire SDK's native crypto library is built for x86-64). A push to `main` publishes the tags `main` and `sha-<commit>`; a tag `v1.2.3` publishes `1.2.3`, `1.2` and `latest`; pull requests build the image without publishing it. The chart uses the tag of its `appVersion` unless `image.tag` is set. The workflow needs the repository secrets `QUAY_USERNAME` and `QUAY_PASSWORD` of a quay.io robot account with write access.
+
+To use your own registry, build and push the image yourself and set `image.repository` (and `imagePullSecrets` for a private registry):
+
+```bash
+docker build --platform linux/amd64 -t registry.example.com/wire-support-bot:1.0.0 .
+docker push registry.example.com/wire-support-bot:1.0.0
+```
+
 ### The CLI for local testing
 
 The CLI drives the real router and use cases from the terminal, without Wire. It simulates one conversation with four members, Alice (the default), Bob, Carol and Dave; prefix a line with `Bob: ` to send it as Bob. Start a line with `@Wire Support Bot` to mention the bot. Bot replies go to stdout and logs to stderr (level `warn` unless `LOG_LEVEL` is set). A question with buttons is printed with its options numbered under it; a line with only an option's number (`2`, or `Bob: 2`) clicks that option of the latest question, and any other line is a text answer. When the buttons are numbers themselves (the quantities [1] [2] [5]), a number clicks only the button with that label and any other number (`3`) is a typed quantity. The CLI shows no confirmation; a closed question is shown by its closing line, for example "(Question closed: Answered by Alice: No)", and a number no longer clicks it. End with `exit`, `quit` or Ctrl-D.
@@ -345,7 +399,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 
 | Setting | Required | Default | Meaning |
 |---|---|---|---|
-| `DATABASE_URL` | yes | | Postgres connection URL. Docker Compose overrides it. |
+| `DATABASE_URL` | yes | | Postgres connection URL. Docker Compose overrides it; the Helm chart reads it from the Secret. |
 
 ### Model endpoint and slots
 

@@ -1,0 +1,16 @@
+# Placeholder values for helm lint and helm template in tests and checks; not a real deployment.
+secrets:
+  wireApiToken: placeholder-app-token
+  wireCryptoKey: "0000000000000000000000000000000000000000000000000000000000000000"
+  databaseUrl: postgres://wirebot:placeholder@postgres.example.com:5432/wire_support_bot
+  jiraApiToken: placeholder-jira-token
+config:
+  wireApiHost: https://wire-backend.example.com
+  wireAppId: 00000000-0000-0000-0000-000000000000
+  wireAppDomain: wire.example.com
+  llmBaseUrl: http://ollama.example.svc:11434/v1
+  jiraBaseUrl: https://api.atlassian.com/ex/jira/00000000-0000-0000-0000-000000000000
+  jiraSiteUrl: https://example.atlassian.net
+  jiraProjectKey: DESK
+  jiraServiceDeskId: 1
+  jiraRequestTypes: question=10001,part=10002,fault=10003

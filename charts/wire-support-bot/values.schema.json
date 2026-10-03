@@ -1,0 +1,459 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Wire Support Bot chart values",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "nameOverride": {
+      "type": "string",
+      "description": "Overrides the chart name."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Overrides the full resource name."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Container image repository."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag; empty: the chart's appVersion."
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ],
+          "description": "Image pull policy."
+        }
+      },
+      "required": [
+        "repository"
+      ]
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Secrets for pulling the image."
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Whether the chart creates a service account."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the service account."
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Extra pod annotations."
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Extra pod labels."
+    },
+    "podSecurityContext": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Pod security context."
+    },
+    "securityContext": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Container security context.",
+      "properties": {
+        "readOnlyRootFilesystem": {
+          "type": "boolean"
+        }
+      }
+    },
+    "resources": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Container resources."
+    },
+    "nodeSelector": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Node selector."
+    },
+    "tolerations": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object"
+      },
+      "description": "Tolerations."
+    },
+    "affinity": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Affinity rules."
+    },
+    "extraEnv": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ]
+      },
+      "description": "Extra environment variables (Kubernetes EnvVar objects)."
+    },
+    "existingSecret": {
+      "type": "string",
+      "description": "Name of an existing Secret with the credentials; empty: the chart creates one from secrets.*."
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wireApiToken": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SDK_API_TOKEN"
+        },
+        "wireCryptoKey": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^([0-9a-fA-F]{64})?$",
+          "description": "WIRE_SDK_CRYPTO_KEY, 64 hex characters."
+        },
+        "databaseUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "DATABASE_URL"
+        },
+        "jiraApiToken": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_API_TOKEN"
+        },
+        "jiraEmail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_EMAIL"
+        },
+        "llmApiKey": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_LLM_API_KEY"
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wireApiHost": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SDK_API_HOST"
+        },
+        "wireAppId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SDK_APP_ID"
+        },
+        "wireAppDomain": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SDK_APP_DOMAIN"
+        },
+        "llmBaseUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_LLM_BASE_URL"
+        },
+        "llmTimeoutMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS",
+          "minimum": 1
+        },
+        "llmReasoningEffort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "",
+            "none",
+            "low",
+            "medium",
+            "high",
+            null
+          ],
+          "description": "WIRE_SUPPORT_BOT_LLM_REASONING_EFFORT: none, low, medium or high; empty: not sent."
+        },
+        "modelClassify": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_MODEL_CLASSIFY"
+        },
+        "fallbackClassify": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_FALLBACK_CLASSIFY"
+        },
+        "modelRespond": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_MODEL_RESPOND"
+        },
+        "fallbackRespond": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_FALLBACK_RESPOND"
+        },
+        "jiraBaseUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_BASE_URL"
+        },
+        "jiraSiteUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_SITE_URL"
+        },
+        "jiraProjectKey": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_PROJECT_KEY"
+        },
+        "jiraServiceDeskId": {
+          "type": [
+            "string",
+            "integer",
+            "null"
+          ],
+          "pattern": "^[0-9]*$",
+          "minimum": 0,
+          "description": "WIRE_SUPPORT_BOT_JIRA_SERVICE_DESK_ID, a numeric ID."
+        },
+        "jiraRequestTypes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_REQUEST_TYPES"
+        },
+        "jiraTimeoutMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_TIMEOUT_MS",
+          "minimum": 1
+        },
+        "jiraShareWithModel": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_SHARE_WITH_MODEL: on or off. Quote the value: YAML reads a bare on or off as a boolean."
+        },
+        "jiraServiceScope": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500,
+          "description": "WIRE_SUPPORT_BOT_JIRA_SERVICE_SCOPE, at most 500 characters."
+        },
+        "jiraAgents": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_AGENTS"
+        },
+        "jiraAgentChat": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "auto",
+            "off"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT: ask, auto or off. Quote off: YAML reads a bare off as a boolean."
+        },
+        "partAssetLabel": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "description": "WIRE_SUPPORT_BOT_PART_ASSET_LABEL, at most 40 characters."
+        },
+        "partAssetQuestion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200,
+          "description": "WIRE_SUPPORT_BOT_PART_ASSET_QUESTION, at most 200 characters."
+        },
+        "partDeliveryLocations": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS"
+        },
+        "jiraPassive": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_PASSIVE: on or off. Quote the value: YAML reads a bare on or off as a boolean."
+        },
+        "jiraWatchSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS, at least 15; null: no watch.",
+          "minimum": 15
+        },
+        "jiraUpdateQuestionHours": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS, 0 to 72; null: 4.",
+          "minimum": 0,
+          "maximum": 72
+        },
+        "jiraFeedback": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_FEEDBACK: on or off. Quote the value: YAML reads a bare on or off as a boolean."
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "description": "LOG_LEVEL."
+        },
+        "messageBufferSize": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MESSAGE_BUFFER_SIZE, a positive whole number (capped at 500 by the app).",
+          "minimum": 1
+        },
+        "defaultTimezone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE, an IANA name."
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingClaim": {
+          "type": "string",
+          "description": "Name of an existing PersistentVolumeClaim."
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Size of the claim the chart creates."
+        },
+        "storageClass": {
+          "type": "string",
+          "description": "Storage class; empty: the cluster default."
+        }
+      }
+    }
+  }
+}

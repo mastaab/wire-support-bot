@@ -1,0 +1,23 @@
+{{- /*
+The Wire SDK store (SQLite database and CoreCrypto keystore). Losing this volume or
+WIRE_SDK_CRYPTO_KEY loses the end-to-end encryption state, so the claim is kept on helm uninstall.
+*/}}
+{{- if not .Values.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "wire-support-bot.fullname" . }}
+  labels:
+    {{- include "wire-support-bot.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+{{- end }}

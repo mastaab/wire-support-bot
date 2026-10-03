@@ -52,7 +52,16 @@ npm run lint
 npm run build
 ```
 
-`npm run typecheck` checks `src` with `tsconfig.json` and the tests with `tsconfig.test.json`. Type the mocks in tests properly rather than loosening an assertion to make them compile.
+`npm run typecheck` checks `src` with `tsconfig.json` and the tests with `tsconfig.test.json`.
+
+When you change the Helm chart, also run:
+
+```bash
+helm lint charts/wire-support-bot --strict -f tests/helm/fixtures/values.yaml
+helm template wire-support-bot charts/wire-support-bot -f tests/helm/fixtures/values.yaml
+```
+
+A new setting needs a value in the chart (`values.yaml`, `values.schema.json` and `templates/configmap.yaml`, or `templates/secret.yaml` for a credential); `tests/helm/chartConfig.test.ts` fails when the chart and the app's settings differ. The workflow `.github/workflows/image.yml` runs the type check, lint and tests before it builds the image. Type the mocks in tests properly rather than loosening an assertion to make them compile.
 
 ## Writing conventions
 

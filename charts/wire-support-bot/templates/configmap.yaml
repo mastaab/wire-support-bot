@@ -1,0 +1,50 @@
+{{- /*
+Non-secret settings from config.*, mapped explicitly to the environment variable names the app reads
+(see .env.example). Optional settings that are empty or null are left out, so the app's own default
+applies. tests/helm/chartConfig.test.ts fails when this mapping drifts from the app.
+*/}}
+{{- $c := .Values.config }}
+{{- $optional := dict
+  "WIRE_SUPPORT_BOT_LLM_BASE_URL" $c.llmBaseUrl
+  "WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS" $c.llmTimeoutMs
+  "WIRE_SUPPORT_BOT_LLM_REASONING_EFFORT" $c.llmReasoningEffort
+  "WIRE_SUPPORT_BOT_MODEL_CLASSIFY" $c.modelClassify
+  "WIRE_SUPPORT_BOT_FALLBACK_CLASSIFY" $c.fallbackClassify
+  "WIRE_SUPPORT_BOT_MODEL_RESPOND" $c.modelRespond
+  "WIRE_SUPPORT_BOT_FALLBACK_RESPOND" $c.fallbackRespond
+  "WIRE_SUPPORT_BOT_JIRA_TIMEOUT_MS" $c.jiraTimeoutMs
+  "WIRE_SUPPORT_BOT_JIRA_SHARE_WITH_MODEL" $c.jiraShareWithModel
+  "WIRE_SUPPORT_BOT_JIRA_SERVICE_SCOPE" $c.jiraServiceScope
+  "WIRE_SUPPORT_BOT_JIRA_AGENTS" $c.jiraAgents
+  "WIRE_SUPPORT_BOT_JIRA_AGENT_CHAT" $c.jiraAgentChat
+  "WIRE_SUPPORT_BOT_PART_ASSET_LABEL" $c.partAssetLabel
+  "WIRE_SUPPORT_BOT_PART_ASSET_QUESTION" $c.partAssetQuestion
+  "WIRE_SUPPORT_BOT_PART_DELIVERY_LOCATIONS" $c.partDeliveryLocations
+  "WIRE_SUPPORT_BOT_JIRA_PASSIVE" $c.jiraPassive
+  "WIRE_SUPPORT_BOT_JIRA_WATCH_SECONDS" $c.jiraWatchSeconds
+  "WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS" $c.jiraUpdateQuestionHours
+  "WIRE_SUPPORT_BOT_JIRA_FEEDBACK" $c.jiraFeedback
+  "LOG_LEVEL" $c.logLevel
+  "MESSAGE_BUFFER_SIZE" $c.messageBufferSize
+  "WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE" $c.defaultTimezone
+}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wire-support-bot.fullname" . }}
+  labels:
+    {{- include "wire-support-bot.labels" . | nindent 4 }}
+data:
+  WIRE_SDK_API_HOST: {{ required "config.wireApiHost is required: the base URL of the Wire backend" $c.wireApiHost | include "wire-support-bot.envValue" }}
+  WIRE_SDK_APP_ID: {{ required "config.wireAppId is required: the app's user ID on the Wire backend" $c.wireAppId | include "wire-support-bot.envValue" }}
+  WIRE_SDK_APP_DOMAIN: {{ required "config.wireAppDomain is required: the app's domain on the Wire backend" $c.wireAppDomain | include "wire-support-bot.envValue" }}
+  WIRE_SUPPORT_BOT_JIRA_BASE_URL: {{ required "config.jiraBaseUrl is required: the Jira REST base URL" $c.jiraBaseUrl | include "wire-support-bot.envValue" }}
+  WIRE_SUPPORT_BOT_JIRA_SITE_URL: {{ required "config.jiraSiteUrl is required: the Jira site URL for ticket links" $c.jiraSiteUrl | include "wire-support-bot.envValue" }}
+  WIRE_SUPPORT_BOT_JIRA_PROJECT_KEY: {{ required "config.jiraProjectKey is required: the key of the Jira Service Management project" $c.jiraProjectKey | include "wire-support-bot.envValue" }}
+  WIRE_SUPPORT_BOT_JIRA_SERVICE_DESK_ID: {{ required "config.jiraServiceDeskId is required: the numeric ID of the service desk" $c.jiraServiceDeskId | include "wire-support-bot.envValue" }}
+  WIRE_SUPPORT_BOT_JIRA_REQUEST_TYPES: {{ required "config.jiraRequestTypes is required: the request type ID per kind, for example question=10001,part=10002,fault=10003" $c.jiraRequestTypes | include "wire-support-bot.envValue" }}
+  {{- range $name, $value := $optional }}
+  {{- if and (not (kindIs "invalid" $value)) (ne (toString $value) "") }}
+  {{ $name }}: {{ include "wire-support-bot.envValue" $value }}
+  {{- end }}
+  {{- end }}
