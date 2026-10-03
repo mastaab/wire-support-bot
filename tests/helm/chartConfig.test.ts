@@ -21,6 +21,7 @@ const SECRET_NAMES = [
   "WIRE_SUPPORT_BOT_JIRA_API_TOKEN",
   "WIRE_SUPPORT_BOT_JIRA_EMAIL",
   "WIRE_SUPPORT_BOT_LLM_API_KEY",
+  "WIRE_SUPPORT_BOT_EMBED_API_KEY",
 ];
 
 /**
@@ -110,7 +111,10 @@ describe("Helm chart configuration", () => {
   const envExample = envExampleNames();
 
   it("finds the settings it compares, so a parser change cannot pass silently", () => {
-    for (const name of ["WIRE_SDK_API_HOST", "DATABASE_URL", "DATABASE_HOST", "LOG_LEVEL", "MESSAGE_BUFFER_SIZE", "WIRE_SUPPORT_BOT_JIRA_FEEDBACK"]) {
+    for (const name of [
+      "WIRE_SDK_API_HOST", "DATABASE_URL", "DATABASE_HOST", "LOG_LEVEL", "MESSAGE_BUFFER_SIZE", "WIRE_SUPPORT_BOT_JIRA_FEEDBACK",
+      "WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE", "WIRE_SUPPORT_BOT_EMBED_API_KEY",
+    ]) {
       expect(app).toContain(name);
       expect(envExample).toContain(name);
       expect(chart).toContain(name);

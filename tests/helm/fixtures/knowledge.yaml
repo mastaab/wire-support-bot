@@ -1,0 +1,18 @@
+# Placeholder overrides: the document index on, a separate embeddings endpoint and key, and the
+# documents mounted from a ConfigMap for the ingestion.
+database:
+  url:
+    secretName: wire-support-bot-database
+config:
+  knowledge: "on"
+  embedBaseUrl: http://embeddings.example.svc:11434/v1
+  embedModel: qwen3-embedding:0.6b
+  knowledgeResults: 6
+  knowledgeMinScore: 0.45
+secrets:
+  embedApiKey: placeholder-embed-key
+extraVolumes:
+  - name: knowledge
+    configMap: { name: support-knowledge }
+extraVolumeMounts:
+  - { name: knowledge, mountPath: /knowledge, readOnly: true }

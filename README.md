@@ -157,10 +157,11 @@ Stored in Postgres:
 - Support request records: key, conversation, requester ID and display name, summary, kind, last known status category, and bookkeeping markers for the watch (last seen reply time, the bot's last message about the request, the last seen assignee, the agent group and when it was left). The problem description is not stored; it lives in the ticket.
 - An audit log of creates and updates: actor ID, conversation ID, action, entity and the changed fields (for example a status category or a timezone). It holds no message text and no names.
 - Per-conversation settings: the timezone.
+- With the document index (see "The built-in document index"): each ingested document's path, title, content hash, embedding model and ingest time, and its excerpts with their heading path, text and embedding. They hold what you ingest, and every member who can ask the bot can get answers from them, so ingest only documents meant for those members.
 
-Held in memory only, and lost on restart: the recent messages of each conversation (`MESSAGE_BUFFER_SIZE`), pending offers, the IDs of the bot's button messages with who was asked and the question as sent (so the message can be closed), and the member cache.
+Held in memory only, and lost on restart: the recent messages of each conversation (`MESSAGE_BUFFER_SIZE`), pending offers, the IDs of the bot's button messages with who was asked and the question as sent (so the message can be closed), the member cache, and with the document index on, its excerpts and embeddings (loaded from Postgres).
 
-Logs are structured JSON lines, on stdout for the bot and on stderr for the CLI. Fields named `text`, `preview`, `raw`, `context`, `prompt`, `response` and `stack` (content) and `name`, `senderName`, `requesterName`, `displayName`, `handle`, `agentHandle`, `email` and `fileName` (personal data) are removed, and the use cases log error names and ticket keys rather than content. Log lines carry conversation, user and message IDs for correlation, but no names. At the default level `info` the bot logs start-up, connection changes, watchdog actions, warnings and errors; per-message lines (`Message handled` with the message kind, the route it took and its duration in milliseconds, and the passive-help classifier result) are at `debug`.
+Logs are structured JSON lines, on stdout for the bot and on stderr for the CLI. Fields named `text`, `preview`, `raw`, `context`, `prompt`, `response` and `stack` (content) and `name`, `senderName`, `requesterName`, `displayName`, `handle`, `agentHandle`, `email` and `fileName` (personal data) are removed, and the use cases log error names and ticket keys rather than content. Log lines carry conversation, user and message IDs for correlation, but no names. The document index logs the model, counts and error names, never a question or document text. At the default level `info` the bot logs start-up, connection changes, watchdog actions, warnings and errors; per-message lines (`Message handled` with the message kind, the route it took and its duration in milliseconds, and the passive-help classifier result) are at `debug`.
 
 The Wire SDK's own log calls are recorded as "Wire SDK diagnostic" at their severity (`WIRE_SUPPORT_BOT_SDK_LOG_LEVEL`, default `warn`). By default (`WIRE_SUPPORT_BOT_SDK_LOG_CONTENT=messages`) the line carries the SDK's message text as `sdkMessage` (control characters removed, at most 500 characters), but none of its other arguments. The SDK writes that text itself; it can contain conversation, user, message and team IDs, request paths and error messages from the Wire backend, but no message content. The name of a conversation the bot creates (an agent group is named after the request) is replaced by `[redacted]`. For warnings and errors the line also adds the error's class name (`errorName`) and an HTTP `status`, error `code` or backend `label` when the error carries one as a number or a short identifier; a warning or error without an error object adds the class name of its first object argument (`objectType`, never a plain object) and that object's `type` when it is a short identifier (`eventType`).
 
@@ -173,9 +174,11 @@ Metrics (see "Metrics"), when turned on, are counts, durations and a few current
 
 Sent to the model endpoint:
 
-- for an answer: the member's message, up to nine earlier messages with the senders' display names, the conversation's member names and IDs, the requester, and the conversation's stored support request records;
+- for an answer: the member's message, up to nine earlier messages with the senders' display names, the conversation's member names and IDs, the requester, the conversation's stored support request records, and with the document index on, the matching excerpts with their sources;
 - for passive help: the message, recent messages from members, and the key and summary of open requests;
 - ticket content (live status, SLAs and up to three recent desk replies per ticket) only when `WIRE_SUPPORT_BOT_JIRA_SHARE_WITH_MODEL=on`.
+
+Sent to the embeddings endpoint, only with the document index: the member's message for each answer (`WIRE_SUPPORT_BOT_KNOWLEDGE=on`); during an ingestion, the text of every new or changed excerpt with its document's title and heading path; at start-up a fixed check text. By default the embeddings endpoint is the model endpoint.
 
 With the default local endpoint nothing leaves the host. With a remote provider, all of the above goes to that provider.
 
@@ -206,8 +209,8 @@ The code follows a hexagonal (ports and adapters) layout:
 
 - `src/domain/`: entities, identifiers and repository contracts. It depends on nothing else in the project.
 - `src/application/`: use cases (`usecases/`), shared application services (`services/`) and ports (`ports/`), the interfaces the use cases need from the outside world. It depends on the domain and its own ports only, never on Wire, Prisma or HTTP clients.
-- `src/infrastructure/`: adapters that implement the ports and repositories: Wire (`wire/`), Jira (`jira/`), the model endpoint (`llm/`), Postgres through Prisma (`persistence/postgres/`), the in-memory queue, offer store and member cache, the passive-help pipeline (`pipeline/`), and Prometheus metrics with the metrics and health endpoint (`metrics/`).
-- `src/app/`: configuration (`config.ts`), logging, the entry point (`main.ts`), the CLI (`cli.ts`) and the composition root `src/app/container.ts`, which builds every adapter and use case and wires them together.
+- `src/infrastructure/`: adapters that implement the ports and repositories: Wire (`wire/`), Jira (`jira/`), the model and embeddings endpoints (`llm/`), Postgres through Prisma (`persistence/postgres/`), the document index (`knowledge/`), the in-memory queue, offer store and member cache, the passive-help pipeline (`pipeline/`), and Prometheus metrics with the metrics and health endpoint (`metrics/`).
+- `src/app/`: configuration (`config.ts`), logging, the entry point (`main.ts`), the CLI (`cli.ts`), the knowledge ingestion command (`knowledgeIngest.ts`) and the composition root `src/app/container.ts`, which builds every adapter and use case and wires them together.
 
 ### Main modules
 
@@ -232,7 +235,9 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/application/usecases/jira/OpenAgentConversation.ts`, `AskForAgentConversation.ts`, `LeavePendingAgentGroups.ts` | The direct conversation with the agent, the question that offers it, and leaving it. |
 | `src/infrastructure/pipeline/ProcessingPipeline.ts` | Classifies an unaddressed message and hands service-desk matters to passive help. |
 | `src/infrastructure/jira/JiraServiceManagementAdapter.ts` | `IssueTrackerPort` for Jira Service Management. |
-| `src/infrastructure/llm/` | Model adapters for answers, classification and triage, and the shared OpenAI-compatible client. |
+| `src/infrastructure/llm/` | Model adapters for answers, classification and triage, the shared OpenAI-compatible client, and the embeddings adapter. |
+| `src/app/knowledgeIngest.ts`, `src/application/usecases/knowledge/IngestKnowledge.ts`, `src/application/services/knowledgeChunks.ts` | The knowledge ingestion command, the ingestion (add, skip, replace, remove) and the splitting of documents into excerpts. |
+| `src/infrastructure/knowledge/InMemoryKnowledgeIndex.ts`, `src/infrastructure/persistence/postgres/PrismaKnowledgeRepository.ts` | The document index: the in-memory search behind `RetrievalPort`, and the documents and excerpts in Postgres. |
 | `src/application/ports/MetricsPort.ts`, `src/infrastructure/metrics/` | The metrics port with its fixed label sets, the prom-client adapter, and the HTTP server for `/metrics` and `/healthz`. |
 | `prisma/schema.prisma` | The database schema; migrations are in `prisma/migrations/`. |
 
@@ -262,14 +267,59 @@ interface RetrievalPort {
 
 The query holds the member's question, the qualified conversation ID and, when known, the requester's ID. A knowledge source returns results of kind `knowledge_article`, each with an `id`, the excerpt as `content`, a `source` for the citation (a title or a link) and a `sourceDate`. `AnswerQuestion` calls the source first, adds the conversation's own support requests and context, and passes everything to the answer model; a failing source is logged and the bot answers without it. The answer adapter puts `knowledge_article` results in a "Knowledge articles" section of the prompt, and the prompt tells the model to cite an article by its source and to say nothing the article does not state.
 
-To add a source, implement `RetrievalPort` in an adapter under `src/infrastructure/` and pass an instance as the fourth argument of `new AnswerQuestion(...)` in `src/app/container.ts` (and in `src/app/cli.ts` if you want it in the CLI), where `undefined` is passed today. Add unit tests with a mocked port, following `tests/usecases/AnswerQuestion.test.ts`.
-
-A motivating example is first-level help: a user describes a problem, the bot suggests an answer from curated knowledge (manuals, troubleshooting guides, FAQs) and names its source, and if that does not solve the problem the member asks the bot to raise a ticket and gets the usual offer. This keeps the principle of the offers: the bot proposes, a person decides. Two typical ways to provide the knowledge:
-
-- The service desk's own knowledge base, searched through its REST API. This needs no storage of your own; the knowledge stays in the service desk.
-- Your own document index: manuals split into passages, embedded and searched by similarity. This gives you control over the content and the ranking, but needs an embedding model and a vector store, which this repository does not include. Make sure the embedding model's output dimension matches the database column before you rely on it.
-
 The seam covers the answer path, which needs a mention. Suggesting knowledge for unaddressed messages would be a change to passive help.
+
+#### The built-in document index
+
+With `WIRE_SUPPORT_BOT_KNOWLEDGE=on` the bot answers from curated documents (manuals, troubleshooting guides, FAQs) in Markdown or plain text. A member who mentions the bot with a problem or a question gets an answer that uses the matching excerpts and names their source, for example "Dashboard warning lights, Yellow lights > Engine check light". If that does not solve the problem, the member asks the bot to raise a ticket and gets the usual offer: the bot proposes, a person decides.
+
+- Ingestion: `npm run knowledge:ingest -- <directory>` reads every `.md`, `.markdown` and `.txt` file in the directory and its subdirectories (names starting with a dot are skipped). A document's title is its first `# ` heading, else the file name. Each section under a heading becomes an excerpt (a chunk) with its heading path below the title; a section longer than about 3,000 characters (about 750 tokens) is split at paragraphs, lines, sentences or spaces, never inside a word, and each further part starts with the end of the one before. Every chunk is embedded together with its title and heading path, and stored in Postgres with its embedding.
+- The directory is the full set: a run adds new documents, skips unchanged ones (same content hash and embedding model), replaces changed ones and removes the documents that are no longer in the directory. A directory without documents is refused, so a wrong path cannot empty the index. The command prints a summary such as `4 added, 0 updated, 0 unchanged, 0 removed; 30 chunks (30 embedded)` and no document content, and exits with code 1 on an error; a failed run keeps the documents stored so far, and the next run continues. It uses the bot's settings and `.env`, needs the database and the embeddings endpoint (not Wire or Jira), and also runs while `WIRE_SUPPORT_BOT_KNOWLEDGE` is off, so you can fill the index before you turn it on.
+- Search: at start-up the bot loads every chunk embedded with `WIRE_SUPPORT_BOT_EMBED_MODEL` into memory and logs one line with the model, the number of documents and chunks and the dimension. For each question addressed to the bot it embeds the question, ranks the chunks by cosine similarity, and passes up to `WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS` of them with a similarity of at least `WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE` to the answer model as knowledge articles. The search is exact and needs no database extension; it suits curated sets of up to a few thousand chunks. The bot checks for a new ingestion at most once a minute, on the next question, and reloads without a restart.
+- Failures: when the embeddings endpoint cannot be reached, at start-up or for a question, the bot logs a warning and answers without knowledge. Chunks embedded with another model are skipped with a warning that asks for a new ingestion; changing the model means running the ingestion again, which embeds every document anew.
+
+The embeddings endpoint is OpenAI-compatible (`/embeddings` is appended to `WIRE_SUPPORT_BOT_EMBED_BASE_URL`, by default the model endpoint), with the model `qwen3-embedding:0.6b` by default (with Ollama: `ollama pull qwen3-embedding:0.6b`). Excerpts and questions go to that endpoint (see "What is stored and what is sent where"). `examples/knowledge/` holds four invented documents for a truck fleet to try it with.
+
+Locally, with the bot's `.env`:
+
+```bash
+npm run build
+npm run knowledge:ingest -- examples/knowledge
+```
+
+With Docker Compose, run the ingestion in a one-off container of the bot's image with the directory mounted, after the bot has started once (its entry point applies the migrations). The entry point would start the bot, so `--entrypoint node` replaces it:
+
+```bash
+docker compose run --rm --entrypoint node -v "$PWD/examples/knowledge:/knowledge:ro" wire-support-bot dist/app/knowledgeIngest.js /knowledge
+```
+
+The container needs to reach the embeddings endpoint: for an Ollama on the host, set `WIRE_SUPPORT_BOT_EMBED_BASE_URL=http://host.docker.internal:11434/v1` in `.env` (on Linux also add `extra_hosts: ["host.docker.internal:host-gateway"]` to the service), or use the Ollama service of the Compose file.
+
+On Kubernetes, put the documents in a ConfigMap (or another volume), mount it into the pod with `extraVolumes` and `extraVolumeMounts`, and run the ingestion in the running pod, where it uses the pod's settings:
+
+```bash
+kubectl create configmap support-knowledge --namespace support-bot --from-file=examples/knowledge/
+```
+
+```yaml
+config:
+  knowledge: "on"
+extraVolumes:
+  - name: knowledge
+    configMap: { name: support-knowledge }
+extraVolumeMounts:
+  - { name: knowledge, mountPath: /knowledge, readOnly: true }
+```
+
+```bash
+kubectl exec --namespace support-bot deploy/wire-support-bot -- node dist/app/knowledgeIngest.js /knowledge
+```
+
+A ConfigMap holds at most 1 MiB, and `--from-file` with a directory takes only the files directly in it; for a larger set use a volume of your own. Kubernetes updates the files of a mounted ConfigMap a minute or so after the ConfigMap changes; run the ingestion again after that.
+
+#### Another source
+
+To add a source, implement `RetrievalPort` in an adapter under `src/infrastructure/` and pass an instance as the fourth argument of `new AnswerQuestion(...)` in `src/app/container.ts` (and in `src/app/cli.ts` if you want it in the CLI), where the document index is passed today (`undefined` when it is off). Add unit tests with a mocked port, following `tests/usecases/AnswerQuestion.test.ts`. An example is the service desk's own knowledge base, searched through its REST API: this needs no storage of your own, and the knowledge stays in the service desk. A vector database such as pgvector could replace the in-memory search behind the same port when the document set outgrows it.
 
 ### Another tracker
 
@@ -281,7 +331,7 @@ The use cases talk to the service desk only through `IssueTrackerPort` in `src/a
 
 - Node.js 22.12 or newer (`engines` in `package.json`; the Docker image uses Node 22 on Debian trixie). The Wire SDK uses a native crypto library that needs glibc 2.38 or newer on Linux x86-64; the provided Dockerfile meets this.
 - PostgreSQL (the Compose file uses Postgres 16; on Kubernetes an external one, see "Kubernetes (Helm)").
-- An OpenAI-compatible chat-completions endpoint, for example a local Ollama (`http://localhost:11434/v1`) with a model such as `qwen3-next:80b`, or a hosted provider.
+- An OpenAI-compatible chat-completions endpoint, for example a local Ollama (`http://localhost:11434/v1`) with a model such as `qwen3-next:80b`, or a hosted provider. For the optional document index, also an embeddings endpoint (the same Ollama with `qwen3-embedding:0.6b`, for example).
 - A Wire app registered on your Wire backend by a team admin with `scripts/register-app.mjs` (see below). The team needs the apps feature enabled.
 - A Jira Service Management project and an API token for an account that can, in that project: raise requests through the service desk API, edit issues (to set the label), read issues and their SLAs, follow workflow transitions, read and add public comments, and add attachments. Use either a scoped service-account token (Bearer, with the base URL `https://api.atlassian.com/ex/jira/<cloud id>`) or a classic API token together with the account's e-mail (Basic). You also need the service desk ID and the request type IDs.
 
@@ -323,7 +373,7 @@ The container's entry point applies the migrations (`prisma migrate deploy`) and
 
 The chart in `charts/wire-support-bot/` runs the bot as one pod with a persistent volume for the Wire SDK store. It needs Helm 3 or newer and an external Postgres: the chart contains no database, so use a managed Postgres or an operator such as CloudNativePG and name the Secret that holds its connection URL or credentials (see "Database connection" below). The bot has no inbound traffic (it connects out to the Wire backend, Jira and the model endpoint), so the chart has no Ingress, and a Service only for scraping metrics when `metrics.enabled` is set (see "Metrics"). Point `config.llmBaseUrl` at a model endpoint the pod can reach; the default `http://localhost:11434/v1` is the pod itself.
 
-Keep the Wire and Jira credentials in a Secret of your own and name it in `existingSecret`. It holds `WIRE_SDK_API_TOKEN`, `WIRE_SDK_CRYPTO_KEY` and `WIRE_SUPPORT_BOT_JIRA_API_TOKEN`, and optionally `WIRE_SUPPORT_BOT_LLM_API_KEY` and `WIRE_SUPPORT_BOT_JIRA_EMAIL`. Without `existingSecret`, the chart creates the Secret from `secrets.*` in your values. The database credentials come from `database.*` (see "Database connection" below); this example keeps the database password in a Secret of its own.
+Keep the Wire and Jira credentials in a Secret of your own and name it in `existingSecret`. It holds `WIRE_SDK_API_TOKEN`, `WIRE_SDK_CRYPTO_KEY` and `WIRE_SUPPORT_BOT_JIRA_API_TOKEN`, and optionally `WIRE_SUPPORT_BOT_LLM_API_KEY`, `WIRE_SUPPORT_BOT_EMBED_API_KEY` and `WIRE_SUPPORT_BOT_JIRA_EMAIL`. Without `existingSecret`, the chart creates the Secret from `secrets.*` in your values. The database credentials come from `database.*` (see "Database connection" below); this example keeps the database password in a Secret of its own.
 
 ```bash
 kubectl create namespace support-bot
@@ -491,7 +541,7 @@ npm run cli
 printf "@Wire Support Bot support requests\n" | npm run cli
 ```
 
-Like `npm start`, the CLI reads `.env` from the working directory; settings already in the environment take precedence. The CLI needs the full configuration (including the `WIRE_SDK_*` settings, although it does not connect to Wire), the database and the model endpoint. It has no watch, no files and no agent groups.
+Like `npm start`, the CLI reads `.env` from the working directory; settings already in the environment take precedence. The CLI needs the full configuration (including the `WIRE_SDK_*` settings, although it does not connect to Wire), the database and the model endpoint. It has no watch, no files and no agent groups; with `WIRE_SUPPORT_BOT_KNOWLEDGE=on` its answers use the document index like the bot's.
 
 Support commands and confirmed offers in the CLI write to the real service desk. Point it at a test project, not at your production desk.
 
@@ -536,6 +586,19 @@ All settings are environment variables; `.env.example` lists them with comments.
 | `WIRE_SUPPORT_BOT_FALLBACK_CLASSIFY` | no | `qwen3-next:80b` | Tried once when the classify model times out or returns 503 or 529. |
 | `WIRE_SUPPORT_BOT_MODEL_RESPOND` | no | `qwen3-next:80b` | Model for answers to messages addressed to the bot. |
 | `WIRE_SUPPORT_BOT_FALLBACK_RESPOND` | no | `qwen3-next:80b` | Tried once when the respond model times out or returns 503 or 529. |
+
+### Document index
+
+| Setting | Required | Default | Meaning |
+|---|---|---|---|
+| `WIRE_SUPPORT_BOT_KNOWLEDGE` | no | `off` | `on` lets answers use the ingested documents (see "The built-in document index"). Off, the bot makes no embedding call. |
+| `WIRE_SUPPORT_BOT_EMBED_BASE_URL` | no | `WIRE_SUPPORT_BOT_LLM_BASE_URL` | OpenAI-compatible endpoint for embeddings (http or https); `/embeddings` is appended. Questions and document excerpts are sent to it. |
+| `WIRE_SUPPORT_BOT_EMBED_API_KEY` | no | `WIRE_SUPPORT_BOT_LLM_API_KEY` | Sent as a Bearer token to the embeddings endpoint. |
+| `WIRE_SUPPORT_BOT_EMBED_MODEL` | no | `qwen3-embedding:0.6b` | Embedding model, for the ingestion and the search alike; after a change, run the ingestion again. |
+| `WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS` | no | `4` | Most excerpts passed to the answer model per question; a whole number from 1 to 10. |
+| `WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE` | no | `0.5` | Lowest cosine similarity of an excerpt passed to the answer model, from 0 to 1. Raise it when unrelated excerpts show up, lower it when matching ones are missed; good values depend on the model. |
+
+The embeddings requests use `WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS`. The settings are checked at start-up also while the index is off.
 
 ### Jira
 
@@ -622,7 +685,7 @@ Every metric name starts with `wire_support_bot_`. The Node runtime metrics of p
 | `wire_support_bot_wire_connected` | gauge | | 1 while the WebSocket is connected, 0 before the first connection and after a loss until the SDK has reconnected. |
 | `wire_support_bot_wire_watchdog_actions_total` | counter | `action`: `restart`, `exit` | What the connection watchdog did after `WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES` without a Wire connection: restarted the connection, or ended the process after a second period. |
 | `wire_support_bot_wire_sdk_problems_total` | counter | `severity`: `warn`, `error` | Warnings and errors the Wire SDK logged, also those below `WIRE_SUPPORT_BOT_SDK_LOG_LEVEL`. |
-| `wire_support_bot_model_calls_total` | counter | `slot`: `classify`, `respond`; `outcome`: `ok`, `fallback`, `timeout`, `error` | Model calls. `fallback`: the fallback model answered after the primary was unavailable or timed out; `timeout`: the last attempt timed out. |
+| `wire_support_bot_model_calls_total` | counter | `slot`: `classify`, `respond`, `embed`; `outcome`: `ok`, `fallback`, `timeout`, `error` | Model calls. `fallback`: the fallback model answered after the primary was unavailable or timed out; `timeout`: the last attempt timed out. `embed` counts each embeddings request of the document index (a question, or the start-up check), which has no fallback. |
 | `wire_support_bot_model_call_duration_seconds` | histogram | `slot` | Duration of a model call, fallback included; buckets from 0.25 s to 120 s. |
 | `wire_support_bot_jira_requests_total` | counter | `operation`: `create_issue`, `get_issue`, `resolve_issue`, `list_customer_replies`, `add_customer_reply`, `list_changed_since`, `add_customer_attachment`, `submit_feedback`; `outcome`: `2xx`, `4xx`, `5xx`, `timeout`, `error` | Jira HTTP requests, by the tracker operation that made them (one operation can make several, such as reading the SLAs or following transitions). `error`: no response, such as a DNS or connection failure. |
 | `wire_support_bot_jira_request_duration_seconds` | histogram | `operation` | Duration of a Jira HTTP request; buckets from 25 ms to 15 s. |
@@ -637,6 +700,8 @@ Every metric name starts with `wire_support_bot_`. The Node runtime metrics of p
 | `wire_support_bot_ratings_total` | counter | `outcome`: `ok`, `refused`, `unconfirmed`, `not_sent` | Satisfaction ratings: accepted, rejected by Jira, a timeout or server error (it may have arrived), or stopped before Jira. |
 | `wire_support_bot_pending_offers` | gauge | | Offers and questions waiting for an answer, read at each scrape. |
 | `wire_support_bot_queue_length` | gauge | | Messages waiting in the passive-help queue, read at each scrape; 0 with passive help off. |
+| `wire_support_bot_knowledge_retrievals_total` | counter | `outcome`: `hit`, `miss`, `error` | Searches of the document index for an answer: at least one excerpt passed on, none similar enough (or an empty index), or the question could not be embedded or the index not read. Only with the document index on. |
+| `wire_support_bot_knowledge_chunks` | gauge | | Excerpts of the document index loaded for searching, read at each scrape; 0 with the index off. |
 
 The counters with labels start at 0 for every label value, so rates and absence checks work from the start. The metrics carry no content and no IDs (see "What is stored and what is sent where").
 

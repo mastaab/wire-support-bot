@@ -9,7 +9,7 @@ The code follows a hexagonal (ports and adapters) layout. Keep the dependency di
 - `src/domain/` depends only on the domain: entities, identifiers, repository contracts and pure domain services.
 - `src/application/` depends on the domain and on its own ports. Use cases never call Wire, Prisma, Jira or the model endpoint directly; they go through a port or a repository contract.
 - `src/infrastructure/` implements ports and repositories (Wire, Jira, the model endpoint, Postgres, in-memory stores, the passive-help pipeline).
-- `src/app/` is the composition root: configuration, logging, the entry point, the CLI and `src/app/container.ts`.
+- `src/app/` is the composition root: configuration, logging, the entry point, the CLI, the knowledge ingestion command (`knowledgeIngest.ts`) and `src/app/container.ts`.
 
 `eslint.config.mjs` reports an error, and `npm run lint` fails, when the domain or application layer imports from an outer layer, the Wire SDK, Prisma or prom-client.
 

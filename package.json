@@ -9,6 +9,7 @@
     "start": "node dist/app/main.js",
     "dev": "ts-node src/app/main.ts",
     "cli": "node dist/app/cli.js",
+    "knowledge:ingest": "node dist/app/knowledgeIngest.js",
     "lint": "eslint src tests --ext .ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",

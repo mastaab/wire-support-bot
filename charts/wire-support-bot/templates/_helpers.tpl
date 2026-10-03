@@ -77,10 +77,10 @@ chart creates.
 
 {{/*
 A setting as a quoted environment value. Whole numbers are printed without an exponent (values
-files load numbers as floats, and 1000000 would otherwise become 1e+06).
+files load numbers as floats, and 1000000 would otherwise become 1e+06); fractions such as 0.5 as they are.
 */}}
 {{- define "wire-support-bot.envValue" -}}
-{{- if kindIs "float64" . }}
+{{- if and (kindIs "float64" .) (eq (float64 (int64 .)) .) }}
 {{- int64 . | toString | quote }}
 {{- else }}
 {{- toString . | quote }}

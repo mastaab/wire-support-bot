@@ -26,8 +26,8 @@ export type WireWatchdogAction = (typeof WIRE_WATCHDOG_ACTIONS)[number];
 export const WIRE_SDK_PROBLEMS = ["warn", "error"] as const;
 export type WireSdkProblem = (typeof WIRE_SDK_PROBLEMS)[number];
 
-/** The model slots (see `LLMConfig.slots`). */
-export const MODEL_SLOTS = ["classify", "respond"] as const;
+/** The model slots (see `LLMConfig.slots`), and `embed` for the embeddings of the document index. */
+export const MODEL_SLOTS = ["classify", "respond", "embed"] as const;
 export type ModelSlotLabel = (typeof MODEL_SLOTS)[number];
 
 /**
@@ -75,8 +75,16 @@ export type ButtonClickOutcome = (typeof BUTTON_CLICK_OUTCOMES)[number];
 export const RATING_OUTCOMES = ["ok", "refused", "unconfirmed", "not_sent"] as const;
 export type RatingOutcome = (typeof RATING_OUTCOMES)[number];
 
+/**
+ * A search of the document index for an answer: hit (at least one excerpt passed on), miss (none
+ * scored high enough, or the index is empty), error (the question could not be embedded or the
+ * index could not be read).
+ */
+export const KNOWLEDGE_RETRIEVAL_OUTCOMES = ["hit", "miss", "error"] as const;
+export type KnowledgeRetrievalOutcome = (typeof KNOWLEDGE_RETRIEVAL_OUTCOMES)[number];
+
 /** Values read when metrics are collected, not recorded as events. */
-export const COLLECTED_GAUGES = ["pending_offers", "queue_length"] as const;
+export const COLLECTED_GAUGES = ["pending_offers", "queue_length", "knowledge_chunks"] as const;
 export type CollectedGauge = (typeof COLLECTED_GAUGES)[number];
 
 export interface MetricsPort {
@@ -96,6 +104,7 @@ export interface MetricsPort {
   offer(event: OfferEvent): void;
   buttonClick(outcome: ButtonClickOutcome): void;
   ratingSent(outcome: RatingOutcome): void;
+  knowledgeRetrieval(outcome: KnowledgeRetrievalOutcome): void;
   /** Registers how a gauge is read; it is called each time metrics are collected. */
   collect(gauge: CollectedGauge, read: () => number): void;
 }
@@ -117,6 +126,7 @@ export const NO_METRICS: MetricsPort = {
   offer: ignore,
   buttonClick: ignore,
   ratingSent: ignore,
+  knowledgeRetrieval: ignore,
   collect: ignore,
 };
 

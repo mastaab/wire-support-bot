@@ -49,6 +49,7 @@ import type { MessageJob } from "../infrastructure/pipeline/ProcessingPipeline";
 import { AnswerQuestion } from "../application/usecases/general/AnswerQuestion";
 import { SetChannelTimezone } from "../application/usecases/general/SetChannelTimezone";
 import { NO_METRICS, type MetricsPort } from "../application/ports/MetricsPort";
+import { createKnowledgeRetrieval } from "./knowledge";
 
 export interface Container {
   getWireClient(): Promise<WireAppSdk>;
@@ -112,13 +113,15 @@ export function createContainer(
     pipeline = passivePipeline;
   }
 
-  // No retrieval source is wired: answers use the conversation and its support requests. A
-  // knowledge source plugs in here as a RetrievalPort.
+  // The document index (WIRE_SUPPORT_BOT_KNOWLEDGE): answers get matching excerpts of the ingested
+  // documents. Off: undefined, so answers use the conversation and its support requests only.
+  // Another knowledge source plugs in here as a RetrievalPort.
+  const knowledge = createKnowledgeRetrieval(config.knowledge, logger, metrics);
   const answerQuestion = new AnswerQuestion(
     generalAnswerAdapter,
     wireOutbound,
     { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage },
-    undefined,
+    knowledge,
     logger,
   );
 

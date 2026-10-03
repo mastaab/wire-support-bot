@@ -59,6 +59,7 @@ import { ReplyToServiceDesk } from "../application/usecases/jira/ReplyToServiceD
 import { ConfirmOffer } from "../application/usecases/jira/ConfirmOffer";
 import { AnswerQuestion } from "../application/usecases/general/AnswerQuestion";
 import { SetChannelTimezone } from "../application/usecases/general/SetChannelTimezone";
+import { createKnowledgeRetrieval } from "./knowledge";
 
 dotenv.config();
 
@@ -175,7 +176,8 @@ async function main() {
     }),
     wireOutbound,
     { tracker: issueTracker, requests: supportRequestsRepo, offers: pendingOffers, auditLog: auditLogRepo, shareWithModel: jira.shareWithModel, passive: passiveOn, partAsset: config.partAsset, partDeliveryLocations: config.partDeliveryLocations, partDetails: supportTriage },
-    undefined,
+    // The document index, when WIRE_SUPPORT_BOT_KNOWLEDGE is on.
+    createKnowledgeRetrieval(config.knowledge, logger),
     logger,
   );
 

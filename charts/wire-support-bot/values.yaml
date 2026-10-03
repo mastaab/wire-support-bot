@@ -68,11 +68,12 @@ affinity: {}
 extraEnv: []
 
 # Extra volumes for the pod, as a list of Kubernetes Volume objects, for example a Secret with the
-# database's CA certificate: [{name: postgres-ca, secret: {secretName: postgres-ca}}].
+# database's CA certificate: [{name: postgres-ca, secret: {secretName: postgres-ca}}], or a
+# ConfigMap with documents for the knowledge ingestion: [{name: knowledge, configMap: {name: support-knowledge}}].
 extraVolumes: []
 # Extra volume mounts for the bot's container, as a list of Kubernetes VolumeMount objects, for
 # example [{name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true}] for a CA file named in
-# database.options (sslcert=/etc/postgres-ca/ca.crt).
+# database.options (sslcert=/etc/postgres-ca/ca.crt), or [{name: knowledge, mountPath: /knowledge, readOnly: true}].
 extraVolumeMounts: []
 # Extra containers in the pod, as a list of Kubernetes Container objects, for example the Cloud SQL
 # Auth Proxy as a sidecar (then database.host.value is 127.0.0.1).
@@ -125,8 +126,8 @@ database:
   options: ""
 
 # Name of an existing Secret holding WIRE_SDK_API_TOKEN, WIRE_SDK_CRYPTO_KEY and
-# WIRE_SUPPORT_BOT_JIRA_API_TOKEN, optionally WIRE_SUPPORT_BOT_LLM_API_KEY and
-# WIRE_SUPPORT_BOT_JIRA_EMAIL. When set, the chart creates no Secret and secrets.* is ignored. The
+# WIRE_SUPPORT_BOT_JIRA_API_TOKEN, optionally WIRE_SUPPORT_BOT_LLM_API_KEY,
+# WIRE_SUPPORT_BOT_EMBED_API_KEY and WIRE_SUPPORT_BOT_JIRA_EMAIL. When set, the chart creates no Secret and secrets.* is ignored. The
 # database credentials come from database.*.
 existingSecret: ""
 
@@ -142,6 +143,8 @@ secrets:
   jiraEmail: ""
   # API key for the model endpoint; Ollama ignores it, so it may stay empty there.
   llmApiKey: ""
+  # API key for the embeddings endpoint (config.embedBaseUrl); empty: llmApiKey.
+  embedApiKey: ""
 
 # Non-secret settings, rendered into a ConfigMap. An empty value (or null) is left out, so the app's
 # own default applies. on/off settings are strings: quote them, since YAML reads a bare on as true.
@@ -172,6 +175,19 @@ config:
   modelRespond: "qwen3-next:80b"
   # Model used when the respond model fails.
   fallbackRespond: "qwen3-next:80b"
+
+  # ── Document index for first-level help ──
+  # Whether answers search the ingested documents (on or off); ingest them with
+  # kubectl exec deploy/<release> -- node dist/app/knowledgeIngest.js <directory>.
+  knowledge: "off"
+  # OpenAI-compatible endpoint for embeddings; empty: llmBaseUrl. The documents and the members' questions are sent to it.
+  embedBaseUrl: ""
+  # Embedding model; the ingestion and the bot must use the same one.
+  embedModel: "qwen3-embedding:0.6b"
+  # Most document excerpts passed to the answer model per question (1 to 10).
+  knowledgeResults: 4
+  # Lowest cosine similarity (0 to 1) of an excerpt passed to the answer model.
+  knowledgeMinScore: 0.5
 
   # ── Jira (required) ──
   # REST base URL; for a scoped service-account token https://api.atlassian.com/ex/jira/<cloud id>. Required.

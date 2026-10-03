@@ -406,6 +406,13 @@
             "null"
           ],
           "description": "WIRE_SUPPORT_BOT_LLM_API_KEY"
+        },
+        "embedApiKey": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "WIRE_SUPPORT_BOT_EMBED_API_KEY"
         }
       }
     },
@@ -503,6 +510,48 @@
             "null"
           ],
           "description": "WIRE_SUPPORT_BOT_FALLBACK_RESPOND"
+        },
+        "knowledge": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off"
+          ],
+          "description": "WIRE_SUPPORT_BOT_KNOWLEDGE: on or off. Quote the value: YAML reads a bare on or off as a boolean."
+        },
+        "embedBaseUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(https?://.+)?$",
+          "description": "WIRE_SUPPORT_BOT_EMBED_BASE_URL, an http or https URL; empty: llmBaseUrl."
+        },
+        "embedModel": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\S*$",
+          "description": "WIRE_SUPPORT_BOT_EMBED_MODEL, a model name without spaces."
+        },
+        "knowledgeResults": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 10,
+          "description": "WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS, 1 to 10; null: 4."
+        },
+        "knowledgeMinScore": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE, a cosine similarity from 0 to 1; null: 0.5."
         },
         "jiraBaseUrl": {
           "type": [

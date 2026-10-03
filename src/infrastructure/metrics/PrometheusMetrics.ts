@@ -8,7 +8,7 @@
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
 import { SUPPORT_REQUEST_KINDS } from "../../domain/entities/SupportRequest";
 import {
-  BUTTON_CLICK_OUTCOMES, JIRA_OPERATIONS, JIRA_OUTCOMES, MODEL_CALL_OUTCOMES, MODEL_SLOTS, OFFER_EVENTS, RATING_OUTCOMES,
+  BUTTON_CLICK_OUTCOMES, JIRA_OPERATIONS, JIRA_OUTCOMES, KNOWLEDGE_RETRIEVAL_OUTCOMES, MODEL_CALL_OUTCOMES, MODEL_SLOTS, OFFER_EVENTS, RATING_OUTCOMES,
   WATCH_CHECK_OUTCOMES, WIRE_CONNECTION_EVENTS, WIRE_MESSAGE_KINDS, WIRE_SDK_PROBLEMS, WIRE_WATCHDOG_ACTIONS,
   type CollectedGauge, type MetricsPort,
 } from "../../application/ports/MetricsPort";
@@ -83,6 +83,9 @@ export function createPrometheusMetrics(): PrometheusMetrics {
   const offers = counter("offers_total", "Offers and questions put to members, and how they ended.", { event: OFFER_EVENTS });
   const clicks = counter("button_clicks_total", "Button clicks, by outcome.", { outcome: BUTTON_CLICK_OUTCOMES });
   const ratings = counter("ratings_total", "Satisfaction ratings sent to the service desk, by outcome.", { outcome: RATING_OUTCOMES });
+  const retrievals = counter("knowledge_retrievals_total", "Searches of the document index for an answer, by outcome.", {
+    outcome: KNOWLEDGE_RETRIEVAL_OUTCOMES,
+  });
 
   // Gauges read on collection; a reader that throws leaves the gauge at its last value.
   const readers = new Map<CollectedGauge, () => number>();
@@ -96,6 +99,7 @@ export function createPrometheusMetrics(): PrometheusMetrics {
   });
   collected("pending_offers", "Offers and questions waiting for an answer.");
   collected("queue_length", "Messages waiting in the passive-help queue.");
+  collected("knowledge_chunks", "Excerpts of the document index loaded for searching.");
 
   const metrics: MetricsPort = {
     wireMessageReceived: (kind) => messages.inc({ kind }),
@@ -124,6 +128,7 @@ export function createPrometheusMetrics(): PrometheusMetrics {
     offer: (event) => offers.inc({ event }),
     buttonClick: (outcome) => clicks.inc({ outcome }),
     ratingSent: (outcome) => ratings.inc({ outcome }),
+    knowledgeRetrieval: (outcome) => retrievals.inc({ outcome }),
     collect: (gauge, read) => { readers.set(gauge, read); },
   };
 

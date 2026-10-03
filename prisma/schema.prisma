@@ -65,3 +65,33 @@ model ChannelConfig {
 
   @@map("channel_config")
 }
+
+/// A document of the document index for first-level help, identified by its path in the ingested directory.
+/// Its content lives in its chunks; the content hash and the embedding model decide whether a new ingestion skips it.
+model KnowledgeDocument {
+  id             String           @id @default(cuid())
+  sourcePath     String           @unique @map("source_path")
+  title          String
+  contentHash    String           @map("content_hash") // sha256 of the file's text, hex
+  embeddingModel String           @map("embedding_model")
+  ingestedAt     DateTime         @map("ingested_at")
+  chunks         KnowledgeChunk[]
+
+  @@map("knowledge_documents")
+}
+
+/// An excerpt of a knowledge document with its embedding: float32 values, little-endian, `dimension` of them.
+/// Searched in memory, so the vector size is not fixed in the schema and no database extension is needed.
+model KnowledgeChunk {
+  id          String            @id @default(cuid())
+  documentId  String            @map("document_id")
+  document    KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  position    Int
+  headingPath String            @map("heading_path") // "Brakes > Warning lights"; empty before the first heading
+  content     String
+  embedding   Bytes
+  dimension   Int
+
+  @@unique([documentId, position])
+  @@map("knowledge_chunks")
+}

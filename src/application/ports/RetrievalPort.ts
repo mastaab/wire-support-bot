@@ -4,7 +4,7 @@ import type { QualifiedId } from "../../domain/ids/QualifiedId";
  * What a retrieval result holds, which decides the section of the answer prompt it appears in.
  * - `support_request`: a stored support request of this conversation (key, summary, kind, requester, last known status).
  * - `live_ticket`: live ticket data (status, SLAs, service-desk replies); only produced when sharing it with the model is on.
- * - `knowledge_article`: an excerpt from curated knowledge such as a manual or FAQ, with its source. No source provides it yet.
+ * - `knowledge_article`: an excerpt from curated knowledge such as a manual or FAQ, with its source; produced by the document index when it is on.
  * - `context`: a short fact about the conversation for the model, such as its timezone or the offer being amended.
  */
 export type RetrievalResultKind = "support_request" | "live_ticket" | "knowledge_article" | "context";

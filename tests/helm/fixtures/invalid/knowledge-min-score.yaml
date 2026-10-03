@@ -1,0 +1,6 @@
+# Expected failure: a minimum score above 1 (a cosine similarity).
+# expect-schema: at '/config/knowledgeMinScore': maximum: got 1.5, want 1
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+config:
+  knowledgeMinScore: 1.5

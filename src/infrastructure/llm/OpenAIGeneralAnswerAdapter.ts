@@ -4,7 +4,7 @@
  *   ## Conversation members, ## Current requester
  *   ## Support requests              (stored records of this conversation)
  *   ## Live support request tickets  (only when sharing ticket content with the model is enabled)
- *   ## Knowledge articles            (from an optional retrieval source; none is wired yet)
+ *   ## Knowledge articles            (from the document index or another retrieval source)
  *   ## Related Context               (the channel's timezone, an offer being amended)
  *   ## Recent conversation
  *   ## User's Question

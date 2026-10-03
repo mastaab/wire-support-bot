@@ -13,6 +13,11 @@ applies. tests/helm/chartConfig.test.ts fails when this mapping drifts from the 
   "WIRE_SUPPORT_BOT_FALLBACK_CLASSIFY" $c.fallbackClassify
   "WIRE_SUPPORT_BOT_MODEL_RESPOND" $c.modelRespond
   "WIRE_SUPPORT_BOT_FALLBACK_RESPOND" $c.fallbackRespond
+  "WIRE_SUPPORT_BOT_KNOWLEDGE" $c.knowledge
+  "WIRE_SUPPORT_BOT_EMBED_BASE_URL" $c.embedBaseUrl
+  "WIRE_SUPPORT_BOT_EMBED_MODEL" $c.embedModel
+  "WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS" $c.knowledgeResults
+  "WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE" $c.knowledgeMinScore
   "WIRE_SUPPORT_BOT_JIRA_TIMEOUT_MS" $c.jiraTimeoutMs
   "WIRE_SUPPORT_BOT_JIRA_SHARE_WITH_MODEL" $c.jiraShareWithModel
   "WIRE_SUPPORT_BOT_JIRA_SERVICE_SCOPE" $c.jiraServiceScope

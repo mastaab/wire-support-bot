@@ -83,6 +83,28 @@ export interface Config {
   partDeliveryLocations: string[];
   /** The metrics and health endpoint; absent when WIRE_SUPPORT_BOT_METRICS_PORT is unset (no HTTP server). */
   metrics?: MetricsConfig;
+  /** The document index for first-level help; read also when it is off, since the ingestion command uses it. */
+  knowledge: KnowledgeConfig;
+}
+
+/** The OpenAI-compatible embeddings endpoint and model. */
+export interface EmbeddingConfig {
+  /** Endpoint, without a trailing slash; `/embeddings` is appended. */
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  /** Timeout per embeddings request, the model timeout (WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS). */
+  timeoutMs: number;
+}
+
+export interface KnowledgeConfig {
+  /** WIRE_SUPPORT_BOT_KNOWLEDGE: whether answers search the document index. Off by default. */
+  enabled: boolean;
+  embedding: EmbeddingConfig;
+  /** WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS: most excerpts passed to the answer model, 1 to 10. */
+  results: number;
+  /** WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE: lowest cosine similarity of an excerpt passed on, 0 to 1. */
+  minScore: number;
 }
 
 export interface MetricsConfig {
@@ -387,6 +409,55 @@ export function resolveWireWatchdogMinutes(env: Record<string, string | undefine
   return n;
 }
 
+/** Defaults of the document index settings. */
+export const EMBED_MODEL_DEFAULT = "qwen3-embedding:0.6b";
+export const KNOWLEDGE_RESULTS_DEFAULT = 4;
+export const KNOWLEDGE_RESULTS_MAX = 10;
+export const KNOWLEDGE_MIN_SCORE_DEFAULT = 0.5;
+
+/**
+ * The document index settings. WIRE_SUPPORT_BOT_KNOWLEDGE is on or off (default off). The
+ * embeddings endpoint and key default to the model endpoint's (WIRE_SUPPORT_BOT_LLM_BASE_URL,
+ * WIRE_SUPPORT_BOT_LLM_API_KEY); the model to `EMBED_MODEL_DEFAULT`. Every value is checked also
+ * when the index is off, so a wrong value fails at startup, naming the setting.
+ */
+export function resolveKnowledgeConfig(env: Record<string, string | undefined>): KnowledgeConfig {
+  const value = (name: string) => env[name]?.trim() || undefined;
+  const switchRaw = (value("WIRE_SUPPORT_BOT_KNOWLEDGE") ?? "off").toLowerCase();
+  if (switchRaw !== "on" && switchRaw !== "off") throw new Error("WIRE_SUPPORT_BOT_KNOWLEDGE must be on or off");
+
+  const baseUrlName = value("WIRE_SUPPORT_BOT_EMBED_BASE_URL") ? "WIRE_SUPPORT_BOT_EMBED_BASE_URL" : "WIRE_SUPPORT_BOT_LLM_BASE_URL";
+  const baseUrl = (value(baseUrlName) ?? "http://localhost:11434/v1").replace(/\/+$/, "");
+  let url: URL | undefined;
+  try { url = new URL(baseUrl); } catch { /* reported below */ }
+  if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) throw new Error(`${baseUrlName} must be an http or https URL`);
+
+  const model = value("WIRE_SUPPORT_BOT_EMBED_MODEL") ?? EMBED_MODEL_DEFAULT;
+  if (/\s/.test(model) || model.length > 200) throw new Error("WIRE_SUPPORT_BOT_EMBED_MODEL must be a model name without spaces");
+
+  const resultsRaw = value("WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS");
+  const results = resultsRaw === undefined ? KNOWLEDGE_RESULTS_DEFAULT : /^\d{1,2}$/.test(resultsRaw) ? parseInt(resultsRaw, 10) : NaN;
+  if (!(results >= 1 && results <= KNOWLEDGE_RESULTS_MAX)) {
+    throw new Error(`WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS must be a whole number from 1 to ${KNOWLEDGE_RESULTS_MAX}`);
+  }
+
+  const minScoreRaw = value("WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE");
+  const minScore = minScoreRaw === undefined ? KNOWLEDGE_MIN_SCORE_DEFAULT : /^(?:0|1)?(?:\.\d+)?$/.test(minScoreRaw) ? Number(minScoreRaw) : NaN;
+  if (!(minScore >= 0 && minScore <= 1)) throw new Error("WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE must be a number from 0 to 1, such as 0.5");
+
+  return {
+    enabled: switchRaw === "on",
+    embedding: {
+      baseUrl,
+      apiKey: value("WIRE_SUPPORT_BOT_EMBED_API_KEY") ?? value("WIRE_SUPPORT_BOT_LLM_API_KEY") ?? "",
+      model,
+      timeoutMs: resolvePositiveInt(env, "WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS", 60_000),
+    },
+    results,
+    minScore,
+  };
+}
+
 function getEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set`);
@@ -477,6 +548,7 @@ export function loadConfig(): Config {
   const partAsset = resolvePartAsset(process.env);
   const partDeliveryLocations = resolvePartDeliveryLocations(process.env);
   const metrics = resolveMetricsConfig(process.env);
+  const knowledge = resolveKnowledgeConfig(process.env);
 
   return {
     wire,
@@ -486,5 +558,6 @@ export function loadConfig(): Config {
     partAsset,
     partDeliveryLocations,
     ...(metrics ? { metrics } : {}),
+    knowledge,
   };
 }
