@@ -6,7 +6,7 @@ import { fakeMetrics } from "../metrics/fakeMetrics";
 
 const MINUTE = 60_000;
 
-function fakeLogger(): Logger & { error: ReturnType<typeof vi.fn> } {
+function fakeLogger(): Logger & { info: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> } {
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => logger };
   return logger;
 }
@@ -96,12 +96,16 @@ describe("WireConnectionWatchdog", () => {
     expect(exit).toHaveBeenCalledTimes(1);
   });
 
-  it("resets everything when Wire connects after a restart", async () => {
-    const { watchdog, restarts, exit } = setup();
+  it("resets everything when Wire connects after a restart, and logs that it was restored", async () => {
+    const { watchdog, restarts, exit, logger } = setup();
     watchdog.start();
     await vi.advanceTimersByTimeAsync(5 * MINUTE);
     expect(restarts).toHaveBeenCalledTimes(1);
     watchdog.onConnected();
+    expect(logger.info).toHaveBeenCalledWith("Wire connection restored after the watchdog restart", { minutes: 5 });
+    watchdog.onDisconnected();
+    watchdog.onConnected();
+    expect(logger.info).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(60 * MINUTE);
     expect(exit).not.toHaveBeenCalled();
     // A later outage restarts first again, instead of exiting.
@@ -161,11 +165,12 @@ describe("WireConnectionWatchdog", () => {
 });
 
 describe("listenForConnection", () => {
-  it("sets one listener that feeds both the metrics and the watchdog", () => {
+  it("sets one listener that logs each change and feeds both the metrics and the watchdog", () => {
     const sdk = { setBackendConnectionListener: vi.fn() };
+    const logger = fakeLogger();
     const { metrics, of } = fakeMetrics();
     const observer = { onConnected: vi.fn(), onDisconnected: vi.fn() };
-    listenForConnection(sdk, metrics, observer);
+    listenForConnection(sdk, logger, metrics, observer);
     expect(sdk.setBackendConnectionListener).toHaveBeenCalledTimes(1);
     const listener = sdk.setBackendConnectionListener.mock.calls[0]![0] as { onConnected(): void; onDisconnected(): void };
     listener.onConnected();
@@ -173,12 +178,14 @@ describe("listenForConnection", () => {
     expect(of("wireConnection")).toEqual([["connected"], ["disconnected"]]);
     expect(observer.onConnected).toHaveBeenCalledTimes(1);
     expect(observer.onDisconnected).toHaveBeenCalledTimes(1);
+    expect(logger.info.mock.calls).toEqual([["Wire connected"], ["Wire disconnected"]]);
   });
 
   it("keeps the metrics without a watchdog", () => {
     const sdk = { setBackendConnectionListener: vi.fn() };
+    const logger = fakeLogger();
     const { metrics, of } = fakeMetrics();
-    listenForConnection(sdk, metrics);
+    listenForConnection(sdk, logger, metrics);
     const listener = sdk.setBackendConnectionListener.mock.calls[0]![0] as { onConnected(): void; onDisconnected(): void };
     listener.onDisconnected();
     listener.onConnected();

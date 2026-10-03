@@ -22,6 +22,7 @@ export async function createWireClient(
   config: Config,
   handler: WireEventsHandler,
   sdkLogger: Logger,
+  logger: Logger,
   metrics: MetricsPort = NO_METRICS,
   connection?: WireConnectionObserver,
 ): Promise<WireAppSdk> {
@@ -41,22 +42,28 @@ export async function createWireClient(
     );
   }
 
-  listenForConnection(sdk, metrics, connection);
+  listenForConnection(sdk, logger, metrics, connection);
   return sdk;
 }
 
-/** Sets the SDK's one backend connection listener, which feeds the metrics and the optional observer. */
+/**
+ * Sets the SDK's one backend connection listener, which logs each change at info (a healthy bot
+ * logs little else) and feeds the metrics and the optional observer.
+ */
 export function listenForConnection(
   sdk: Pick<WireAppSdk, "setBackendConnectionListener">,
+  logger: Logger,
   metrics: MetricsPort,
   connection?: WireConnectionObserver,
 ): void {
   sdk.setBackendConnectionListener({
     onConnected: () => {
+      logger.info("Wire connected");
       metrics.wireConnection("connected");
       connection?.onConnected();
     },
     onDisconnected: () => {
+      logger.info("Wire disconnected");
       metrics.wireConnection("disconnected");
       connection?.onDisconnected();
     },

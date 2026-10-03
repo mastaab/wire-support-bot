@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   // error unless it is parsed. Anything logged before this point (a configuration error) goes to stderr.
   const logger = initLogging(config.app.logLevel, { format: config.app.logFormat, stream: "stdout" });
   const { logLevel, logFormat, sdkLogLevel, sdkLogContent } = config.app;
-  logger.info("Wire Support Bot starting", { logLevel, logFormat, sdkLogLevel, sdkLogContent });
+  logger.info("Wire Support Bot starting", { logLevel, logFormat, sdkLogLevel, sdkLogContent, wireWatchdogMinutes: config.wire.watchdogMinutes });
   logSdkLogContentNotice(logger, { level: sdkLogLevel, content: sdkLogContent });
 
   // The metrics and health endpoint starts before Wire, so the liveness probe answers during start-up.

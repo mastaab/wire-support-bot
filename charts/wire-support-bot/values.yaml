@@ -153,7 +153,7 @@ config:
   wireAppId: ""
   # The app's domain on the Wire backend, for example wire.example.com; checked at start-up. Required.
   wireAppDomain: ""
-  # Minutes without a Wire connection before the bot restarts the connection, and as many again before it exits for a restart (0 to 60, 0: off).
+  # Minutes without a Wire connection before the bot restarts the connection, and as many again before it exits for a restart (0: off, else 2 to 60).
   wireWatchdogMinutes: 5
 
   # ── Model endpoint and slots ──

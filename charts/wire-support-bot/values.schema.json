@@ -439,9 +439,12 @@
             "integer",
             "null"
           ],
-          "description": "WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES, 0 to 60, 0: off; null: 5.",
-          "minimum": 0,
-          "maximum": 60
+          "description": "WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES, 0 (off) or 2 to 60; null: 5.",
+          "anyOf": [
+            { "type": "null" },
+            { "const": 0 },
+            { "minimum": 2, "maximum": 60 }
+          ]
         },
         "llmBaseUrl": {
           "type": [

@@ -245,7 +245,7 @@ export function createContainer(
     async getWireClient(): Promise<WireAppSdk> {
       if (!sdkPromise) {
         // The SDK logs at its own level (WIRE_SUPPORT_BOT_SDK_LOG_LEVEL), applied by the bridge, not at LOG_LEVEL.
-        sdkPromise = createWireClient(config, router, createLogger("debug"), metrics, wireConnection).then(async (sdk) => {
+        sdkPromise = createWireClient(config, router, createLogger("debug"), logger, metrics, wireConnection).then(async (sdk) => {
           // Before the router receives events (main starts listening after this): groups still owed
           // a leave are ignored like freshly created ones.
           try {

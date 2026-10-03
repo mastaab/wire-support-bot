@@ -21,7 +21,7 @@ const GLOBAL_TIMERS: WatchdogTimers = {
 };
 
 export interface WireConnectionWatchdogOptions {
-  /** Minutes without a connection before each action; 0 turns the watchdog off. */
+  /** Minutes without a connection before each action (at least 2, see `config.ts`); 0 turns the watchdog off. */
   minutes: number;
   /** Starts the SDK's WebSocket loop again (`sdk.startListening()`). */
   restart: () => Promise<void>;
@@ -66,6 +66,9 @@ export class WireConnectionWatchdog implements WireConnectionObserver {
 
   onConnected(): void {
     this.connected = true;
+    if (this.restarted && this.running) {
+      this.options.logger.info("Wire connection restored after the watchdog restart", { minutes: this.options.minutes });
+    }
     this.restarted = false;
     this.disarm();
   }

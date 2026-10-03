@@ -367,6 +367,11 @@ export function resolveMetricsConfig(env: Record<string, string | undefined>): M
 /** Default and largest value of WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES. */
 export const WIRE_WATCHDOG_MINUTES_DEFAULT = 5;
 export const WIRE_WATCHDOG_MINUTES_MAX = 60;
+/**
+ * Shortest period: the SDK notices a drop only after about a minute and waits up to 30 s between its
+ * own attempts, so a shorter period could exit while it is still reconnecting normally.
+ */
+export const WIRE_WATCHDOG_MINUTES_MIN = 2;
 
 /**
  * WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES: a whole number from 0 (off) to 60; the default (5) when
@@ -376,8 +381,8 @@ export function resolveWireWatchdogMinutes(env: Record<string, string | undefine
   const raw = env.WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES?.trim();
   if (!raw) return WIRE_WATCHDOG_MINUTES_DEFAULT;
   const n = /^\d{1,2}$/.test(raw) ? parseInt(raw, 10) : NaN;
-  if (!(n >= 0 && n <= WIRE_WATCHDOG_MINUTES_MAX)) {
-    throw new Error(`WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES must be a whole number from 0 to ${WIRE_WATCHDOG_MINUTES_MAX}`);
+  if (!(n === 0 || (n >= WIRE_WATCHDOG_MINUTES_MIN && n <= WIRE_WATCHDOG_MINUTES_MAX))) {
+    throw new Error(`WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES must be 0 (off) or a whole number from ${WIRE_WATCHDOG_MINUTES_MIN} to ${WIRE_WATCHDOG_MINUTES_MAX}`);
   }
   return n;
 }

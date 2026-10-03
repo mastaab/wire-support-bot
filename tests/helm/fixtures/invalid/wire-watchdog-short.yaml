@@ -1,0 +1,6 @@
+# Expected failure: a watchdog period of 1 minute, below the minimum of 2.
+# expect-schema: at '/config/wireWatchdogMinutes': minimum: got 1, want 2
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+config:
+  wireWatchdogMinutes: 1

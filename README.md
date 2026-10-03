@@ -508,7 +508,7 @@ All settings are environment variables; `.env.example` lists them with comments.
 | `WIRE_SDK_CRYPTO_KEY` | yes | | 32-byte key for the SDK's local crypto store, as 64 hex characters (`openssl rand -hex 32`). |
 | `WIRE_SDK_APP_ID` | yes | | The app's user ID; checked against the backend at start-up. |
 | `WIRE_SDK_APP_DOMAIN` | yes | | The app's domain; checked at start-up. Agent handles are looked up on this domain. |
-| `WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES` | no | `5` | Minutes without a Wire connection, from start-up or from a lost connection, before the bot restarts the connection; after as many minutes again without a connection it exits with code 1, so Docker Compose or Kubernetes starts it again. A whole number from 0 to 60; `0` turns the watchdog off. See "Limitations and notes". |
+| `WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES` | no | `5` | Minutes without a Wire connection, from start-up or from a lost connection, before the bot restarts the connection; after as many minutes again without a connection it exits with code 1, so Docker Compose or Kubernetes starts it again. `0` turns the watchdog off; otherwise a whole number from 2 to 60 (shorter would exit while the SDK still reconnects normally: it notices a drop after about a minute and waits up to 30 seconds between attempts). See "Limitations and notes". |
 | `WIRE_ADMIN_EMAIL` | no | | Only for `scripts/register-app.mjs`: the team admin's e-mail. |
 | `WIRE_ADMIN_PASSWORD` | no | prompted | Only for `scripts/register-app.mjs`: the admin's password. |
 
@@ -699,7 +699,7 @@ dropdb wire_support_bot_test
 - Offers live in memory, so after a restart a click on an earlier question does nothing, and a question still open at the restart keeps its buttons (it is not closed).
 - Only photos and documents of the listed types, up to 10 MB, are offered for attaching.
 - With a remote model provider and sharing on, ticket content leaves your infrastructure; see "What is stored and what is sent where".
-- The Wire SDK stops reconnecting after about 10 failed attempts in a row (about 3.5 minutes of outage) and does not report it, so the bot would stay up without receiving messages. The connection watchdog (`WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES`, default 5 minutes) restarts the connection and, when that does not help, exits with code 1; Docker Compose (`restart: unless-stopped`) and Kubernetes (the pod's restart policy) then start the bot again. Run it elsewhere only under a supervisor that restarts it.
+- The Wire SDK stops reconnecting after about 10 failed attempts in a row (about 3.5 minutes of outage) and does not report it, so the bot would stay up without receiving messages. The connection watchdog (`WIRE_SUPPORT_BOT_WIRE_WATCHDOG_MINUTES`, default 5 minutes) restarts the connection and, when that does not help, exits with code 1; Docker Compose (`restart: unless-stopped`) and Kubernetes (the pod's restart policy) then start the bot again. Run it elsewhere only under a supervisor that restarts it. Each change of the connection is logged at info ("Wire connected", "Wire disconnected", and "Wire connection restored after the watchdog restart").
 
 ## License
 
