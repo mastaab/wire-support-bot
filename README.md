@@ -368,7 +368,7 @@ The bot writes one JSON object per line to stdout; only Prisma's migration outpu
 
 #### Metrics
 
-Set `metrics.enabled: true` for Prometheus metrics, a ClusterIP Service on `metrics.port` (default 9464) and a liveness probe on `/healthz`. With the Prometheus Operator, also set `metrics.serviceMonitor.enabled: true` (and `metrics.serviceMonitor.labels` to the labels your Prometheus selects ServiceMonitors by); for a Prometheus that discovers pods by annotations, set `metrics.podAnnotations: true`. See "Metrics" for the metrics themselves.
+Set `metrics.enabled: true` for Prometheus metrics, a ClusterIP Service on `metrics.port` (default 9464) and a liveness probe on `/healthz`. With the Prometheus Operator, also set `metrics.serviceMonitor.enabled: true` (and `metrics.serviceMonitor.labels` to the labels your Prometheus selects ServiceMonitors by; kube-prometheus-stack by default selects `release: <its Helm release name>`); for a Prometheus that discovers pods by annotations, set `metrics.podAnnotations: true`. See "Metrics" for the metrics themselves.
 
 ```yaml
 metrics:
