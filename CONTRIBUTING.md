@@ -65,7 +65,7 @@ A new setting needs a value in the chart (`values.yaml`, `values.schema.json` an
 
 ## Writing conventions
 
-- British English in code comments, bot texts and documentation.
+- US English in code comments, bot texts and documentation.
 - Plain, direct sentences. No em-dashes.
 - In Markdown, write each paragraph and list item on one line; do not hard-wrap.
 - Use placeholders in examples, such as `SD-42` for a ticket key and `https://your-site.atlassian.net` for a Jira site. Never commit real names, handles, IDs, tokens or conversation content, also not in tests or fixtures.
