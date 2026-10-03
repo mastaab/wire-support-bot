@@ -1,0 +1,27 @@
+# Placeholder overrides: a Cloud SQL Auth Proxy sidecar on 127.0.0.1, connection options with a CA
+# file mounted from a Secret (mode B).
+database:
+  secretName: wire-support-bot-database
+  host: { value: 127.0.0.1 }
+  password: { secretKey: password }
+  options: sslmode=require&sslcert=/etc/postgres-ca/ca.crt
+extraVolumes:
+  - name: postgres-ca
+    secret:
+      secretName: postgres-ca
+extraVolumeMounts:
+  - name: postgres-ca
+    mountPath: /etc/postgres-ca
+    readOnly: true
+extraContainers:
+  - name: cloud-sql-proxy
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.0
+    args:
+      - --port=5432
+      - example-project:europe-west1:postgres
+    securityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL

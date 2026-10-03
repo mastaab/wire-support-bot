@@ -1,0 +1,9 @@
+# Placeholder overrides: every part from the Secret Crunchy PGO creates for user wirebot of a cluster
+# named postgres (mode B).
+database:
+  secretName: postgres-pguser-wirebot
+  host: { secretKey: host }
+  port: { secretKey: port }
+  name: { secretKey: dbname }
+  user: { secretKey: user }
+  password: { secretKey: password }

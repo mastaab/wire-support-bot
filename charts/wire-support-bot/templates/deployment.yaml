@@ -2,7 +2,8 @@
 Exactly one pod: two SDK instances must never use the same store, and offers live in memory.
 Recreate stops the old pod before the new one starts. The process exits within 5 seconds of
 SIGTERM. There is no HTTP endpoint, so no probes and no ports; a failing start exits with code 1
-and Kubernetes restarts the pod. The entrypoint runs the database migrations before the bot starts.
+and Kubernetes restarts the pod. The entrypoint builds DATABASE_URL (from the database settings in
+env) and runs the database migrations before the bot starts.
 */}}
 {{- $readOnlyRoot := dig "readOnlyRootFilesystem" false (.Values.securityContext | default dict) }}
 apiVersion: apps/v1
@@ -58,10 +59,12 @@ spec:
                 name: {{ include "wire-support-bot.fullname" . }}
             - secretRef:
                 name: {{ include "wire-support-bot.secretName" . }}
-          {{- with .Values.extraEnv }}
+          {{- /* env overrides envFrom: the database settings, then extraEnv. */}}
           env:
+            {{- include "wire-support-bot.databaseEnv" . | trim | nindent 12 }}
+            {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
           volumeMounts:
             - name: storage
               mountPath: /app/storage
@@ -69,10 +72,16 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+        {{- with .Values.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
         - name: storage
           persistentVolumeClaim:
@@ -80,6 +89,9 @@ spec:
         {{- if $readOnlyRoot }}
         - name: tmp
           emptyDir: {}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

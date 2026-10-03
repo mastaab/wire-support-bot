@@ -1,0 +1,6 @@
+# Placeholder overrides: the complete URL from the Secret CloudNativePG creates for a cluster named
+# postgres (mode A).
+database:
+  url:
+    secretName: postgres-app
+    secretKey: uri

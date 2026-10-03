@@ -57,11 +57,12 @@ npm run build
 When you change the Helm chart, also run:
 
 ```bash
-helm lint charts/wire-support-bot --strict -f tests/helm/fixtures/values.yaml
-helm template wire-support-bot charts/wire-support-bot -f tests/helm/fixtures/values.yaml
+scripts/check-chart.sh
 ```
 
-A new setting needs a value in the chart (`values.yaml`, `values.schema.json` and `templates/configmap.yaml`, or `templates/secret.yaml` for a credential); `tests/helm/chartConfig.test.ts` fails when the chart and the app's settings differ. The workflow `.github/workflows/image.yml` runs the type check, lint and tests before it builds the image. Type the mocks in tests properly rather than loosening an assertion to make them compile.
+It runs `helm lint --strict` and `helm template` for every fixture in `tests/helm/fixtures/` (each on top of the base `values.yaml` there) and checks that every fixture in `tests/helm/fixtures/invalid/` fails with the message it names. It needs Helm and no cluster.
+
+A new setting needs a value in the chart (`values.yaml`, `values.schema.json` and `templates/configmap.yaml`, or `templates/secret.yaml` for a credential; the database settings are in the `databaseEnv` helper in `templates/_helpers.tpl`); `tests/helm/chartConfig.test.ts` fails when the chart and the app's settings differ. The workflow `.github/workflows/image.yml` runs the type check, lint, tests and chart checks before it builds the image. Type the mocks in tests properly rather than loosening an assertion to make them compile.
 
 ## Writing conventions
 

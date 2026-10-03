@@ -313,25 +313,32 @@ The container's entry point applies the migrations (`prisma migrate deploy`) and
 
 ### Kubernetes (Helm)
 
-The chart in `charts/wire-support-bot/` runs the bot as one pod with a persistent volume for the Wire SDK store. It needs Helm 3 or newer and an external Postgres: the chart contains no database, so use a managed Postgres or an operator such as CloudNativePG and pass its connection URL. The bot has no inbound traffic (it connects out to the Wire backend, Jira and the model endpoint), so the chart has no Service and no Ingress. Point `config.llmBaseUrl` at a model endpoint the pod can reach; the default `http://localhost:11434/v1` is the pod itself.
+The chart in `charts/wire-support-bot/` runs the bot as one pod with a persistent volume for the Wire SDK store. It needs Helm 3 or newer and an external Postgres: the chart contains no database, so use a managed Postgres or an operator such as CloudNativePG and name the Secret that holds its connection URL or credentials (see "Database connection" below). The bot has no inbound traffic (it connects out to the Wire backend, Jira and the model endpoint), so the chart has no Service and no Ingress. Point `config.llmBaseUrl` at a model endpoint the pod can reach; the default `http://localhost:11434/v1` is the pod itself.
 
-Keep the credentials in a Secret of your own and name it in `existingSecret`. It holds `WIRE_SDK_API_TOKEN`, `WIRE_SDK_CRYPTO_KEY`, `DATABASE_URL` and `WIRE_SUPPORT_BOT_JIRA_API_TOKEN`, and optionally `WIRE_SUPPORT_BOT_LLM_API_KEY` and `WIRE_SUPPORT_BOT_JIRA_EMAIL`. Without `existingSecret`, the chart creates the Secret from `secrets.*` in your values.
+Keep the Wire and Jira credentials in a Secret of your own and name it in `existingSecret`. It holds `WIRE_SDK_API_TOKEN`, `WIRE_SDK_CRYPTO_KEY` and `WIRE_SUPPORT_BOT_JIRA_API_TOKEN`, and optionally `WIRE_SUPPORT_BOT_LLM_API_KEY` and `WIRE_SUPPORT_BOT_JIRA_EMAIL`. Without `existingSecret`, the chart creates the Secret from `secrets.*` in your values. The database credentials come from `database.*` (see "Database connection" below); this example keeps the database password in a Secret of its own.
 
 ```bash
 kubectl create namespace support-bot
 kubectl create secret generic wire-support-bot-credentials --namespace support-bot \
   --from-literal=WIRE_SDK_API_TOKEN=... \
   --from-literal=WIRE_SDK_CRYPTO_KEY=... \
-  --from-literal=DATABASE_URL=postgres://user:password@postgres.example.com:5432/wire_support_bot \
   --from-literal=WIRE_SUPPORT_BOT_JIRA_API_TOKEN=...
+kubectl create secret generic wire-support-bot-database --namespace support-bot \
+  --from-literal=password=...
 helm install wire-support-bot ./charts/wire-support-bot --namespace support-bot \
   --set existingSecret=wire-support-bot-credentials -f my-values.yaml
 kubectl logs --namespace support-bot deployment/wire-support-bot --follow
 ```
 
-`my-values.yaml` sets the non-secret settings under `config:`, for example:
+`my-values.yaml` sets the database connection under `database:` and the non-secret settings under `config:`, for example:
 
 ```yaml
+database:
+  secretName: wire-support-bot-database
+  host: { value: postgres.example.com }
+  name: { value: wire_support_bot }
+  user: { value: wirebot }
+  password: { secretKey: password }
 config:
   wireApiHost: https://wire-backend.example.com
   wireAppId: 00000000-0000-0000-0000-000000000000
@@ -345,7 +352,91 @@ config:
   jiraPassive: "on"
 ```
 
-Every setting in "Configuration" has a value under `config:` (or under `secrets:` for credentials); `values.yaml` lists them with their defaults and comments, and `values.schema.json` rejects unknown keys and invalid values. Quote `on` and `off`, because YAML reads a bare `on` as true. An empty value leaves the setting unset, so the bot's own default applies. A change to the values restarts the pod on `helm upgrade`.
+Every setting in "Configuration" has a value under `config:` (or under `secrets:` for credentials, and under `database:` for the database); `values.yaml` lists them with their defaults and comments, and `values.schema.json` rejects unknown keys and invalid values. Quote `on` and `off`, because YAML reads a bare `on` as true. An empty value leaves the setting unset, so the bot's own default applies. A change to the values restarts the pod on `helm upgrade`.
+
+#### Database connection
+
+The chart reads the database connection from Secrets, in one of two modes:
+
+- A complete URL: `database.url.secretName` names a Secret and `database.url.secretKey` (default `uri`) its key with the URL.
+- The parts: `database.secretName` names a Secret that holds the password (`database.password.secretKey`, default `password`). Each of `database.host`, `database.port`, `database.name` and `database.user` is either a plain `value` or, when its `secretKey` is set, a key of that Secret. The password is never a plain value.
+
+`database.options` is appended to the URL in both modes as query parameters, for example `sslmode=require`. The container's entry point builds the URL from the parts before it runs the migrations; it encodes special characters in the user, password and database name. Examples for the Secrets that common operators create (`postgres` is the cluster's name):
+
+```yaml
+# CloudNativePG, Secret <cluster>-app, the complete URL:
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+
+# CloudNativePG, the same Secret, the parts:
+database:
+  secretName: postgres-app
+  host: { secretKey: host }
+  port: { secretKey: port }
+  name: { secretKey: dbname }
+  user: { secretKey: username }
+  password: { secretKey: password }
+
+# Crunchy PGO, Secret <cluster>-pguser-<user> (also has uri for the complete URL):
+database:
+  secretName: postgres-pguser-wirebot
+  host: { secretKey: host }
+  port: { secretKey: port }
+  name: { secretKey: dbname }
+  user: { secretKey: user }
+  password: { secretKey: password }
+
+# Zalando postgres-operator, Secret <user>.<cluster>.credentials.postgresql.acid.zalan.do
+# (user name and password only; the host is the cluster's Service):
+database:
+  secretName: wirebot.postgres.credentials.postgresql.acid.zalan.do
+  host: { value: postgres }
+  name: { value: wire_support_bot }
+  user: { secretKey: username }
+  password: { secretKey: password }
+
+# A Secret of your own with only the password:
+database:
+  secretName: wire-support-bot-database
+  host: { value: postgres.example.com }
+  name: { value: wire_support_bot }
+  user: { value: wirebot }
+  password: { secretKey: password }
+```
+
+For a database that needs a CA certificate, mount it with `extraVolumes` and `extraVolumeMounts` and name the file in `database.options`:
+
+```yaml
+database:
+  options: sslmode=require&sslcert=/etc/postgres-ca/ca.crt
+extraVolumes:
+  - name: postgres-ca
+    secret: { secretName: postgres-ca }
+extraVolumeMounts:
+  - { name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true }
+```
+
+For Cloud SQL, run the Cloud SQL Auth Proxy as a sidecar with `extraContainers` and connect to it on `127.0.0.1`. The proxy encrypts the connection; the pod's service account needs the Cloud SQL Client role, for example through Workload Identity. If the bot starts before the proxy listens, the migrations fail and Kubernetes restarts the bot's container.
+
+```yaml
+database:
+  secretName: wire-support-bot-database
+  host: { value: 127.0.0.1 }
+  password: { secretKey: password }
+extraContainers:
+  - name: cloud-sql-proxy
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.0
+    args: ["--port=5432", "example-project:europe-west1:postgres"]
+    securityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities: { drop: [ALL] }
+```
+
+Limits:
+
+- A Secret reference reads Secrets in the bot's own namespace only. When the operator creates its Secret in another namespace, copy it into the bot's namespace, for example with External Secrets or reflector.
+- IAM login without a password (RDS IAM authentication, Cloud SQL IAM authentication without the proxy) is not supported: Prisma does not refresh the short-lived tokens.
 
 How the chart runs the bot:
 
@@ -399,7 +490,13 @@ All settings are environment variables; `.env.example` lists them with comments.
 
 | Setting | Required | Default | Meaning |
 |---|---|---|---|
-| `DATABASE_URL` | yes | | Postgres connection URL. Docker Compose overrides it; the Helm chart reads it from the Secret. |
+| `DATABASE_URL` | yes | | Postgres connection URL. Docker Compose overrides it; the Helm chart reads it from a Secret or builds it from the settings below. |
+| `DATABASE_HOST` | no | | Alternative to `DATABASE_URL`, used only by the container's entry point and only when `DATABASE_URL` is unset: the Postgres host. Required in that case, like `DATABASE_NAME`, `DATABASE_USER` and `DATABASE_PASSWORD`. |
+| `DATABASE_PORT` | no | 5432 | The Postgres port for the alternative. |
+| `DATABASE_NAME` | no | | The database name for the alternative. |
+| `DATABASE_USER` | no | | The user for the alternative. |
+| `DATABASE_PASSWORD` | no | | The password for the alternative. The entry point encodes special characters in the user, password and database name. |
+| `DATABASE_OPTIONS` | no | | Used only by the container's entry point: query parameters appended to the URL (from `DATABASE_URL` or built), for example `sslmode=require`. |
 
 ### Model endpoint and slots
 

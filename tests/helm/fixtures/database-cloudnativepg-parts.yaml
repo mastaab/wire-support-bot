@@ -1,0 +1,9 @@
+# Placeholder overrides: every part from the Secret CloudNativePG creates for a cluster named
+# postgres (mode B).
+database:
+  secretName: postgres-app
+  host: { secretKey: host }
+  port: { secretKey: port }
+  name: { secretKey: dbname }
+  user: { secretKey: username }
+  password: { secretKey: password }

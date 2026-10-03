@@ -62,22 +62,79 @@ tolerations: []
 # Affinity rules for the pod.
 affinity: {}
 
-# Extra environment variables for the container, as a list of Kubernetes EnvVar objects.
+# Extra environment variables for the container, as a list of Kubernetes EnvVar objects. They come
+# after the database variables, so an entry here overrides one of them.
 extraEnv: []
 
-# Name of an existing Secret holding WIRE_SDK_API_TOKEN, WIRE_SDK_CRYPTO_KEY, DATABASE_URL and
+# Extra volumes for the pod, as a list of Kubernetes Volume objects, for example a Secret with the
+# database's CA certificate: [{name: postgres-ca, secret: {secretName: postgres-ca}}].
+extraVolumes: []
+# Extra volume mounts for the bot's container, as a list of Kubernetes VolumeMount objects, for
+# example [{name: postgres-ca, mountPath: /etc/postgres-ca, readOnly: true}] for a CA file named in
+# database.options (sslcert=/etc/postgres-ca/ca.crt).
+extraVolumeMounts: []
+# Extra containers in the pod, as a list of Kubernetes Container objects, for example the Cloud SQL
+# Auth Proxy as a sidecar (then database.host.value is 127.0.0.1).
+extraContainers: []
+
+# Postgres connection, from the Secrets a managed database or an operator provides. Exactly one mode:
+#   A. a complete URL from a key of a Secret, when url.secretName is set;
+#   B. otherwise the parts: each of host, port, name and user is a plain value, or a key of the
+#      Secret secretName when its secretKey is set; the password is always a key of that Secret.
+# The container's entry point builds the URL from the parts and appends options. The Secrets must
+# be in the release's namespace.
+database:
+  url:
+    # Mode A: name of the Secret holding the complete URL, for example the CloudNativePG Secret
+    # <cluster>-app or the Crunchy PGO Secret <cluster>-pguser-<user>. Empty: mode B.
+    secretName: ""
+    # Key of the URL in that Secret; uri for CloudNativePG and Crunchy PGO.
+    secretKey: uri
+  # Mode B: name of the Secret holding the password and every part that names a secretKey, for
+  # example <cluster>-app (CloudNativePG) or <user>.<cluster>.credentials.postgresql.acid.zalan.do (Zalando).
+  secretName: ""
+  host:
+    # Host name or IP address of the Postgres server, for example postgres.example.com or the
+    # cluster's Service name; ignored when secretKey is set.
+    value: ""
+    # Key of the host in the Secret, for example host (CloudNativePG, Crunchy PGO); empty: value.
+    secretKey: ""
+  port:
+    # Port of the Postgres server; ignored when secretKey is set.
+    value: 5432
+    # Key of the port in the Secret, for example port (CloudNativePG, Crunchy PGO); empty: value.
+    secretKey: ""
+  name:
+    # Name of the database; ignored when secretKey is set.
+    value: wire_support_bot
+    # Key of the database name in the Secret, for example dbname (CloudNativePG, Crunchy PGO); empty: value.
+    secretKey: ""
+  user:
+    # Database user; ignored when secretKey is set.
+    value: wirebot
+    # Key of the user in the Secret, for example username (CloudNativePG, Zalando) or user (Crunchy PGO); empty: value.
+    secretKey: ""
+  password:
+    # Key of the password in the Secret, password for CloudNativePG, Crunchy PGO and Zalando. There is
+    # no plain value: the password always comes from a Secret.
+    secretKey: password
+  # Query parameters appended to the URL in both modes, for example sslmode=require, or
+  # sslmode=require&sslcert=/etc/postgres-ca/ca.crt with the server's CA certificate mounted through
+  # extraVolumes and extraVolumeMounts. Empty: none.
+  options: ""
+
+# Name of an existing Secret holding WIRE_SDK_API_TOKEN, WIRE_SDK_CRYPTO_KEY and
 # WIRE_SUPPORT_BOT_JIRA_API_TOKEN, optionally WIRE_SUPPORT_BOT_LLM_API_KEY and
-# WIRE_SUPPORT_BOT_JIRA_EMAIL. When set, the chart creates no Secret and secrets.* is ignored.
+# WIRE_SUPPORT_BOT_JIRA_EMAIL. When set, the chart creates no Secret and secrets.* is ignored. The
+# database credentials come from database.*.
 existingSecret: ""
 
-# Values for the Secret the chart creates when existingSecret is empty. The first four are required.
+# Values for the Secret the chart creates when existingSecret is empty. The first three are required.
 secrets:
   # App token issued by the Wire backend when the app was registered (scripts/register-app.mjs).
   wireApiToken: ""
   # 32-byte key for the SDK's local crypto store, 64 hex characters (openssl rand -hex 32). Losing it loses the store.
   wireCryptoKey: ""
-  # Postgres connection URL, for example postgres://wirebot:password@postgres.example.com:5432/wire_support_bot.
-  databaseUrl: ""
   # API token: a scoped token (Bearer), or a classic token together with jiraEmail (Basic).
   jiraApiToken: ""
   # Account e-mail for a classic token; leave empty for a scoped token.

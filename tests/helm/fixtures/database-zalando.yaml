@@ -1,0 +1,7 @@
+# Placeholder overrides: user and password from the Secret the Zalando operator creates for user
+# wirebot of a cluster named postgres; the host is the cluster's Service (mode B).
+database:
+  secretName: wirebot.postgres.credentials.postgresql.acid.zalan.do
+  host: { value: postgres }
+  user: { secretKey: username }
+  password: { secretKey: password }

@@ -1,0 +1,3 @@
+# Expected failure: neither database.url.secretName nor database.secretName is set.
+# expect: database: set database.url.secretName
+# expect-schema: at '/database/secretName': minLength

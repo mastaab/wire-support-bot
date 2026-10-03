@@ -139,9 +139,233 @@
       },
       "description": "Extra environment variables (Kubernetes EnvVar objects)."
     },
+    "extraVolumes": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ]
+      },
+      "description": "Extra pod volumes (Kubernetes Volume objects)."
+    },
+    "extraVolumeMounts": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ]
+      },
+      "description": "Extra volume mounts for the bot's container (Kubernetes VolumeMount objects)."
+    },
+    "extraContainers": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ]
+      },
+      "description": "Extra containers in the pod (Kubernetes Container objects), for example a database proxy."
+    },
     "existingSecret": {
       "type": "string",
-      "description": "Name of an existing Secret with the credentials; empty: the chart creates one from secrets.*."
+      "description": "Name of an existing Secret with the Wire and Jira credentials; empty: the chart creates one from secrets.*."
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Postgres connection. Mode A: url.secretName set, a complete URL from that Secret. Mode B: the parts, with the password and every part that names a secretKey from secretName.",
+      "properties": {
+        "url": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string",
+              "description": "Mode A: Secret holding the complete URL; empty: mode B."
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "Key of the URL in that Secret, for example uri."
+            }
+          }
+        },
+        "secretName": {
+          "type": "string",
+          "description": "Mode B: Secret holding the password and the parts that name a secretKey."
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "DATABASE_HOST: host name or IP address."
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "Key in database.secretName; when set, value is ignored."
+            }
+          }
+        },
+        "port": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": [
+                "integer",
+                "string",
+                "null"
+              ],
+              "description": "DATABASE_PORT.",
+              "minimum": 1,
+              "maximum": 65535,
+              "pattern": "^[0-9]*$"
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "Key in database.secretName; when set, value is ignored."
+            }
+          }
+        },
+        "name": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "DATABASE_NAME."
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "Key in database.secretName; when set, value is ignored."
+            }
+          }
+        },
+        "user": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "DATABASE_USER."
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "Key in database.secretName; when set, value is ignored."
+            }
+          }
+        },
+        "password": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretKey": {
+              "type": "string",
+              "description": "Key of the password in database.secretName; there is no plain value."
+            }
+          }
+        },
+        "options": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "DATABASE_OPTIONS: query parameters appended to the URL, for example sslmode=require."
+        }
+      },
+      "if": {
+        "properties": {
+          "url": {
+            "properties": {
+              "secretName": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "secretName"
+            ]
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "then": {
+        "properties": {
+          "secretName": {
+            "maxLength": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "secretName": {
+            "minLength": 1
+          },
+          "host": {
+            "anyOf": [
+              {
+                "properties": {
+                  "secretKey": {
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "secretKey"
+                ]
+              },
+              {
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "value"
+                ]
+              }
+            ]
+          },
+          "password": {
+            "properties": {
+              "secretKey": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "secretKey"
+            ]
+          }
+        },
+        "required": [
+          "secretName",
+          "host",
+          "password"
+        ]
+      }
     },
     "secrets": {
       "type": "object",
@@ -161,13 +385,6 @@
           ],
           "pattern": "^([0-9a-fA-F]{64})?$",
           "description": "WIRE_SDK_CRYPTO_KEY, 64 hex characters."
-        },
-        "databaseUrl": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "DATABASE_URL"
         },
         "jiraApiToken": {
           "type": [

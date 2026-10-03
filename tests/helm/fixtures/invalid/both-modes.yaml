@@ -1,0 +1,6 @@
+# Expected failure: both a URL Secret and a parts Secret.
+# expect: not both
+# expect-schema: at '/database/secretName': maxLength
+database:
+  url: { secretName: postgres-app }
+  secretName: postgres-app

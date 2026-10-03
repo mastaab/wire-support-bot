@@ -1,0 +1,6 @@
+# Expected failure: mode B without a host.
+# expect: database.host: set database.host.value
+# expect-schema: at '/database/host': 'anyOf' failed
+database:
+  secretName: wire-support-bot-database
+  password: { secretKey: password }

@@ -53,6 +53,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      # helm lint and helm template for every chart fixture, plus the expected failures. Uses the
+      # Helm preinstalled on the ubuntu-latest runner image.
+      - run: scripts/check-chart.sh
 
   image:
     needs: test
