@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  SDK_ARGS_MAX, logSdkLogContentNotice, makeSdkLoggerBridge, serializeSdkArgs, type SdkLogOptions,
+  SDK_ARGS_MAX, logSdkLogContentNotice, makeSdkLoggerBridge, sanitizeSdkMessage, serializeSdkArgs, type SdkLogOptions,
 } from "../../src/infrastructure/wire/SdkLoggerBridge";
 import { createLogger, initLogging } from "../../src/app/logging";
 
@@ -334,5 +334,14 @@ describe("SDK log content notice at start-up", () => {
       expect(logger.warn).not.toHaveBeenCalled();
       expect(logger.info).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("SDK message redaction", () => {
+  it("redacts the name of a conversation the SDK creates, which holds the request summary", () => {
+    expect(sanitizeSdkMessage("App requested to create a group conversation with name: SD-42 Brakes failing on truck 7"))
+      .toBe("App requested to create a group conversation with name: [redacted]");
+    expect(sanitizeSdkMessage("Creating group conversation with name: SD-42 Brakes\nfailing")).toBe("Creating group conversation with name: [redacted]");
+    expect(sanitizeSdkMessage("Websocket Connected")).toBe("Websocket Connected");
   });
 });

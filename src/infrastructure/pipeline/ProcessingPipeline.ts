@@ -58,8 +58,8 @@ export class ProcessingPipeline {
   }
 
   private async processMessage(job: MessageJob, signal?: AbortSignal): Promise<void> {
-    const { channelId, conversationId, messageId, senderName, text } = job;
-    const log = this.deps.logger.child({ channelId, messageId, senderName: senderName || undefined });
+    const { channelId, conversationId, messageId, text } = job;
+    const log = this.deps.logger.child({ channelId, messageId });
     if (signal?.aborted) return;
 
     const recent = this.deps.messageBuffer.getLastN(conversationId, RECENT_READ)

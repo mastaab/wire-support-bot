@@ -99,7 +99,10 @@ export const SDK_MESSAGE_MAX = 500;
 
 /** The SDK's message text for `sdkMessage`: control characters removed, at most `SDK_MESSAGE_MAX` long. */
 export function sanitizeSdkMessage(message: string): string {
-  return clip(message.replace(/[\u0000-\u001f\u007f-\u009f]/g, ""), SDK_MESSAGE_MAX);
+  // The SDK writes the name of a conversation it creates into its text; the bot names agent groups
+  // after the request, whose summary is the requester's own words.
+  const redacted = message.replace(/(conversation with name: ).*/s, "$1[redacted]");
+  return clip(redacted.replace(/[\u0000-\u001f\u007f-\u009f]/g, ""), SDK_MESSAGE_MAX);
 }
 
 /** The first `max` code units of `text`, without a lone high surrogate at the end. */

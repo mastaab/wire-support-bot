@@ -211,7 +211,7 @@ export function createWireOutboundAdapter(
     ): Promise<void> {
       const h = handlerRef.current;
       if (!h?.manager) return;
-      logger.debug("sendFile", { conversationId: conversationId.id, name, mimeType });
+      logger.debug("sendFile", { conversationId: conversationId.id, mimeType });
       const data = await streamToUint8Array(fileStream);
       await h.manager.sendAsset(conversationId, { data, name, mimeType });
     },

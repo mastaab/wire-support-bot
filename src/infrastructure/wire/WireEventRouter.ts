@@ -191,11 +191,10 @@ export class WireEventRouter extends WireEventsHandler {
       });
     }
 
-    // Child logger is created after name resolution so senderName is always available.
+    // IDs only: names and other personal data never reach the log.
     const log = this.deps.logger.child({
       conversationId: convId.id,
       senderId: sender.id,
-      senderName: senderMember?.name || undefined,
       messageId: wireMessage.id,
     });
 

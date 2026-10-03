@@ -16,8 +16,14 @@ export const ECS_VERSION = "9.0.0";
 /** Google Cloud Logging's severity names; most other collectors read `level` or `log.level`. */
 const SEVERITY: Record<LogLevel, string> = { debug: "DEBUG", info: "INFO", warn: "WARNING", error: "ERROR" };
 
-/** Top-level fields that may hold content; never written, in either format. */
-const FILTERED_KEYS = ["text", "preview", "raw", "context", "prompt", "response", "stack"];
+/**
+ * Top-level fields that may hold content or personal data (names, handles, e-mail addresses, file
+ * names); never written, in either format. IDs stay, for correlation.
+ */
+const FILTERED_KEYS = [
+  "text", "preview", "raw", "context", "prompt", "response", "stack",
+  "name", "senderName", "requesterName", "displayName", "handle", "agentHandle", "email", "fileName",
+];
 
 export interface Logger {
   child(bindings: Record<string, unknown>): Logger;

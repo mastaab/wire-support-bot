@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ECS_VERSION, createLogger, formatLogLine, initLogging } from "../../src/app/logging";
 
 const TIME = new Date("2026-01-02T03:04:05.678Z");
-const CONTENT = { text: "t", preview: "p", raw: "r", context: "c", prompt: "q", response: "s", stack: "k" };
+const CONTENT = {
+  text: "t", preview: "p", raw: "r", context: "c", prompt: "q", response: "s", stack: "k",
+  name: "n", senderName: "Driver A", requesterName: "Driver B", displayName: "d", handle: "h", agentHandle: "a", email: "e@example.com", fileName: "f.pdf",
+};
 
 /** Spies on both streams, runs `write` and returns the lines written to each, parsed. */
 function captureStreams(write: () => void) {
@@ -86,11 +89,11 @@ describe("log line format", () => {
     expect(ECS_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it("removes the content keys at the top level in both formats, keeping nested values", () => {
+  it("removes the content and personal-data keys at the top level in both formats, keeping IDs and nested values", () => {
     for (const format of ["json", "ecs"] as const) {
-      const line = JSON.parse(formatLogLine(format, "info", "m", { ...CONTENT, keep: 1, sdkArgs: [{ text: "nested" }] }, TIME));
+      const line = JSON.parse(formatLogLine(format, "info", "m", { ...CONTENT, keep: 1, senderId: "u-1", sdkArgs: [{ text: "nested" }] }, TIME));
       for (const key of Object.keys(CONTENT)) expect(line).not.toHaveProperty(key);
-      expect(line).toMatchObject({ keep: 1, sdkArgs: [{ text: "nested" }] });
+      expect(line).toMatchObject({ keep: 1, senderId: "u-1", sdkArgs: [{ text: "nested" }] });
     }
   });
 
