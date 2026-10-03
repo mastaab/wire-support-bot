@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { AuthenticationError } from "@wireapp/wire-apps-js-sdk";
 import type { WireAppSdk } from "@wireapp/wire-apps-js-sdk";
 import { loadConfig, type Config } from "./config";
 import { initLogging, getLogger } from "./logging";
@@ -87,10 +88,27 @@ async function main(): Promise<void> {
     // A failed first connect reports no event, so the watchdog counts from here.
     watchdog.start();
     await sdk.startListening();
-  } catch {
-    getLogger().error("Failed to start; verify configuration and service availability");
+  } catch (error) {
+    getLogger().error("Failed to start; verify configuration and service availability", startFailureFields(error));
     process.exit(1);
   }
+}
+
+/**
+ * The error's class name and, for a refused Wire login, what to do. Never the error's message,
+ * which can hold backend responses.
+ */
+function startFailureFields(error: unknown): Record<string, string> {
+  const errorName = error instanceof Error ? error.constructor.name || error.name : "UnknownError";
+  if (error instanceof AuthenticationError || errorName === "AuthenticationError") {
+    return {
+      errorName,
+      hint: "The Wire backend refused the login: the SDK store's login cookie or WIRE_SDK_API_TOKEN is no longer valid, "
+        + "for example because another instance of this app logged in with its own store. "
+        + "Issue a new token (npm run register-app -- refresh), set WIRE_SDK_API_TOKEN and start again.",
+    };
+  }
+  return { errorName };
 }
 
 void main().catch(() => {

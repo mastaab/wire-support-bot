@@ -15,4 +15,6 @@ The Wire SDK store (SQLite database and CoreCrypto keystore) is on the Persisten
 Losing this volume or WIRE_SDK_CRYPTO_KEY loses the end-to-end encryption state: back up both.
 
 Never run a second instance of the bot (another release, docker compose or a local process) with
-the same Wire app: two SDK instances must not share one app and store.
+the same Wire app, not even one after the other with a different store: each store holds its own
+login cookie, and a second one logging in can make the Wire backend refuse the first. Give every
+deployment, including test setups, its own Wire app.

@@ -690,7 +690,7 @@ dropdb wire_support_bot_test
 ## Limitations and notes
 
 - Answer quality, classification and the drafting of offers depend on the model. Code guards every write, but a weaker model makes fewer and worse offers. Try your model with the CLI before you turn on passive help.
-- Run one bot process per Wire app and storage directory. The SDK store, pending offers, the message buffer and the guard against double submits belong to the process.
+- Run one bot process per Wire app and storage directory. The SDK store, pending offers, the message buffer and the guard against double submits belong to the process. Use a separate Wire app for every deployment, including test and staging setups: each SDK store holds its own login cookie, which the Wire backend renews, so a second store logging in as the same app (a new pod, a copy of the store, a test cluster) can make the backend refuse the first one. The bot then stops at start-up with `AuthenticationError` and a hint; issue a new token with `npm run register-app -- refresh` and start again.
 - Pending offers and recent messages are held in memory: a restart drops unanswered offers and the conversation context.
 - Desk updates arrive by polling, so they appear up to one interval late (the interval is at least 15 seconds).
 - The watch looks at up to 500 requests per check, oldest first, and the bot retries leaving up to 500 pending agent groups per run.
