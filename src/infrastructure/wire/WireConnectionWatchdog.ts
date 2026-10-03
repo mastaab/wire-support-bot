@@ -39,7 +39,8 @@ export interface WireConnectionWatchdogOptions {
  * event at all, so the watchdog counts from `start()` and from every disconnect until the next
  * connect. After one period it calls `restart` once; after a second period still without a
  * connection it calls `exit`, so Docker Compose or Kubernetes starts a fresh process. A connect
- * resets both. Its timers never keep the process alive.
+ * resets both. Its timer keeps the process alive while it counts: once the SDK has given up, no
+ * other handle may be left, and Node would otherwise end the process before the watchdog acts.
  */
 export class WireConnectionWatchdog implements WireConnectionObserver {
   private readonly ms: number;
@@ -86,9 +87,7 @@ export class WireConnectionWatchdog implements WireConnectionObserver {
   }
 
   private arm(): void {
-    const timer = this.timers.setTimeout(() => this.expire(), this.ms);
-    (timer as { unref?: () => unknown }).unref?.();
-    this.timer = timer;
+    this.timer = this.timers.setTimeout(() => this.expire(), this.ms);
   }
 
   private disarm(): void {

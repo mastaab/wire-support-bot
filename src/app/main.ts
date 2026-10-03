@@ -66,6 +66,15 @@ async function main(): Promise<void> {
     process.exit(exitCode);
   };
 
+  // The event loop runs empty only when nothing is left to wait for, such as after the SDK gave up
+  // reconnecting with the watchdog off. Node would end with code 0 and no log line; say why and
+  // exit with 1, so the orchestrator restarts the bot. An explicit exit does not get here.
+  process.once("beforeExit", () => {
+    logger.error("Nothing keeps the bot running (Wire connection gone); exiting");
+    // Also the code if the loop runs empty again before shutdown reaches process.exit.
+    process.exitCode = 1;
+    void shutdown(1);
+  });
   process.on("SIGINT", () => void shutdown(0, "SIGINT"));
   process.on("SIGTERM", () => void shutdown(0, "SIGTERM"));
   process.on("unhandledRejection", () => {

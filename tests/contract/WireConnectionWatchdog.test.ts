@@ -150,7 +150,7 @@ describe("WireConnectionWatchdog", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it("unrefs its timers, so they never keep the process alive", () => {
+  it("keeps its timer referenced, so the process stays alive until the watchdog acts", () => {
     vi.useRealTimers();
     const unref = vi.fn();
     const handle = { unref } as unknown as ReturnType<typeof setTimeout>;
@@ -158,7 +158,7 @@ describe("WireConnectionWatchdog", () => {
     const watchdog = new WireConnectionWatchdog({ minutes: 1, restart: async () => {}, exit: () => {}, logger: fakeLogger(), timers });
     watchdog.start();
     expect(timers.setTimeout).toHaveBeenCalledWith(expect.any(Function), MINUTE);
-    expect(unref).toHaveBeenCalledTimes(1);
+    expect(unref).not.toHaveBeenCalled();
     watchdog.stop();
     expect(timers.clearTimeout).toHaveBeenCalledWith(handle);
   });
