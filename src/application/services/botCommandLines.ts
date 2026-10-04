@@ -99,3 +99,16 @@ export function replaceInventedCommandLines(answer: string, projectKey: string):
   }
   return lines.join("\n");
 }
+
+/**
+ * The answer without the lines that suggest a bot command, supported or not. For an answer from
+ * the document index: there the way to a ticket is "Did this help?" [Raise a ticket].
+ */
+export function withoutCommandLines(answer: string): string {
+  return answer
+    .split("\n")
+    .filter((line) => commandAttempts(line).length === 0)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}

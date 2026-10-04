@@ -18,7 +18,7 @@ import {
   formatSupportQuestion, offerCommandLine, parseOfferMarker,
 } from "../../services/offers";
 import type { OfferCommand, ParsedAnswer, PendingOffer, PendingOfferStore } from "../../services/offers";
-import { replaceInventedCommandLines } from "../../services/botCommandLines";
+import { replaceInventedCommandLines, withoutCommandLines } from "../../services/botCommandLines";
 import { botActor, refreshStatusCategory } from "../jira/supportRequestStatus";
 import { formatSla, statusLabel } from "../jira/formatIssue";
 import { findSupportRequestInConversation } from "../jira/supportRequestScope";
@@ -296,7 +296,8 @@ export class AnswerQuestion {
     }
     if (!prepared) {
       const answered = articles > 0 && !!parsed.text && !NOT_ANSWERED.includes(parsed.text.trim());
-      const reply = answered ? withSourceLine(text, bestSource) : text;
+      // From the documents, the way to a ticket is "Did this help?", so suggested commands go.
+      const reply = answered ? withSourceLine(withoutCommandLines(text) || text, bestSource) : text;
       const sent = await this.send(input, reply, true);
       await this.rememberAnswer(this.jira, input, reply, sent, live);
       if (answered) await this.askWhetherItHelped(input);
@@ -602,12 +603,13 @@ const OWN_LEAD_IN = /\b(?:I|I'll|I've|I'm|I will|I have|I can|let me|shall I|sho
 const STEPS_MIN_LENGTH = 60;
 
 /**
- * The model's answer text before an offer, without the lines in which it speaks of itself or asks
- * (they could claim or promise the change), when enough of it is left to be useful.
+ * The model's answer text before an offer, without suggested bot commands and the lines in which
+ * it speaks of itself or asks (they could claim or promise the change), when enough of it is left
+ * to be useful.
  */
 function documentSteps(text: string): string | undefined {
   if (!text || NOT_ANSWERED.includes(text.trim())) return undefined;
-  const kept = text.split("\n").filter((line) => !OWN_LEAD_IN.test(line)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const kept = withoutCommandLines(text).split("\n").filter((line) => !OWN_LEAD_IN.test(line)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   return kept.length >= STEPS_MIN_LENGTH ? kept : undefined;
 }
 

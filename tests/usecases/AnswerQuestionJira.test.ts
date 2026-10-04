@@ -910,6 +910,20 @@ describe("AnswerQuestion with Jira: source line under an answer from knowledge a
     expect(answer).toBe(sent[0]);
   });
 
+  it("removes suggested command lines from an answer from the documents", async () => {
+    const answer = "Drive to the end of the trip at reduced speed.\n\n@Wire Support Bot support: Yellow engine light is on\n`@Wire Support Bot status of SD-6`";
+    const { sent, run } = setup({ results: [best], modelAnswer: answer });
+    await run(QUESTION);
+    expect(sent).toEqual(["Drive to the end of the trip at reduced speed.\n\nSource: Exhaust fluid (DEF) warnings, Low fluid level"]);
+  });
+
+  it("keeps suggested command lines in an answer without knowledge articles", async () => {
+    const answer = "Raise it with the desk.\n@Wire Support Bot support: Yellow engine light is on";
+    const { sent, run } = setup({ modelAnswer: answer });
+    await run(QUESTION);
+    expect(sent[0]).toContain("@Wire Support Bot support: Yellow engine light is on");
+  });
+
   it("adds no source line without knowledge articles", async () => {
     const { sent, run } = setup({ modelAnswer: "Refill the exhaust fluid tank." });
     await run(QUESTION);
