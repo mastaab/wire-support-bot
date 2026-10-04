@@ -300,7 +300,7 @@ With `WIRE_SUPPORT_BOT_KNOWLEDGE=on` the bot answers from curated documents (man
 - Search: at start-up the bot loads every chunk embedded with `WIRE_SUPPORT_BOT_EMBED_MODEL` into memory and logs one line with the model, the number of documents and chunks and the dimension. For each question addressed to the bot it embeds the question, ranks the chunks by cosine similarity, and passes up to `WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS` of them with a similarity of at least `WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE` to the answer model as knowledge articles. The search is exact and needs no database extension; it suits curated sets of up to a few thousand chunks. The bot checks for a new ingestion at most once a minute, on the next question, and reloads without a restart.
 - Failures: when the embeddings endpoint cannot be reached, at start-up or for a question, the bot logs a warning and answers without knowledge. Chunks embedded with another model are skipped with a warning that asks for a new ingestion; changing the model means running the ingestion again, which embeds every document anew.
 
-The embeddings endpoint is OpenAI-compatible (`/embeddings` is appended to `WIRE_SUPPORT_BOT_EMBED_BASE_URL`, by default the model endpoint), with the model `qwen3-embedding:0.6b` by default (with Ollama: `ollama pull qwen3-embedding:0.6b`). Excerpts and questions go to that endpoint (see "What is stored and what is sent where"). `examples/knowledge/` holds four invented documents for a truck fleet to try it with.
+The embeddings endpoint is OpenAI-compatible (`/embeddings` is appended to `WIRE_SUPPORT_BOT_EMBED_BASE_URL`), and it and `WIRE_SUPPORT_BOT_EMBED_MODEL` must be set with knowledge on: they never follow the model endpoint, since a chat provider may offer no embeddings (Anthropic, for example, offers none and recommends Voyage AI, whose `https://api.voyageai.com/v1` with `voyage-4` works here). For a local setup, use Ollama: `http://localhost:11434/v1` with `qwen3-embedding:0.6b` (`ollama pull qwen3-embedding:0.6b`). Excerpts and questions go to that endpoint (see "What is stored and what is sent where"). `examples/knowledge/` holds four invented documents for a truck fleet to try it with.
 
 Locally, with the bot's `.env`:
 
@@ -614,9 +614,9 @@ All settings are environment variables; `.env.example` lists them with comments.
 | Setting | Required | Default | Meaning |
 |---|---|---|---|
 | `WIRE_SUPPORT_BOT_KNOWLEDGE` | no | `off` | `on` lets answers use the ingested documents (see "The built-in document index") and asks "Did this help?" after an answer to a problem (see "First-level help"). Off, the bot makes no embedding call. |
-| `WIRE_SUPPORT_BOT_EMBED_BASE_URL` | no | `WIRE_SUPPORT_BOT_LLM_BASE_URL` | OpenAI-compatible endpoint for embeddings (http or https); `/embeddings` is appended. Questions and document excerpts are sent to it. |
-| `WIRE_SUPPORT_BOT_EMBED_API_KEY` | no | `WIRE_SUPPORT_BOT_LLM_API_KEY` | Sent as a Bearer token to the embeddings endpoint. |
-| `WIRE_SUPPORT_BOT_EMBED_MODEL` | no | `qwen3-embedding:0.6b` | Embedding model, for the ingestion and the search alike; after a change, run the ingestion again. |
+| `WIRE_SUPPORT_BOT_EMBED_BASE_URL` | with knowledge on | | OpenAI-compatible endpoint for embeddings (http or https); `/embeddings` is appended, for example `http://localhost:11434/v1` (Ollama) or `https://api.voyageai.com/v1`. It never falls back to the model endpoint, whose provider may offer no embeddings. Questions and document excerpts are sent to it. |
+| `WIRE_SUPPORT_BOT_EMBED_API_KEY` | no | none | Sent as a Bearer token to the embeddings endpoint; never the model endpoint's key. |
+| `WIRE_SUPPORT_BOT_EMBED_MODEL` | with knowledge on | | Embedding model, for example `qwen3-embedding:0.6b` (Ollama) or `voyage-4`, for the ingestion and the search alike; after a change, run the ingestion again. |
 | `WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS` | no | `4` | Most excerpts passed to the answer model per question; a whole number from 1 to 10. |
 | `WIRE_SUPPORT_BOT_KNOWLEDGE_MIN_SCORE` | no | `0.5` | Lowest cosine similarity of an excerpt passed to the answer model, from 0 to 1. Raise it when unrelated excerpts show up, lower it when matching ones are missed; good values depend on the model. |
 

@@ -525,7 +525,7 @@
             "null"
           ],
           "pattern": "^(https?://.+)?$",
-          "description": "WIRE_SUPPORT_BOT_EMBED_BASE_URL, an http or https URL; empty: llmBaseUrl."
+          "description": "WIRE_SUPPORT_BOT_EMBED_BASE_URL, an http or https URL; required with knowledge on."
         },
         "embedModel": {
           "type": [

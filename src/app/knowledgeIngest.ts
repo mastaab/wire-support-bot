@@ -36,7 +36,7 @@ async function main(): Promise<number> {
   }
   let knowledge;
   try {
-    knowledge = resolveKnowledgeConfig(process.env);
+    knowledge = resolveKnowledgeConfig(process.env, { requireEmbedding: true });
     // In the container the URL may come as parts (DATABASE_HOST, ...), which only the entry point joins.
     process.env.DATABASE_URL = resolveDatabaseUrl(process.env);
   } catch (error) {

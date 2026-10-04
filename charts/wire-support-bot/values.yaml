@@ -143,7 +143,7 @@ secrets:
   jiraEmail: ""
   # API key for the model endpoint; Ollama ignores it, so it may stay empty there.
   llmApiKey: ""
-  # API key for the embeddings endpoint (config.embedBaseUrl); empty: llmApiKey.
+  # API key for the embeddings endpoint (config.embedBaseUrl); empty: none is sent (it never falls back to llmApiKey).
   embedApiKey: ""
 
 # Non-secret settings, rendered into a ConfigMap. An empty value (or null) is left out, so the app's
@@ -180,10 +180,11 @@ config:
   # Whether answers search the ingested documents (on or off); ingest them with
   # kubectl exec deploy/<release> -- node dist/app/knowledgeIngest.js <directory>.
   knowledge: "off"
-  # OpenAI-compatible endpoint for embeddings; empty: llmBaseUrl. The documents and the members' questions are sent to it.
+  # OpenAI-compatible endpoint for embeddings, required with knowledge on (it never falls back to llmBaseUrl), for example
+  # http://ollama.example.svc:11434/v1 or https://api.voyageai.com/v1. The documents and the members' questions are sent to it.
   embedBaseUrl: ""
-  # Embedding model; the ingestion and the bot must use the same one.
-  embedModel: "qwen3-embedding:0.6b"
+  # Embedding model, required with knowledge on, for example qwen3-embedding:0.6b or voyage-4; the ingestion and the bot must use the same one.
+  embedModel: ""
   # Most document excerpts passed to the answer model per question (1 to 10).
   knowledgeResults: 4
   # Lowest cosine similarity (0 to 1) of an excerpt passed to the answer model.

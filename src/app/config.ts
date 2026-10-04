@@ -410,29 +410,37 @@ export function resolveWireWatchdogMinutes(env: Record<string, string | undefine
 }
 
 /** Defaults of the document index settings. */
-export const EMBED_MODEL_DEFAULT = "qwen3-embedding:0.6b";
 export const KNOWLEDGE_RESULTS_DEFAULT = 4;
 export const KNOWLEDGE_RESULTS_MAX = 10;
 export const KNOWLEDGE_MIN_SCORE_DEFAULT = 0.5;
 
 /**
- * The document index settings. WIRE_SUPPORT_BOT_KNOWLEDGE is on or off (default off). The
- * embeddings endpoint and key default to the model endpoint's (WIRE_SUPPORT_BOT_LLM_BASE_URL,
- * WIRE_SUPPORT_BOT_LLM_API_KEY); the model to `EMBED_MODEL_DEFAULT`. Every value is checked also
- * when the index is off, so a wrong value fails at startup, naming the setting.
+ * The document index settings. WIRE_SUPPORT_BOT_KNOWLEDGE is on or off (default off). With it on
+ * (or `requireEmbedding`, for the ingestion), the embeddings endpoint and model must be set: they
+ * never follow the model endpoint, whose provider may have no embeddings, and whose key must not
+ * go to another endpoint. The key is WIRE_SUPPORT_BOT_EMBED_API_KEY only. Every value is checked
+ * also when the index is off, so a wrong value fails at startup, naming the setting; unset
+ * endpoint and model are then empty.
  */
-export function resolveKnowledgeConfig(env: Record<string, string | undefined>): KnowledgeConfig {
+export function resolveKnowledgeConfig(
+  env: Record<string, string | undefined>,
+  options: { requireEmbedding?: boolean } = {},
+): KnowledgeConfig {
   const value = (name: string) => env[name]?.trim() || undefined;
   const switchRaw = (value("WIRE_SUPPORT_BOT_KNOWLEDGE") ?? "off").toLowerCase();
   if (switchRaw !== "on" && switchRaw !== "off") throw new Error("WIRE_SUPPORT_BOT_KNOWLEDGE must be on or off");
 
-  const baseUrlName = value("WIRE_SUPPORT_BOT_EMBED_BASE_URL") ? "WIRE_SUPPORT_BOT_EMBED_BASE_URL" : "WIRE_SUPPORT_BOT_LLM_BASE_URL";
-  const baseUrl = (value(baseUrlName) ?? "http://localhost:11434/v1").replace(/\/+$/, "");
-  let url: URL | undefined;
-  try { url = new URL(baseUrl); } catch { /* reported below */ }
-  if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) throw new Error(`${baseUrlName} must be an http or https URL`);
+  const required = switchRaw === "on" || options.requireEmbedding === true;
+  const baseUrl = (value("WIRE_SUPPORT_BOT_EMBED_BASE_URL") ?? "").replace(/\/+$/, "");
+  if (!baseUrl && required) throw new Error("WIRE_SUPPORT_BOT_EMBED_BASE_URL must be set for the document index (an OpenAI-compatible embeddings endpoint)");
+  if (baseUrl) {
+    let url: URL | undefined;
+    try { url = new URL(baseUrl); } catch { /* reported below */ }
+    if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) throw new Error("WIRE_SUPPORT_BOT_EMBED_BASE_URL must be an http or https URL");
+  }
 
-  const model = value("WIRE_SUPPORT_BOT_EMBED_MODEL") ?? EMBED_MODEL_DEFAULT;
+  const model = value("WIRE_SUPPORT_BOT_EMBED_MODEL") ?? "";
+  if (!model && required) throw new Error("WIRE_SUPPORT_BOT_EMBED_MODEL must be set for the document index");
   if (/\s/.test(model) || model.length > 200) throw new Error("WIRE_SUPPORT_BOT_EMBED_MODEL must be a model name without spaces");
 
   const resultsRaw = value("WIRE_SUPPORT_BOT_KNOWLEDGE_RESULTS");
@@ -449,7 +457,7 @@ export function resolveKnowledgeConfig(env: Record<string, string | undefined>):
     enabled: switchRaw === "on",
     embedding: {
       baseUrl,
-      apiKey: value("WIRE_SUPPORT_BOT_EMBED_API_KEY") ?? value("WIRE_SUPPORT_BOT_LLM_API_KEY") ?? "",
+      apiKey: value("WIRE_SUPPORT_BOT_EMBED_API_KEY") ?? "",
       model,
       timeoutMs: resolvePositiveInt(env, "WIRE_SUPPORT_BOT_LLM_TIMEOUT_MS", 60_000),
     },

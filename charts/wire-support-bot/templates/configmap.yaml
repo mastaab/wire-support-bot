@@ -37,6 +37,10 @@ applies. tests/helm/chartConfig.test.ts fails when this mapping drifts from the 
   "MESSAGE_BUFFER_SIZE" $c.messageBufferSize
   "WIRE_SUPPORT_BOT_DEFAULT_TIMEZONE" $c.defaultTimezone
 }}
+{{- if eq (toString $c.knowledge) "on" }}
+{{- $_ := required "config.embedBaseUrl is required with config.knowledge on: an OpenAI-compatible embeddings endpoint" $c.embedBaseUrl }}
+{{- $_ := required "config.embedModel is required with config.knowledge on: the embedding model" $c.embedModel }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

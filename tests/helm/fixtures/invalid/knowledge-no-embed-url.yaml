@@ -1,0 +1,7 @@
+# Expected failure: knowledge on without an embeddings endpoint (it never falls back to llmBaseUrl).
+# expect: config.embedBaseUrl is required with config.knowledge on
+database:
+  url: { secretName: postgres-app, secretKey: uri }
+config:
+  knowledge: "on"
+  embedModel: qwen3-embedding:0.6b
