@@ -274,6 +274,18 @@ export class AnswerQuestion {
       // same offer would make it follow every message; only a real revision is sent.
       return "";
     }
+    // Documents were found for this message: their steps, without the lines in which the model
+    // speaks of itself or asks, reach the member whatever the model proposed.
+    const steps = articles > 0 && !input.amendOnly ? documentSteps(parsed.text) : undefined;
+    if (!prepared && parsed.hadMarker && steps) {
+      // An offer code did not accept, after an answer from the documents: the steps stand, and a
+      // ticket stays one click away through "Did this help?".
+      const reply = withSourceLine(steps, bestSource);
+      const sent = await this.send(input, reply, true);
+      await this.rememberAnswer(this.jira, input, reply, sent, live);
+      await this.askWhetherItHelped(input);
+      return reply;
+    }
     if (!prepared && parsed.hadMarker) {
       // The model meant to propose a change that code did not accept. Its text may claim the
       // change ("Updated with that detail."), so only a code-written reply is sent.
@@ -292,9 +304,19 @@ export class AnswerQuestion {
     }
 
     // Documents were found, but the model offered a ticket instead of answering from them: the
-    // member still gets the documents' steps first, then the offer.
-    const steps = articles > 0 && !input.amendOnly ? documentSteps(parsed.text) : undefined;
-    if (steps) await this.send(input, withSourceLine(steps, bestSource), true);
+    // member still gets the documents' steps first. Docs first: a new request is then not offered
+    // over them. A question for the desk is dropped, since the documents answered it; a problem is
+    // offered only through "Did this help?" [Raise a ticket]. Part orders, replies and resolves
+    // keep their offer.
+    if (steps) {
+      const reply = withSourceLine(steps, bestSource);
+      const sent = await this.send(input, reply, true);
+      if (command?.kind === "support" && command.requestKind !== "part") {
+        await this.rememberAnswer(this.jira, input, reply, sent, live);
+        if (command.requestKind !== "question") await this.askWhetherItHelped(input);
+        return reply;
+      }
+    }
 
     // Only the code-written question is sent: the model's own lead-in can imply the change
     // already happened ("I'll send that ..."), which is wrong until the requester confirms.
@@ -611,8 +633,8 @@ function asksAboutTickets(question: string, projectKey: string): boolean {
   return TICKET_QUESTION.test(question) || namedKeys(question, projectKey).length > 0;
 }
 
-/** A question about how to do something ("how do I raise a ticket?"), which asks for no change itself. */
-const HOW_TO_QUESTION = /^(?:(?:hi|hey|hello)\b[,!]?\s*)?how\s+(?:do|can|could|should|would|does|did)\s+(?:i|we|you|one|people|someone|anyone)\b/i;
+/** A question about how to do something ("how do I raise a ticket?", "how often should I check it?"), which asks for no change itself. */
+const HOW_TO_QUESTION = /^(?:(?:hi|hey|hello)\b[,!]?\s*)?how\s+(?:(?:often|long|much|many|frequently|soon)\s+(?:[\w-]+\s+){0,3}?)?(?:do|can|could|should|would|does|did)\s+(?:i|we|you|one|people|someone|anyone)\b/i;
 
 /**
  * True when the requester's message clearly asks to raise, order, reply to or resolve something:

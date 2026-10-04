@@ -869,6 +869,14 @@ describe("AnswerQuestion with Jira: passive service-desk help on", () => {
     expect(stored).toHaveLength(1);
   });
 
+  it.each(["How often should I check the tire pressure?", "how many liters of DEF should I add?", "How long can I drive with the engine light on?"])(
+    "drops a support offer for the how-to question %j", async (question) => {
+      const { stored, run } = setup({ passive: true, modelAnswer: support });
+      await run(question);
+      expect(stored).toHaveLength(0);
+    },
+  );
+
   it("drops a support offer for a how-to question even with passive help on", async () => {
     const { stored, sent, run } = setup({ passive: true, modelAnswer: support });
     await run("How do I order a part?");
@@ -924,14 +932,36 @@ describe("AnswerQuestion with Jira: source line under an answer from knowledge a
     expect(sent[0]).not.toContain("Source:");
   });
 
-  it("sends the documents' steps with the source before an offer, without the model's own lead-in", async () => {
-    const support = `The tank is empty, so the engine has reduced its power.\nRefill the tank before switching off the engine.\nI'll report this to the service desk.\nShall I raise it?\nOFFER: ${JSON.stringify({ kind: "support", summary: "DEF warning, lost power", description: "My truck shows a DEF warning and has lost power." })}`;
-    const { stored, sent, run } = setup({ passive: true, results: [best], modelAnswer: support });
+  const steps = "The tank is empty, so the engine has reduced its power.\nRefill the tank before switching off the engine.";
+  const offerAfterSteps = (command: object) => `${steps}\nI'll report this to the service desk.\nShall I raise it?\nOFFER: ${JSON.stringify(command)}`;
+  const stepsWithSource = `${steps}\n\nSource: Exhaust fluid (DEF) warnings, Low fluid level`;
+
+  it("sends the documents' steps with the source instead of a new problem offer, without the model's own lead-in", async () => {
+    const { stored, sent, run } = setup({ passive: true, results: [best], modelAnswer: offerAfterSteps({ kind: "support", summary: "DEF warning, lost power", description: "My truck shows a DEF warning and has lost power." }) });
+    const answer = await run(QUESTION);
+    expect(sent).toEqual([stepsWithSource]);
+    expect(answer).toBe(stepsWithSource);
+    expect(stored).toHaveLength(0);
+  });
+
+  it("sends the documents' steps instead of the no-change reply when code does not accept the offer", async () => {
+    const { stored, sent, run } = setup({ results: [best], modelAnswer: offerAfterSteps({ kind: "support", summary: "DEF warning, lost power", description: "My truck shows a DEF warning and has lost power." }) });
     await run(QUESTION);
-    expect(sent[0]).toBe("The tank is empty, so the engine has reduced its power.\nRefill the tank before switching off the engine.\n\nSource: Exhaust fluid (DEF) warnings, Low fluid level");
-    expect(sent).toHaveLength(2);
-    expect(sent[1]).not.toContain("Source:");
-    expect(stored).toHaveLength(1);
+    expect(sent).toEqual([stepsWithSource]);
+    expect(stored).toHaveLength(0);
+  });
+
+  it("keeps the no-change reply for a rejected offer without documents", async () => {
+    const { sent, run } = setup({ modelAnswer: offerAfterSteps({ kind: "support", summary: "DEF warning, lost power", description: "My truck shows a DEF warning and has lost power." }) });
+    await run(QUESTION);
+    expect(sent[0]).toContain("I haven't changed anything with the service desk.");
+  });
+
+  it("drops a question for the desk after the documents' steps", async () => {
+    const { stored, sent, run } = setup({ passive: true, results: [best], modelAnswer: offerAfterSteps({ kind: "support", requestKind: "question", summary: "DEF refill", description: "How do I refill DEF?" }) });
+    await run(QUESTION);
+    expect(sent).toEqual([stepsWithSource]);
+    expect(stored).toHaveLength(0);
   });
 
   it("sends no steps before an offer without knowledge articles", async () => {
