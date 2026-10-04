@@ -241,7 +241,7 @@ The code follows a hexagonal (ports and adapters) layout:
 | `src/infrastructure/wire/WireEventRouter.ts` | Receives Wire events and decides what each message is: an offer answer, a command, a question or passive-help input. |
 | `src/application/usecases/general/AnswerQuestion.ts` | The answer path: builds the model's context, parses and validates an offer, sends the answer or the question. |
 | `src/application/services/offers.ts` | Offer marker parsing, bounds and the code-written questions. |
-| `src/application/services/botCommandLines.ts` | Replaces answer lines that suggest a bot command that does not exist with a supported command line. |
+| `src/application/services/botCommandLines.ts` | Replaces answer lines that suggest a bot command that does not exist, or one for a request key that the member did not name and that is not a request of the conversation, with a supported command line; removes suggested commands from answers that come from the document index. |
 | `src/application/services/offerButtons.ts` | Offer buttons and choices: button IDs, options, text answers to a choice. |
 | `src/application/services/deskUpdateQuestions.ts` | The requester's question after a desk reply or resolve: texts, options, lifetime, and not asking over another open question. |
 | `src/application/services/feedbackQuestions.ts`, `src/application/usecases/jira/SubmitFeedback.ts` | The satisfaction rating after [Solved] or a resolve from Wire, and sending it to Jira. |

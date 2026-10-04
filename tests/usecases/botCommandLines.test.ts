@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { replaceInventedCommandLines } from "../../src/application/services/botCommandLines";
+import { UNKNOWN_KEY_LINE, replaceInventedCommandLines } from "../../src/application/services/botCommandLines";
 import { GENERIC_COMMAND_LINE, offerCommandLine } from "../../src/application/services/offers";
 
 const SUPPORT_LINE = offerCommandLine({ kind: "support", requestKind: "fault", summary: "", description: "" });
@@ -52,5 +52,23 @@ describe("replaceInventedCommandLines", () => {
 
   it("replaces a line with one invented command among valid ones", () => {
     expect(replaceInventedCommandLines("`@Wire Support Bot support requests` or `@Wire Support Bot list all`", "SD")).toBe(GENERIC_COMMAND_LINE);
+  });
+});
+
+describe("replaceInventedCommandLines with the known request keys", () => {
+  const known = new Set(["SD-4"]);
+
+  it("keeps commands naming a known key, a placeholder or no key", () => {
+    const answer = "`@Wire Support Bot status of SD-4`\n`@Wire Support Bot reply to SD-NN: <text>`\n`@Wire Support Bot support requests`";
+    expect(replaceInventedCommandLines(answer, "SD", known)).toBe(answer);
+  });
+
+  it("replaces a supported command naming an unknown key, in any case", () => {
+    expect(replaceInventedCommandLines("Send `@Wire Support Bot resolve sd-6: done`.", "SD", known)).toBe(UNKNOWN_KEY_LINE);
+  });
+
+  it("checks no keys without the set", () => {
+    const line = "`@Wire Support Bot resolve SD-6`";
+    expect(replaceInventedCommandLines(line, "SD")).toBe(line);
   });
 });

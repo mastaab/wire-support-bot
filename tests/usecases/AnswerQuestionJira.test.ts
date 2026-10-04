@@ -1651,6 +1651,13 @@ describe("AnswerQuestion with Jira: asking again when the model makes no offer",
     expect(sent).toEqual([`I can't raise it myself.\n${supportLine}`]);
   });
 
+  it("replaces a suggested command for a request that is not one of this conversation's", async () => {
+    const { general, sent, run } = setup({ requests: [makeRequest("SD-4")] });
+    answers(general, "The status was updated to solved.\n`@Wire Support Bot resolve SD-6: Closed by service desk`\n`@Wire Support Bot status of SD-4` shows yours.");
+    await run("solved");
+    expect(sent).toEqual(["The status was updated to solved.\n`@Wire Support Bot support requests` lists the requests of this conversation.\n`@Wire Support Bot status of SD-4` shows yours."]);
+  });
+
   it("replaces an invented command in an answer to any question and keeps valid commands", async () => {
     const { general, sent, run } = setup();
     answers(general, "Use `@Wire Support Bot status of SD-6` for the status.\nOr `@Wire Support Bot ticket status SD-6`.");

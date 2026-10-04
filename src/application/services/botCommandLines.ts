@@ -82,19 +82,35 @@ function replacementLine(command: string, projectKey: string): string {
   return kind ? offerCommandLine(kind, projectKey) : GENERIC_COMMAND_LINE;
 }
 
+/** The line that replaces a command naming a request that is not one of this conversation's. */
+export const UNKNOWN_KEY_LINE = "`@Wire Support Bot support requests` lists the requests of this conversation.";
+
+/** The request key a command names (upper-cased), or undefined for a placeholder or none. */
+function commandKey(command: string, projectKey: string): string | undefined {
+  return new RegExp(`\\b${escapeRegExp(projectKey)}-\\d+\\b`, "i").exec(command)?.[0]?.toUpperCase();
+}
+
 /**
  * The answer with every line that suggests an unsupported bot command replaced by a supported
- * command line (the same line is not repeated). Lines with supported commands stay as written.
+ * command line (the same line is not repeated). Lines with supported commands stay as written,
+ * unless `knownKeys` is given and the command names a request key outside it: the model may
+ * invent a key ("resolve SD-6" for a request that does not exist), and such a line is replaced by
+ * the line that lists the conversation's requests.
  */
-export function replaceInventedCommandLines(answer: string, projectKey: string): string {
+export function replaceInventedCommandLines(answer: string, projectKey: string, knownKeys?: ReadonlySet<string>): string {
   const lines: string[] = [];
   for (const line of answer.split("\n")) {
-    const invented = commandAttempts(line).find(({ command, inCodeSpan }) => !isSupportedCommand(command, projectKey, inCodeSpan));
-    if (!invented) {
+    const attempts = commandAttempts(line);
+    const unknownKey = knownKeys && attempts.some(({ command }) => {
+      const key = commandKey(command, projectKey);
+      return key !== undefined && !knownKeys.has(key);
+    });
+    const invented = attempts.find(({ command, inCodeSpan }) => !isSupportedCommand(command, projectKey, inCodeSpan));
+    if (!invented && !unknownKey) {
       lines.push(line);
       continue;
     }
-    const replacement = replacementLine(invented.command, projectKey);
+    const replacement = unknownKey ? UNKNOWN_KEY_LINE : replacementLine(invented!.command, projectKey);
     if (!lines.includes(replacement)) lines.push(replacement);
   }
   return lines.join("\n");

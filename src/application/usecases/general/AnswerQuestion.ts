@@ -266,8 +266,10 @@ export class AnswerQuestion {
       const second = await this.proposal(await ask({ requireOffer: true }), input);
       if (second.prepared) ({ parsed, command, prepared } = second);
     }
-    // A suggested bot command that does not exist is replaced by a supported command line.
-    const text = replaceInventedCommandLines(parsed.text || FALLBACK_ANSWER, this.jira.tracker.projectKey);
+    // A suggested bot command that does not exist, or that names a request the member did not name
+    // and that is not one of this conversation's, is replaced by a supported command line.
+    const knownKeys = await this.conversationKeys(input, parsed.text);
+    const text = replaceInventedCommandLines(parsed.text || FALLBACK_ANSWER, this.jira.tracker.projectKey, knownKeys);
     if (input.amendOnly && !(prepared && command && isRevision(input.pendingOffer, command)
         && !sameCommand(input.pendingOffer, command))) {
       // Unaddressed chat after an offer ("lunch at noon?") is not for the bot, and repeating the
@@ -367,6 +369,26 @@ export class AnswerQuestion {
     } catch (err) {
       this.logger?.warn("AnswerQuestion: asking whether the answer helped failed", { err: err instanceof Error ? err.name : "UnknownError" });
     }
+  }
+
+  /**
+   * The request keys a suggested command may name: those the member's message names, and those the
+   * answer names that are requests of this conversation (checked by the scope helper). Undefined
+   * when the lookup failed, so the key check is skipped rather than replacing lines about real
+   * requests.
+   */
+  private async conversationKeys(input: AnswerQuestionInput, answer: string): Promise<Set<string> | undefined> {
+    const projectKey = this.jira.tracker.projectKey;
+    const keys = new Set<string>(namedKeys(input.question, projectKey));
+    try {
+      for (const key of namedKeys(answer, projectKey).filter((k) => !keys.has(k)).slice(0, NAMED_KEYS_CHECKED)) {
+        if (await findSupportRequestInConversation(this.jira.requests, key, input.conversationId, projectKey)) keys.add(key);
+      }
+    } catch (err) {
+      this.logger?.warn("AnswerQuestion: support request lookup failed", { err: err instanceof Error ? err.name : "UnknownError" });
+      return undefined;
+    }
+    return keys;
   }
 
   /** The model's answer without its marker, its command and, when code accepts it, the prepared offer. */
