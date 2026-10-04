@@ -40,7 +40,7 @@ it("asks the retrieval source in the conversation's scope and passes its results
   expect(retrieval.retrieve).toHaveBeenCalledWith({ question: "How do I reset it?", conversationId, requesterId: { id: "bob", domain: "wire.test" } });
   expect(general.answer).toHaveBeenCalledWith("How do I reset it?", context, expect.any(Array), members, requester);
   expect(withoutTimezone(general.answer.mock.calls[0]![2])).toEqual([article]);
-  expect(wire.sendPlainText).toHaveBeenCalledWith(conversationId, "Hold the reset button.", expect.objectContaining({ replyToMessageId: "q" }));
+  expect(wire.sendPlainText).toHaveBeenCalledWith(conversationId, "Hold the reset button.\n\nSource: Printer manual", expect.objectContaining({ replyToMessageId: "q" }));
 });
 
 it("answers without the source's results when retrieval fails, logging the error name only", async () => {

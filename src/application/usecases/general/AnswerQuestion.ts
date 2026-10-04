@@ -1,3 +1,4 @@
+import { ANSWER_FAILED_TEXT, ANSWER_TIMEOUT_TEXT, NO_ANSWER_TEXT } from "../../ports/GeneralAnswerPort";
 import type { GeneralAnswerService, ConversationMemberContext, GeneralAnswerOptions } from "../../ports/GeneralAnswerPort";
 import type { WireOutboundPort, OutboundMention, SentMessageRef } from "../../ports/WireOutboundPort";
 import type { RetrievalPort, RetrievalResult } from "../../ports/RetrievalPort";
@@ -116,7 +117,9 @@ const NAMED_KEYS_CHECKED = 5;
 const TICKETS_SHARED = 3;
 const REPLIES_SHARED = 3;
 const SHARED_REPLY_MAX = 500;
-const FALLBACK_ANSWER = "I wasn't able to generate a response.";
+const FALLBACK_ANSWER = NO_ANSWER_TEXT;
+/** Texts sent when the model gave no answer; they get no source line and no "Did this help?". */
+const NOT_ANSWERED: readonly string[] = [NO_ANSWER_TEXT, ANSWER_FAILED_TEXT, ANSWER_TIMEOUT_TEXT];
 
 /**
  * Questions that may need live ticket data: Jira, service-desk or support wording, or asking
@@ -217,6 +220,8 @@ export class AnswerQuestion {
     let retrievalResults: RetrievalResult[] = [];
     // Knowledge articles passed to the model, which make the answer one "Did this help?" may follow.
     let articles = 0;
+    // The best match (results are ranked by score), named under the answer.
+    let bestSource: string | undefined;
 
     if (this.retrieval) {
       try {
@@ -229,7 +234,9 @@ export class AnswerQuestion {
         // Non-fatal: answer without the source's results rather than failing.
         this.logger?.warn("AnswerQuestion: retrieval failed, answering without it", { err: (err instanceof Error ? err.name : "UnknownError") });
       }
-      articles = retrievalResults.filter((result) => result.type === "knowledge_article").length;
+      const found = retrievalResults.filter((result) => result.type === "knowledge_article");
+      articles = found.length;
+      bestSource = found[0]?.source?.trim() || undefined;
     }
 
     const now = (this.jira.now ?? (() => new Date()))();
@@ -276,10 +283,12 @@ export class AnswerQuestion {
       return reply;
     }
     if (!prepared) {
-      const sent = await this.send(input, text, true);
-      await this.rememberAnswer(this.jira, input, text, sent, live);
-      if (articles > 0 && parsed.text) await this.askWhetherItHelped(input);
-      return text;
+      const answered = articles > 0 && !!parsed.text && !NOT_ANSWERED.includes(parsed.text.trim());
+      const reply = answered ? withSourceLine(text, bestSource) : text;
+      const sent = await this.send(input, reply, true);
+      await this.rememberAnswer(this.jira, input, reply, sent, live);
+      if (answered) await this.askWhetherItHelped(input);
+      return reply;
     }
 
     // Only the code-written question is sent: the model's own lead-in can imply the change
@@ -553,6 +562,15 @@ export class AnswerQuestion {
     // A request last known as done is not dropped: the desk may have reopened it, and the use case checks live.
     return { question: formatResolveQuestion(request.key, request.summary, command.comment), requestKey: request.key };
   }
+}
+
+/**
+ * The answer with the best-matching knowledge article named on its own last line, after an empty
+ * line, in plain text ("Source: <title>, <heading path>"); unchanged when the answer already names it.
+ */
+function withSourceLine(text: string, source: string | undefined): string {
+  if (!source || text.toLowerCase().includes(source.toLowerCase())) return text;
+  return `${text.trimEnd()}\n\nSource: ${source}`;
 }
 
 /** Keys of the configured project named in the text, upper-cased, in order, without repeats. */

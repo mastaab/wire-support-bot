@@ -890,6 +890,47 @@ describe("AnswerQuestion with Jira: passive service-desk help on", () => {
   });
 });
 
+describe("AnswerQuestion with Jira: source line under an answer from knowledge articles", () => {
+  const best: RetrievalResult = { id: "chunk-1", type: "knowledge_article", content: "Refill the exhaust fluid tank.", source: "Exhaust fluid (DEF) warnings, Low fluid level", sourceDate: NOW };
+  const second: RetrievalResult = { id: "chunk-2", type: "knowledge_article", content: "Check the sensor.", source: "Exhaust fluid (DEF) warnings, Sensor fault", sourceDate: NOW };
+  const QUESTION = "my truck shows a DEF warning and has lost power";
+
+  it("names only the best match on its own last line after an empty line", async () => {
+    const { sent, run } = setup({ results: [best, second], modelAnswer: "Refill the exhaust fluid tank." });
+    const answer = await run(QUESTION);
+    expect(sent).toEqual(["Refill the exhaust fluid tank.\n\nSource: Exhaust fluid (DEF) warnings, Low fluid level"]);
+    expect(answer).toBe(sent[0]);
+  });
+
+  it("adds no source line without knowledge articles", async () => {
+    const { sent, run } = setup({ modelAnswer: "Refill the exhaust fluid tank." });
+    await run(QUESTION);
+    expect(sent).toEqual(["Refill the exhaust fluid tank."]);
+  });
+
+  it("adds no second source when the answer already names it", async () => {
+    const answer = "Refill the tank (source: exhaust fluid (DEF) warnings, low fluid level).";
+    const { sent, run } = setup({ results: [best], modelAnswer: answer });
+    await run(QUESTION);
+    expect(sent).toEqual([answer]);
+  });
+
+  it("adds no source line to an offer", async () => {
+    const support = `Report it.\nOFFER: ${JSON.stringify({ kind: "support", summary: "DEF warning, lost power", description: "My truck shows a DEF warning and has lost power." })}`;
+    const { stored, sent, run } = setup({ passive: true, results: [best], modelAnswer: support });
+    await run(QUESTION);
+    expect(stored).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).not.toContain("Source:");
+  });
+
+  it("adds no source line to the text sent when the model gave no answer", async () => {
+    const { sent, run } = setup({ results: [best], modelAnswer: "I wasn't able to generate a response just now." });
+    await run(QUESTION);
+    expect(sent).toEqual(["I wasn't able to generate a response just now."]);
+  });
+});
+
 describe("AnswerQuestion with Jira: amending a pending offer", () => {
   const original: OfferCommand = { kind: "support", requestKind: "fault", summary: "VPN drops", description: "My VPN drops every ten minutes." };
   const pendingReply: OfferCommand = { kind: "reply", issueKey: "SD-6", body: "It still drops." };

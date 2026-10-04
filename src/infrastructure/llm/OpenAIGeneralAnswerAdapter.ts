@@ -15,6 +15,7 @@
  *   - No hollow affirmations, never repeat the question back
  */
 
+import { ANSWER_FAILED_TEXT, ANSWER_TIMEOUT_TEXT, NO_ANSWER_TEXT } from "../../application/ports/GeneralAnswerPort";
 import type { GeneralAnswerService, ConversationMemberContext, GeneralAnswerOptions } from "../../application/ports/GeneralAnswerPort";
 import type { RetrievalResult } from "../../application/ports/RetrievalPort";
 import type { LLMClientFactory } from "./LLMClientFactory";
@@ -123,6 +124,12 @@ function stripKeepingMarker(text: string): string {
 /** Added to the question when the use case asks again because the first answer made no offer. */
 export const REQUIRE_OFFER_INSTRUCTION = "## Instruction\nThe requester asked you to raise, order, reply to or resolve this. Do not answer with a command. End the answer with exactly one OFFER: line as described under \"Support request offers\".";
 
+/**
+ * Follows the "## Knowledge articles" section (only when it is present): the answer comes from the
+ * articles rather than an offer, since "Did this help?" keeps the ticket one click away.
+ */
+export const KNOWLEDGE_FIRST_RULE = "Answer from these articles first. When they cover the member's problem, give their steps and add no OFFER: line, unless the member asks you to raise it; the member can still raise a ticket after your answer. Only when an article tells the member to report the problem or contact the service desk may you also end with the offer. Do not mention the articles or their sources; the bot adds the source itself.";
+
 /** The service desk the answer model must know about so it does not deny it. */
 export interface AnswerIntegrations {
   /** Configured Jira Service Management project key. */
@@ -230,7 +237,7 @@ export class OpenAIGeneralAnswerAdapter implements GeneralAnswerService {
 
     const articlesBlock =
       articles.length > 0
-        ? `## Knowledge articles\n${articles.map((r) => `- ${r.content}${r.source ? ` _(source: ${r.source})_` : ""}`).join("\n")}\n\n`
+        ? `## Knowledge articles\n${articles.map((r) => `- ${r.content}${r.source ? ` _(source: ${r.source})_` : ""}`).join("\n")}\n${KNOWLEDGE_FIRST_RULE}\n\n`
         : "";
 
     const relatedBlock =
@@ -278,14 +285,14 @@ export class OpenAIGeneralAnswerAdapter implements GeneralAnswerService {
         ],
         { max_tokens: 800, temperature: 0.3 },
       );
-      return stripKeepingMarker(retry.content.trim()) || "I wasn't able to generate a response.";
+      return stripKeepingMarker(retry.content.trim()) || NO_ANSWER_TEXT;
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         this.logger.warn("OpenAIGeneralAnswerAdapter: request timed out");
-        return "I'm afraid I wasn't able to respond in time; the request timed out.";
+        return ANSWER_TIMEOUT_TEXT;
       }
       this.logger.warn("OpenAIGeneralAnswerAdapter: request failed", { err: (err instanceof Error ? err.name : "UnknownError") });
-      return "I wasn't able to generate a response just now.";
+      return ANSWER_FAILED_TEXT;
     }
   }
 }

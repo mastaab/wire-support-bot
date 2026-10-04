@@ -6,6 +6,13 @@ export interface ConversationMemberContext {
   name?: string;
 }
 
+/** Answered when the model returned nothing usable. */
+export const NO_ANSWER_TEXT = "I wasn't able to generate a response.";
+/** Answered when the model call failed. */
+export const ANSWER_FAILED_TEXT = "I wasn't able to generate a response just now.";
+/** Answered when the model call timed out. */
+export const ANSWER_TIMEOUT_TEXT = "I'm afraid I wasn't able to respond in time; the request timed out.";
+
 /** Options of one answer call. */
 export interface GeneralAnswerOptions {
   /**

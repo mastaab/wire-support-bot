@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { OpenAIGeneralAnswerAdapter, integrationsPrompt } from "../../src/infrastructure/llm/OpenAIGeneralAnswerAdapter";
+import { KNOWLEDGE_FIRST_RULE, OpenAIGeneralAnswerAdapter, integrationsPrompt } from "../../src/infrastructure/llm/OpenAIGeneralAnswerAdapter";
 import type { AnswerIntegrations } from "../../src/infrastructure/llm/OpenAIGeneralAnswerAdapter";
 import type { RetrievalResult } from "../../src/application/ports/RetrievalPort";
 import { parseOfferMarker } from "../../src/application/services/offers";
@@ -181,11 +181,23 @@ describe("OpenAIGeneralAnswerAdapter with support requests and offers", () => {
     const related = user.slice(user.indexOf("## Related Context"));
     expect(related).toContain("- Proposal relates to Acme");
     expect(related).not.toContain("VPN drops");
-    expect(user).toContain("## Knowledge articles\n- Restart the VPN client first. _(source: VPN guide)_\n\n");
+    expect(user).toContain(`## Knowledge articles\n- Restart the VPN client first. _(source: VPN guide)_\n${KNOWLEDGE_FIRST_RULE}\n\n`);
     expect(related).not.toContain("Restart the VPN client");
     expect(user.indexOf("## Support requests")).toBeLessThan(user.indexOf("## Live support request tickets"));
     expect(user.indexOf("## Live support request tickets")).toBeLessThan(user.indexOf("## Knowledge articles"));
     expect(user).not.toMatch(/## (?:Relevant Decisions|Relevant Actions|Data summary)/);
+  });
+
+  it("tells the model to answer from the articles before offering only when knowledge articles are provided", async () => {
+    const { llm, adapter } = setup("Refill the tank.");
+    await adapter.answer("My truck has lost power", [], [{ ...result("KB-1", "knowledge_article", "Refill the tank."), source: "DEF warnings" }], []);
+    await adapter.answer("My truck has lost power", [], [result("SD-4", "support_request", "SD-4 | Summary: VPN drops")], []);
+    const withArticles = llm.chatCompletion.mock.calls[0][1].map((m: { content: string }) => m.content).join("\n");
+    const without = llm.chatCompletion.mock.calls[1][1].map((m: { content: string }) => m.content).join("\n");
+    expect(withArticles).toContain(KNOWLEDGE_FIRST_RULE);
+    expect(KNOWLEDGE_FIRST_RULE).toContain("add no OFFER: line");
+    expect(without).not.toContain(KNOWLEDGE_FIRST_RULE);
+    expect(without).not.toContain("Answer from these articles");
   });
 
   it("tells the model to revise a pending offer it is given, which appears under Related Context", async () => {

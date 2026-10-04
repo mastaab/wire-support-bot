@@ -257,6 +257,6 @@ describe("AnswerQuestion: when \"Did this help?\" is asked", () => {
     const result = await new AnswerQuestion(general, wire() as never, desk(offers, help), { retrieve: vi.fn().mockResolvedValue([ARTICLE]) }).execute({
       question: "Truck 12 will not start", requester, conversationContext: [], conversationId, replyToMessageId: "m-1",
     });
-    expect(result).toBe("Check the fuel filter.");
+    expect(result).toBe("Check the fuel filter.\n\nSource: Engine manual, Starting");
   });
 });
