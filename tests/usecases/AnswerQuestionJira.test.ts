@@ -924,6 +924,23 @@ describe("AnswerQuestion with Jira: source line under an answer from knowledge a
     expect(sent[0]).not.toContain("Source:");
   });
 
+  it("sends the documents' steps with the source before an offer, without the model's own lead-in", async () => {
+    const support = `The tank is empty, so the engine has reduced its power.\nRefill the tank before switching off the engine.\nI'll report this to the service desk.\nShall I raise it?\nOFFER: ${JSON.stringify({ kind: "support", summary: "DEF warning, lost power", description: "My truck shows a DEF warning and has lost power." })}`;
+    const { stored, sent, run } = setup({ passive: true, results: [best], modelAnswer: support });
+    await run(QUESTION);
+    expect(sent[0]).toBe("The tank is empty, so the engine has reduced its power.\nRefill the tank before switching off the engine.\n\nSource: Exhaust fluid (DEF) warnings, Low fluid level");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).not.toContain("Source:");
+    expect(stored).toHaveLength(1);
+  });
+
+  it("sends no steps before an offer without knowledge articles", async () => {
+    const support = `The tank is empty, so the engine has reduced its power. Refill the tank before switching off the engine.\nOFFER: ${JSON.stringify({ kind: "support", summary: "DEF warning, lost power", description: "My truck shows a DEF warning and has lost power." })}`;
+    const { sent, run } = setup({ passive: true, modelAnswer: support });
+    await run(QUESTION);
+    expect(sent).toHaveLength(1);
+  });
+
   it("adds no source line to the text sent when the model gave no answer", async () => {
     const { sent, run } = setup({ results: [best], modelAnswer: "I wasn't able to generate a response just now." });
     await run(QUESTION);

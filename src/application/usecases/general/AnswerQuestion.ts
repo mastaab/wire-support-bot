@@ -291,6 +291,11 @@ export class AnswerQuestion {
       return reply;
     }
 
+    // Documents were found, but the model offered a ticket instead of answering from them: the
+    // member still gets the documents' steps first, then the offer.
+    const steps = articles > 0 && !input.amendOnly ? documentSteps(parsed.text) : undefined;
+    if (steps) await this.send(input, withSourceLine(steps, bestSource), true);
+
     // Only the code-written question is sent: the model's own lead-in can imply the change
     // already happened ("I'll send that ..."), which is wrong until the requester confirms.
     // No mentions: a quoted summary or reply body may contain @names that must not ping members.
@@ -568,6 +573,22 @@ export class AnswerQuestion {
  * The answer with the best-matching knowledge article named on its own last line, after an empty
  * line, in plain text ("Source: <title>, <heading path>"); unchanged when the answer already names it.
  */
+/** A line in which the bot speaks of itself or asks something, such as "I'll report this." or "Shall I raise it?". */
+const OWN_LEAD_IN = /\b(?:I|I'll|I've|I'm|I will|I have|I can|let me|shall I|should I|would you like)\b|\?\s*$/i;
+
+/** The shortest text worth sending before an offer as the documents' steps. */
+const STEPS_MIN_LENGTH = 60;
+
+/**
+ * The model's answer text before an offer, without the lines in which it speaks of itself or asks
+ * (they could claim or promise the change), when enough of it is left to be useful.
+ */
+function documentSteps(text: string): string | undefined {
+  if (!text || NOT_ANSWERED.includes(text.trim())) return undefined;
+  const kept = text.split("\n").filter((line) => !OWN_LEAD_IN.test(line)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return kept.length >= STEPS_MIN_LENGTH ? kept : undefined;
+}
+
 function withSourceLine(text: string, source: string | undefined): string {
   if (!source || text.toLowerCase().includes(source.toLowerCase())) return text;
   return `${text.trimEnd()}\n\nSource: ${source}`;
