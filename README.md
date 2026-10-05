@@ -754,6 +754,19 @@ increase(wire_support_bot_wire_watchdog_actions_total[1h]) > 0
 increase(wire_support_bot_watch_checks_total{outcome="error"}[30m]) > 3
 ```
 
+### Grafana dashboard
+
+`dashboards/grafana/wire-support-bot.json` is a Grafana dashboard for these metrics. Import it in Grafana (Dashboards, New, Import, upload the file) and pick a Prometheus-compatible data source, such as Prometheus or VictoriaMetrics. It selects the bot by the `namespace` and `pod` labels the scraper adds (with the chart's ServiceMonitor these are set automatically), and has these rows:
+
+- Overview: Wire connection, uptime, messages received and requests raised in the selected time range, pending offers, and watchdog actions (above 0 means Wire was unreachable for minutes).
+- Wire: messages by kind, connection events and watchdog actions, SDK warnings and errors.
+- Model: calls by slot and outcome, latency (p50, p95), and the share of failed calls.
+- Jira: requests by outcome, failures by operation, latency (p95) by operation, watch checks, their duration and the number of watched requests.
+- Support flow: requests raised, replies and resolves, offers and questions, button clicks, ratings, pending offers and the passive-help queue, and the document index (empty while it is off).
+- Runtime: CPU, memory, event loop lag and garbage collection time.
+
+The latency panels and garbage collection stay empty until the first model call, Jira call and garbage collection, since a histogram has no series before its first value.
+
 ## Development
 
 ```bash
