@@ -119,6 +119,11 @@ export interface JiraConfig {
   baseUrl: string;
   /** Site URL used for browse links, e.g. https://example.atlassian.net. */
   siteUrl: string;
+  /**
+   * Where ticket links point (WIRE_SUPPORT_BOT_JIRA_LINKS): "agent" (default) to the agent view
+   * `<site>/browse/<key>`, "portal" to the request in the service desk's customer portal.
+   */
+  links: JiraLinks;
   apiToken: string;
   /** When set, requests use Basic auth (email + classic token); otherwise Bearer (scoped token). */
   email?: string;
@@ -168,6 +173,9 @@ export interface JiraConfig {
    */
   feedback: boolean;
 }
+
+/** Where ticket links point: the agent view or the customer portal. */
+export type JiraLinks = "agent" | "portal";
 
 /** Longest lifetime of a question after a desk update, in hours. */
 export const UPDATE_QUESTION_HOURS_MAX = 72;
@@ -228,6 +236,8 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
   }
   const feedback = (value("WIRE_SUPPORT_BOT_JIRA_FEEDBACK") ?? "off").toLowerCase();
   if (feedback !== "on" && feedback !== "off") throw new Error("WIRE_SUPPORT_BOT_JIRA_FEEDBACK must be on or off");
+  const links = (value("WIRE_SUPPORT_BOT_JIRA_LINKS") ?? "agent").toLowerCase();
+  if (links !== "agent" && links !== "portal") throw new Error("WIRE_SUPPORT_BOT_JIRA_LINKS must be agent or portal");
   const questionHoursRaw = value("WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS");
   if (questionHoursRaw !== undefined && (!/^\d+$/.test(questionHoursRaw) || parseInt(questionHoursRaw, 10) > UPDATE_QUESTION_HOURS_MAX)) {
     throw new Error(`WIRE_SUPPORT_BOT_JIRA_UPDATE_QUESTION_HOURS must be a whole number of hours from 0 to ${UPDATE_QUESTION_HOURS_MAX}`);
@@ -236,6 +246,7 @@ export function resolveJiraConfig(env: Record<string, string | undefined>): Jira
   return {
     baseUrl: httpsUrl("WIRE_SUPPORT_BOT_JIRA_BASE_URL"),
     siteUrl: httpsUrl("WIRE_SUPPORT_BOT_JIRA_SITE_URL"),
+    links,
     apiToken: value("WIRE_SUPPORT_BOT_JIRA_API_TOKEN")!,
     email: value("WIRE_SUPPORT_BOT_JIRA_EMAIL"),
     projectKey,

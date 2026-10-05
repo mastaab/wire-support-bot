@@ -8,6 +8,9 @@
  * - Errors and logs never include request bodies, response bodies or credentials.
  * - Every HTTP request is recorded in the metrics by the tracker operation that made it, with its
  *   status class (or timeout or error) and duration.
+ * - Ticket links point to the agent view, or with portal links to the request in the customer
+ *   portal: the request's own web link when Jira returns one, else the portal address built from
+ *   the service desk ID, the format Jira uses for it.
  */
 
 import {
@@ -45,7 +48,6 @@ const MAX_COMMENT_PAGES = 5;
 const SEARCH_BATCH_SIZE = 50;
 /** Upper bound on result pages per batch, in case Jira keeps returning a page token. */
 const MAX_SEARCH_PAGES = 5;
-
 interface JiraStatus {
   id?: string;
   statusCategory?: { key?: string };
@@ -207,7 +209,8 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
   }
 
   async createIssue(request: CreateIssueRequest): Promise<CreatedIssue> {
-    const created = await this.request<{ issueKey?: unknown }>("create_issue", "POST", "/rest/servicedeskapi/request", {
+
+    const created = await this.request<{ issueKey?: unknown; _links?: { web?: unknown } }>("create_issue", "POST", "/rest/servicedeskapi/request", {
       serviceDeskId: this.config.serviceDeskId,
       requestTypeId: request.requestTypeId ?? this.config.requestTypes.fault,
       requestFieldValues: {
@@ -234,7 +237,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
         });
       }
     }
-    return { key, url: this.browseUrl(key), fieldsApplied };
+    return { key, url: this.ticketUrl(key, created.data?._links?.web), fieldsApplied };
   }
 
   async getIssue(key: string): Promise<IssueSnapshot | null> {
@@ -247,7 +250,7 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
     if (issue.status === 404 || !issue.data) return null;
     return {
       key,
-      url: this.browseUrl(key),
+      url: this.ticketUrl(key),
       summary: issue.data.fields?.summary ?? "",
       statusCategory: toCategory(issue.data.fields?.status?.statusCategory?.key),
       slas: await this.readSlas(key, operation),
@@ -490,6 +493,18 @@ export class JiraServiceManagementAdapter implements IssueTrackerPort {
 
   private browseUrl(key: string): string {
     return `${this.config.siteUrl}/browse/${key}`;
+  }
+
+  /**
+   * The link posted for a ticket: the agent view, or with portal links the request in the customer
+   * portal. `web` is the request's own portal link from a service desk API response, used when it
+   * is an https link to this key; otherwise the link is built from the site and service desk ID
+   * (`<site>/servicedesk/customer/portal/<service desk ID>/<key>`, as Jira returns it).
+   */
+  private ticketUrl(key: string, web?: unknown): string {
+    if (this.config.links !== "portal") return this.browseUrl(key);
+    if (typeof web === "string" && web.startsWith("https://") && web.endsWith(`/${key}`)) return web;
+    return `${this.config.siteUrl}/servicedesk/customer/portal/${this.config.serviceDeskId}/${key}`;
   }
 
   /**

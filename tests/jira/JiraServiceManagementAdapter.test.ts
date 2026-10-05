@@ -5,7 +5,7 @@ import type { JiraConfig } from "../../src/app/config";
 
 const BASE = "https://api.test/ex/jira/cloud";
 const config: JiraConfig = {
-  baseUrl: BASE, siteUrl: "https://site.test", apiToken: "synthetic-token",
+  baseUrl: BASE, siteUrl: "https://site.test", links: "agent", apiToken: "synthetic-token",
   projectKey: "SD", serviceDeskId: "5", requestTypes: { fault: "101" }, timeoutMs: 1000,
   shareWithModel: false, passive: false, agentChat: "ask", feedback: false,
 };
@@ -796,6 +796,38 @@ describe("JiraServiceManagementAdapter.addCustomerAttachment", () => {
     await adapter(log).addCustomerAttachment("SD-1", photo(), `comment ${MARKER}`).catch(() => undefined);
     expect(allLogs(log)).not.toContain(MARKER);
     expect(allLogs(log)).not.toContain("jam");
+  });
+});
+
+
+describe("JiraServiceManagementAdapter ticket links", () => {
+  const PORTAL = "https://site.test/servicedesk/customer/portal/5";
+  const CREATE = (links?: unknown) => ({ "POST /rest/servicedeskapi/request": [json({ issueKey: "SD-2", ...(links ? { _links: links } : {}) }, 201)] });
+  const READ = { [`GET ${ISSUE_PATH}`]: [TODO], [`GET ${SLA_PATH}`]: [SLA_MET] };
+  const portalAdapter = () => new JiraServiceManagementAdapter({ ...config, links: "portal" }, logger() as never, { sleep: async () => {} });
+
+  it("links to the agent view by default, also when Jira returns a portal link", async () => {
+    stubJira({ ...CREATE({ web: `${PORTAL}/SD-2` }), ...READ });
+    expect((await adapter().createIssue({ summary: "S", description: "D" })).url).toBe("https://site.test/browse/SD-2");
+    expect((await adapter().getIssue("SD-1"))!.url).toBe("https://site.test/browse/SD-1");
+  });
+
+  it("links a created request to its own portal link from Jira's response", async () => {
+    const web = "https://example.atlassian.net/servicedesk/customer/portal/7/SD-2";
+    stubJira(CREATE({ web, agent: "https://example.atlassian.net/browse/SD-2" }));
+    expect(await portalAdapter().createIssue({ summary: "S", description: "D" })).toEqual({ key: "SD-2", url: web, fieldsApplied: true });
+  });
+
+  it("builds the portal link from the site and service desk ID when Jira returns none or an unusable one", async () => {
+    for (const links of [undefined, {}, { web: 42 }, { web: "http://example.atlassian.net/servicedesk/customer/portal/7/SD-2" }, { web: "https://example.atlassian.net/servicedesk/customer/portal/7/SD-9" }]) {
+      stubJira(CREATE(links));
+      expect((await portalAdapter().createIssue({ summary: "S", description: "D" })).url).toBe(`${PORTAL}/SD-2`);
+    }
+  });
+
+  it("links a read ticket to the customer portal", async () => {
+    stubJira(READ);
+    expect((await portalAdapter().getIssue("SD-1"))!.url).toBe(`${PORTAL}/SD-1`);
   });
 });
 

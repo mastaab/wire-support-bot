@@ -567,6 +567,14 @@
           ],
           "description": "WIRE_SUPPORT_BOT_JIRA_SITE_URL"
         },
+        "jiraLinks": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "portal"
+          ],
+          "description": "WIRE_SUPPORT_BOT_JIRA_LINKS: agent or portal."
+        },
         "jiraProjectKey": {
           "type": [
             "string",

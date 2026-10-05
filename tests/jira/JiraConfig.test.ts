@@ -131,6 +131,15 @@ describe("resolveJiraConfig", () => {
     }
   });
 
+  it("reads ticket links as agent or portal, agent by default", () => {
+    expect(resolveJiraConfig(full)!.links).toBe("agent");
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_LINKS: " PORTAL " })!.links).toBe("portal");
+    expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_LINKS: "agent" })!.links).toBe("agent");
+    for (const bad of ["customer", "on", "browse"]) {
+      expect(() => resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_LINKS: bad })).toThrow("WIRE_SUPPORT_BOT_JIRA_LINKS must be agent or portal");
+    }
+  });
+
   it("switches to Basic auth when an email is configured", () => {
     expect(resolveJiraConfig({ ...full, WIRE_SUPPORT_BOT_JIRA_EMAIL: "bot@example.com" })!.email).toBe("bot@example.com");
   });

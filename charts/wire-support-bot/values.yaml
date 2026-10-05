@@ -195,6 +195,8 @@ config:
   jiraBaseUrl: ""
   # Site URL for links to tickets, for example https://example.atlassian.net. Required.
   jiraSiteUrl: ""
+  # Where ticket links point: agent (the agent view, <site>/browse/<key>) or portal (the request in the service desk's customer portal). Keep agent for now: the bot raises requests as its own Jira account, so members cannot see them in the portal yet.
+  jiraLinks: "agent"
   # Key of the Jira Service Management project, for example DESK. Required.
   jiraProjectKey: ""
   # Numeric ID of the service desk, for example "1". Required.

@@ -62,7 +62,7 @@ describe("LLMClientFactory metrics", () => {
 describe("JiraServiceManagementAdapter metrics", () => {
   const BASE = "https://api.test/ex/jira/cloud";
   const config: JiraConfig = {
-    baseUrl: BASE, siteUrl: "https://site.test", apiToken: "synthetic-token", projectKey: "SD", serviceDeskId: "5",
+    baseUrl: BASE, siteUrl: "https://site.test", links: "agent", apiToken: "synthetic-token", projectKey: "SD", serviceDeskId: "5",
     requestTypes: { fault: "101" }, timeoutMs: 1000, shareWithModel: false, passive: false, agentChat: "ask", feedback: false,
   };
   const json = (body: unknown, status = 200) => () => new Response(JSON.stringify(body), { status });
