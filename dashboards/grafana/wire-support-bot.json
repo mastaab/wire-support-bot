@@ -786,7 +786,8 @@
               "mode": "none",
               "group": "A"
             }
-          }
+          },
+          "max": 1
         },
         "overrides": []
       },
@@ -1021,7 +1022,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "max": 1
         },
         "overrides": []
       },

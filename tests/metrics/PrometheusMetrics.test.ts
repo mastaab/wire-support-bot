@@ -69,8 +69,29 @@ describe("createPrometheusMetrics", () => {
     for (const slot of ["classify", "respond", "embed"]) {
       expect(samples).toContain(`wire_support_bot_model_usage_missing_total{slot="${slot}"} 0`);
     }
-    // The model names come from the configuration, so the token counter has no series before the first call.
+    // Without configured models the token counter has no series: its model label is not a fixed set.
     expect(samples.filter((s) => s.startsWith("wire_support_bot_model_tokens_total"))).toEqual([]);
+    // Latency histograms start empty per slot and operation, so the first call is a visible change.
+    for (const slot of ["classify", "respond", "embed"]) {
+      expect(samples).toContain(`wire_support_bot_model_call_duration_seconds_count{slot="${slot}"} 0`);
+    }
+    expect(samples).toContain('wire_support_bot_jira_request_duration_seconds_count{operation="create_issue"} 0');
+  });
+
+  it("starts the token series of the configured models at 0, without output for embeddings", async () => {
+    const { render } = createPrometheusMetrics([
+      { slot: "classify", model: "small-model" },
+      { slot: "respond", model: "large-model" },
+      { slot: "embed", model: "embed-model" },
+    ]);
+    const tokens = (await appSamples(render)).filter((s) => s.startsWith("wire_support_bot_model_tokens_total"));
+    expect(tokens.sort()).toEqual([
+      'wire_support_bot_model_tokens_total{slot="classify",model="small-model",direction="input"} 0',
+      'wire_support_bot_model_tokens_total{slot="classify",model="small-model",direction="output"} 0',
+      'wire_support_bot_model_tokens_total{slot="embed",model="embed-model",direction="input"} 0',
+      'wire_support_bot_model_tokens_total{slot="respond",model="large-model",direction="input"} 0',
+      'wire_support_bot_model_tokens_total{slot="respond",model="large-model",direction="output"} 0',
+    ]);
   });
 
   it("records events with their labels, durations in the histograms, and gauges on collection", async () => {

@@ -34,7 +34,13 @@ async function main(): Promise<void> {
   let metrics: MetricsPort = NO_METRICS;
   let metricsServer: MetricsServer | undefined;
   if (config.metrics) {
-    const prometheus = createPrometheusMetrics();
+    const prometheus = createPrometheusMetrics([
+      { slot: "classify", model: config.llm.slots.classify.model },
+      { slot: "classify", model: config.llm.slots.classify.fallback },
+      { slot: "respond", model: config.llm.slots.respond.model },
+      { slot: "respond", model: config.llm.slots.respond.fallback },
+      ...(config.knowledge.enabled ? [{ slot: "embed" as const, model: config.knowledge.embedding.model }] : []),
+    ]);
     try {
       metricsServer = await startMetricsServer({ ...config.metrics, source: prometheus, logger });
     } catch (error) {

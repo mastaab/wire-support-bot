@@ -11,7 +11,7 @@ import { SUPPORT_REQUEST_KINDS } from "../../domain/entities/SupportRequest";
 import {
   BUTTON_CLICK_OUTCOMES, JIRA_OPERATIONS, JIRA_OUTCOMES, KNOWLEDGE_HELP_OUTCOMES, KNOWLEDGE_RETRIEVAL_OUTCOMES, MODEL_CALL_OUTCOMES, MODEL_SLOTS, OFFER_EVENTS, RATING_OUTCOMES,
   WATCH_CHECK_OUTCOMES, WIRE_CONNECTION_EVENTS, WIRE_MESSAGE_KINDS, WIRE_SDK_PROBLEMS, WIRE_WATCHDOG_ACTIONS,
-  type CollectedGauge, type MetricsPort,
+  type CollectedGauge, type MetricsPort, type ModelSlotLabel,
 } from "../../application/ports/MetricsPort";
 
 export const METRIC_PREFIX = "wire_support_bot_";
@@ -39,7 +39,19 @@ function combinations(sets: Record<string, readonly string[]>): Array<Record<str
   );
 }
 
-export function createPrometheusMetrics(): PrometheusMetrics {
+/** A configured model, so its token series exist from start-up. */
+export interface ConfiguredModel {
+  slot: ModelSlotLabel;
+  model: string;
+}
+
+/**
+ * The Prometheus adapter. Every series starts at 0 at start-up, so `rate()` and `increase()` see the
+ * first event too: a series that appears only with its first value hides that value from them.
+ * `models` names the configured models (primary and fallback per slot, the embedding model) for the
+ * token series, whose model label is not a fixed set.
+ */
+export function createPrometheusMetrics(models: readonly ConfiguredModel[] = []): PrometheusMetrics {
   const registry = new Registry();
   collectDefaultMetrics({ register: registry, prefix: METRIC_PREFIX });
   const registers = [registry];
@@ -73,6 +85,11 @@ export function createPrometheusMetrics(): PrometheusMetrics {
     name: `${METRIC_PREFIX}model_tokens_total`, help: "Tokens of successful model calls as the provider reported them, by slot, model that answered and direction.",
     labelNames: ["slot", "model", "direction"], registers,
   });
+  for (const slot of MODEL_SLOTS) modelDuration.zero({ slot });
+  for (const { slot, model } of models) {
+    modelTokens.inc({ slot, model, direction: "input" }, 0);
+    if (slot !== "embed") modelTokens.inc({ slot, model, direction: "output" }, 0);
+  }
   const usageMissing = counter("model_usage_missing_total", "Successful model calls whose response reported no usable token usage, by slot.", {
     slot: MODEL_SLOTS,
   });
@@ -80,6 +97,7 @@ export function createPrometheusMetrics(): PrometheusMetrics {
     operation: JIRA_OPERATIONS, outcome: JIRA_OUTCOMES,
   });
   const jiraDuration = histogram("jira_request_duration_seconds", "Duration of Jira HTTP requests, by tracker operation.", ["operation"], JIRA_DURATION_BUCKETS);
+  for (const operation of JIRA_OPERATIONS) jiraDuration.zero({ operation });
   const watchChecks = counter("watch_checks_total", "Watch checks, by outcome.", { outcome: WATCH_CHECK_OUTCOMES });
   const watchDuration = histogram("watch_check_duration_seconds", "Duration of watch checks.", [], WATCH_DURATION_BUCKETS);
   const watched = new Gauge({
