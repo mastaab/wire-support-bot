@@ -1,6 +1,6 @@
 apiVersion: v2
 name: wire-support-bot
-description: Wire Support Bot, which connects Wire conversations with a Jira Service Management service desk. One instance with a persistent store for the Wire SDK; Postgres is external.
+description: Wire Support Bot (demo and proof of concept, not production-ready), which connects Wire conversations with a Jira Service Management service desk. One instance with a persistent store for the Wire SDK; Postgres is external.
 type: application
 version: 0.1.3
 appVersion: "1.0.3"
