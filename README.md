@@ -1,5 +1,16 @@
 # Wire Support Bot
 
+> [!IMPORTANT]
+> **Demo and proof of concept.** This bot shows how a Wire conversation can work with a service desk. It is not a supported Wire product and not ready for production use as it is. It is meant for evaluation and as a starting point for your own bot. Before you rely on it:
+>
+> - It depends on the Wire Apps JS SDK, which is at an early version (0.1), and on behavior of that SDK described under "Limitations and notes".
+> - Answers, offers and classifications come from a language model and can be wrong; a small local model in particular can add steps of its own to answers from documents.
+> - It runs as a single instance and keeps pending offers and the conversation context in memory, so a restart drops them.
+> - It has been tested with one Jira Service Management project in a test environment, not under production load.
+> - Security, privacy and operations (data flows to the model and embeddings providers, logging, backups, updates) need your own review.
+>
+> It is provided under the GPL-3.0 license, without warranty.
+
 A Wire app that connects a Wire conversation with a Jira Service Management service desk. Team members raise support requests from the conversation, follow them up, reply to the service desk and resolve them, without leaving Wire.
 
 It is based on the [Wire Team Bot](https://github.com/adamlow-wire/wire-team-bot), a proof of concept of an AI-enabled team assistant built with the Wire Apps JS SDK, reduced here to the service-desk use case.
