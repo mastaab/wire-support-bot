@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryKnowledgeIndex, KnowledgeIndexError } from "../../src/infrastructure/knowledge/InMemoryKnowledgeIndex";
 import { EmbeddingError } from "../../src/application/ports/EmbeddingPort";
 import type { NewKnowledgeDocument } from "../../src/domain/repositories/KnowledgeRepository";
@@ -51,6 +51,19 @@ describe("InMemoryKnowledgeIndex", () => {
       { id: "doc1:1", type: "knowledge_article", content: "Overview of all lights.", source: "Dashboard lights", sourceDate: at },
     ]);
     expect(of("knowledgeRetrieval")).toEqual([["hit"]]);
+  });
+
+  it("logs the best score, the minimum and the number of results at debug, without the question", async () => {
+    const { index, logger } = await setup({ results: 1 });
+    await index.retrieve({ question: "engine light", conversationId });
+    await index.retrieve({ question: "something unrelated", conversationId });
+    const lines = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(([msg]) => msg === "Knowledge search");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]![1]).toMatchObject({ minScore: 0.5, results: 1 });
+    expect(lines[0]![1].bestScore).toBeGreaterThanOrEqual(0.5);
+    expect(lines[1]![1]).toMatchObject({ minScore: 0.5, results: 0 });
+    expect(lines[1]![1].bestScore).toBeLessThan(0.5);
+    expect(JSON.stringify(lines)).not.toMatch(/engine|unrelated/);
   });
 
   it("limits the number of results, and counts a miss when nothing scores high enough", async () => {

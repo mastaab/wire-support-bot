@@ -131,14 +131,23 @@ export class InMemoryKnowledgeIndex implements RetrievalPort {
     normalizeInto(raw, q, 0);
 
     const scored: Array<{ i: number; score: number }> = [];
+    let best = -1;
     for (let i = 0; i < index.chunks.length; i++) {
       let dot = 0;
       const offset = i * index.dimension;
       for (let d = 0; d < index.dimension; d++) dot += q[d]! * index.matrix[offset + d]!;
+      if (dot > best) best = dot;
       if (dot >= this.options.minScore) scored.push({ i, score: dot });
     }
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, this.options.results).map(({ i }) => {
+    const found = scored.slice(0, this.options.results);
+    // Scores only, never text: tells why a question did or did not get document excerpts.
+    this.logger.debug("Knowledge search", {
+      bestScore: Math.round(best * 1000) / 1000,
+      minScore: this.options.minScore,
+      results: found.length,
+    });
+    return found.map(({ i }) => {
       const chunk = index.chunks[i]!;
       return {
         id: `${chunk.documentId}:${chunk.position}`,
