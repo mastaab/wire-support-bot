@@ -26,6 +26,8 @@ describe("createPrometheusMetrics", () => {
       "wire_support_bot_wire_sdk_problems_total counter",
       "wire_support_bot_model_calls_total counter",
       "wire_support_bot_model_call_duration_seconds histogram",
+      "wire_support_bot_model_tokens_total counter",
+      "wire_support_bot_model_usage_missing_total counter",
       "wire_support_bot_jira_requests_total counter",
       "wire_support_bot_jira_request_duration_seconds histogram",
       "wire_support_bot_watch_checks_total counter",
@@ -64,6 +66,11 @@ describe("createPrometheusMetrics", () => {
       expect(samples).toContain(`wire_support_bot_knowledge_help_answers_total{outcome="${outcome}"} 0`);
     }
     expect(samples.filter((s) => s.startsWith("wire_support_bot_model_calls_total{"))).toHaveLength(3 * 4);
+    for (const slot of ["classify", "respond", "embed"]) {
+      expect(samples).toContain(`wire_support_bot_model_usage_missing_total{slot="${slot}"} 0`);
+    }
+    // The model names come from the configuration, so the token counter has no series before the first call.
+    expect(samples.filter((s) => s.startsWith("wire_support_bot_model_tokens_total"))).toEqual([]);
   });
 
   it("records events with their labels, durations in the histograms, and gauges on collection", async () => {
@@ -87,10 +94,15 @@ describe("createPrometheusMetrics", () => {
     metrics.buttonClick("not_asked");
     metrics.ratingSent("refused");
     metrics.modelCall("embed", "ok", 0.1);
+    metrics.modelTokens("respond", "backup-model", 120, 30);
+    metrics.modelTokens("respond", "backup-model", 80, 20);
+    metrics.modelTokens("embed", "embed-model", 12);
+    metrics.modelUsageMissing("classify");
     metrics.knowledgeRetrieval("hit");
     metrics.knowledgeHelpAnswer("ticket");
     metrics.collect("knowledge_chunks", () => 42);
     let samples = await appSamples(render);
+    expect(samples.filter((s) => s.startsWith('wire_support_bot_model_tokens_total{slot="embed"'))).toHaveLength(1);
     for (const expected of [
       'wire_support_bot_wire_messages_received_total{kind="text"} 2',
       'wire_support_bot_wire_connection_events_total{event="connected"} 1',
@@ -117,6 +129,11 @@ describe("createPrometheusMetrics", () => {
       "wire_support_bot_pending_offers 3",
       "wire_support_bot_queue_length 0",
       'wire_support_bot_model_calls_total{slot="embed",outcome="ok"} 1',
+      'wire_support_bot_model_tokens_total{slot="respond",model="backup-model",direction="input"} 200',
+      'wire_support_bot_model_tokens_total{slot="respond",model="backup-model",direction="output"} 50',
+      'wire_support_bot_model_tokens_total{slot="embed",model="embed-model",direction="input"} 12',
+      'wire_support_bot_model_usage_missing_total{slot="classify"} 1',
+      'wire_support_bot_model_usage_missing_total{slot="respond"} 0',
       'wire_support_bot_knowledge_retrievals_total{outcome="hit"} 1',
       'wire_support_bot_knowledge_help_answers_total{outcome="ticket"} 1',
       'wire_support_bot_knowledge_help_answers_total{outcome="solved"} 0',
@@ -145,6 +162,8 @@ describe("NO_METRICS", () => {
     expect(() => {
       port.wireMessageReceived("other");
       port.modelCall("classify", "error", 1);
+      port.modelTokens("classify", "any-model", 1, 1);
+      port.modelUsageMissing("embed");
       port.jiraRequest("create_issue", "5xx", 1);
       port.watchCheck("ok", 1, 0);
       port.collect("pending_offers", () => { throw new Error("never read"); });

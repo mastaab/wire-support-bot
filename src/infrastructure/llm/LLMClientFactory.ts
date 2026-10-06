@@ -7,7 +7,8 @@
  *   - Both attempts are logged.
  *
  * Each call is recorded in the metrics once, by slot, with its outcome (ok, fallback, timeout or
- * error) and its duration including the fallback attempt.
+ * error) and its duration including the fallback attempt. A call that succeeded also records the
+ * tokens its response reported in `usage`, under the model that answered, or that the usage was missing.
  *
  * A model that rejects `temperature` as deprecated or unsupported is remembered for
  * the life of the instance, and later requests to it omit the parameter. Share one
@@ -21,6 +22,7 @@
 import type { LLMConfig, ModelSlot } from "../../app/config";
 import type { Logger } from "../../application/ports/Logger";
 import { NO_METRICS, secondsSince, type MetricsPort, type ModelCallOutcome } from "../../application/ports/MetricsPort";
+import { chatUsage, recordUsage, type TokenUsage } from "./tokenUsage";
 
 export type SlotName = keyof LLMConfig["slots"];
 
@@ -39,6 +41,12 @@ export interface ChatCompletionResult {
   content: string;
   model: string;
   usedFallback: boolean;
+}
+
+/** The text of a successful attempt and the token usage its response reported, if usable. */
+interface AttemptResult {
+  content: string;
+  usage: TokenUsage | undefined;
 }
 
 export class LLMClientFactory {
@@ -87,7 +95,8 @@ export class LLMClientFactory {
 
     // Primary attempt
     try {
-      const content = await this.attempt(slotCfg.model, messages, options);
+      const { content, usage } = await this.attempt(slotCfg.model, messages, options);
+      recordUsage(this.metrics, slot, slotCfg.model, usage);
       return { content, model: slotCfg.model, usedFallback: false };
     } catch (err) {
       const isFallbackable = this.isFallbackError(err);
@@ -101,7 +110,8 @@ export class LLMClientFactory {
     }
 
     // Fallback attempt
-    const content = await this.attempt(slotCfg.fallback, messages, options);
+    const { content, usage } = await this.attempt(slotCfg.fallback, messages, options);
+    recordUsage(this.metrics, slot, slotCfg.fallback, usage);
     return { content, model: slotCfg.fallback, usedFallback: true };
   }
 
@@ -109,7 +119,7 @@ export class LLMClientFactory {
     model: string,
     messages: ChatMessage[],
     options: ChatCompletionOptions,
-  ): Promise<string> {
+  ): Promise<AttemptResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
 
@@ -146,7 +156,7 @@ export class LLMClientFactory {
       const data = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
       const content = data?.choices?.[0]?.message?.content;
       if (typeof content !== "string" || !content.trim()) throw new Error("LLM returned no text");
-      return content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+      return { content: content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(), usage: chatUsage(data) };
     } finally {
       clearTimeout(timeout);
     }

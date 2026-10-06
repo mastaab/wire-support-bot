@@ -57,6 +57,47 @@ describe("LLMClientFactory metrics", () => {
     expect(await call([timeout, () => new Response("{}", { status: 500 })])).toMatchObject({ result: "Error", calls: [["respond", "error"]] });
     expect(await call([() => new Response(JSON.stringify({ choices: [] }))])).toMatchObject({ calls: [["respond", "error"]] });
   });
+
+  const withUsage = (usage: unknown) => () => new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }], usage }));
+  const tokens = async (responses: Array<() => Response | Promise<Response>>, options: { temperature?: number } = {}) => {
+    const fetch = vi.fn();
+    for (const response of responses) fetch.mockImplementationOnce(async () => response());
+    vi.stubGlobal("fetch", fetch);
+    const { metrics, of } = fakeMetrics();
+    const factory = new LLMClientFactory(config, { info: vi.fn(), warn: vi.fn() } as never, metrics);
+    const result = await factory.chatCompletion("respond", [], options).then(() => "resolved", (err: Error) => err.name);
+    return { result, tokens: of("modelTokens"), missing: of("modelUsageMissing") };
+  };
+
+  it("records the input and output tokens of the call that answered, under the model that answered", async () => {
+    const usage = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
+    expect(await tokens([withUsage(usage)])).toEqual({ result: "resolved", tokens: [["respond", "primary", 120, 30]], missing: [] });
+    expect(await tokens([() => new Response("busy", { status: 503 }), withUsage(usage)]))
+      .toEqual({ result: "resolved", tokens: [["respond", "backup", 120, 30]], missing: [] });
+    const rejectsTemperature = () => new Response(JSON.stringify({ error: { message: "temperature is deprecated for this model" } }), { status: 400 });
+    expect(await tokens([rejectsTemperature, withUsage({ prompt_tokens: 0, completion_tokens: 7 })], { temperature: 0 }))
+      .toEqual({ result: "resolved", tokens: [["respond", "primary", 0, 7]], missing: [] });
+  });
+
+  it("records no tokens for failed calls", async () => {
+    const usage = { prompt_tokens: 1, completion_tokens: 1 };
+    const timeout = () => { throw abortError(); };
+    expect(await tokens([timeout, timeout])).toEqual({ result: "AbortError", tokens: [], missing: [] });
+    expect(await tokens([() => new Response(JSON.stringify({ usage }), { status: 500 })])).toEqual({ result: "Error", tokens: [], missing: [] });
+    expect(await tokens([() => new Response(JSON.stringify({ choices: [], usage }))])).toEqual({ result: "Error", tokens: [], missing: [] });
+  });
+
+  it.each([
+    ["no usage", undefined],
+    ["usage that is not an object", "many"],
+    ["a negative count", { prompt_tokens: -1, completion_tokens: 5 }],
+    ["a count as a string", { prompt_tokens: "10", completion_tokens: 5 }],
+    ["a fractional count", { prompt_tokens: 10, completion_tokens: 2.5 }],
+    ["a count that is not a number", { prompt_tokens: Number.NaN, completion_tokens: 5 }],
+    ["no output count", { prompt_tokens: 10, total_tokens: 10 }],
+  ])("records the usage as missing for a response with %s, and no tokens", async (_label, usage) => {
+    expect(await tokens([withUsage(usage)])).toEqual({ result: "resolved", tokens: [], missing: [["respond"]] });
+  });
 });
 
 describe("JiraServiceManagementAdapter metrics", () => {

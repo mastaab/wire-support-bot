@@ -56,6 +56,29 @@ describe("OpenAIEmbeddingAdapter", () => {
     expect(of("modelCall")).toEqual([["embed", outcome]]);
   });
 
+  it("records the input tokens of each request from prompt_tokens, else total_tokens, and no output", async () => {
+    const withUsage = (usage: unknown) => (inputs: string[]) => {
+      const body = { data: inputs.map((_, index) => ({ index, embedding: [index, 1] })), usage };
+      return new Response(JSON.stringify(body));
+    };
+    const usages: unknown[] = [{ prompt_tokens: 12, total_tokens: 12 }, { total_tokens: 9 }, undefined, { prompt_tokens: -3 }];
+    let call = 0;
+    const { adapter, of } = setup((inputs) => withUsage(usages[call++])(inputs));
+    await adapter.embedBatch(Array.from({ length: EMBED_BATCH_SIZE + 1 }, () => "t"));
+    await adapter.embed("hello");
+    await adapter.embed("hello");
+    expect(of("modelTokens")).toEqual([["embed", "test-embed", 12], ["embed", "test-embed", 9]]);
+    expect(of("modelUsageMissing")).toEqual([["embed"], ["embed"]]);
+    expect(of("modelCall")).toHaveLength(4);
+  });
+
+  it("records no tokens for a failed request", async () => {
+    const { adapter, of } = setup(() => new Response(JSON.stringify({ data: [], usage: { prompt_tokens: 5 } })));
+    await expect(adapter.embed("hello")).rejects.toBeInstanceOf(EmbeddingError);
+    expect(of("modelTokens")).toEqual([]);
+    expect(of("modelUsageMissing")).toEqual([]);
+  });
+
   it("throws when the dimension changes between requests of one batch", async () => {
     let call = 0;
     const { adapter } = setup((inputs) => respond(inputs, call++ === 0 ? 3 : 4));

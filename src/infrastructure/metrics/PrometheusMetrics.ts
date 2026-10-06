@@ -2,7 +2,8 @@
  * MetricsPort on prom-client, with its own registry (never the library's global one), the Node
  * runtime metrics (`collectDefaultMetrics`) and the bot's metrics, all named with `METRIC_PREFIX`.
  * Counters with a label start at 0 for every value of their fixed label sets, so a rate or an
- * absence alert works before the first event.
+ * absence alert works before the first event. The token counter is the exception: its `model` label
+ * comes from the configuration, so its series appear with the first counted call.
  */
 
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
@@ -68,6 +69,13 @@ export function createPrometheusMetrics(): PrometheusMetrics {
     slot: MODEL_SLOTS, outcome: MODEL_CALL_OUTCOMES,
   });
   const modelDuration = histogram("model_call_duration_seconds", "Duration of model calls, fallback included, by slot.", ["slot"], MODEL_DURATION_BUCKETS);
+  const modelTokens = new Counter<"slot" | "model" | "direction">({
+    name: `${METRIC_PREFIX}model_tokens_total`, help: "Tokens of successful model calls as the provider reported them, by slot, model that answered and direction.",
+    labelNames: ["slot", "model", "direction"], registers,
+  });
+  const usageMissing = counter("model_usage_missing_total", "Successful model calls whose response reported no usable token usage, by slot.", {
+    slot: MODEL_SLOTS,
+  });
   const jiraRequests = counter("jira_requests_total", "Jira HTTP requests, by the tracker operation that made them and outcome.", {
     operation: JIRA_OPERATIONS, outcome: JIRA_OUTCOMES,
   });
@@ -116,6 +124,11 @@ export function createPrometheusMetrics(): PrometheusMetrics {
       modelCalls.inc({ slot, outcome });
       modelDuration.observe({ slot }, seconds);
     },
+    modelTokens: (slot, model, input, output) => {
+      modelTokens.inc({ slot, model, direction: "input" }, input);
+      if (output !== undefined) modelTokens.inc({ slot, model, direction: "output" }, output);
+    },
+    modelUsageMissing: (slot) => usageMissing.inc({ slot }),
     jiraRequest: (operation, outcome, seconds) => {
       jiraRequests.inc({ operation, outcome });
       jiraDuration.observe({ operation }, seconds);

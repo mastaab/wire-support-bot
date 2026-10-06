@@ -193,7 +193,7 @@ Two other modes:
 - `none` leaves out the message text, so the lines carry only the fields above. A dropped WebSocket connection then shows as an error with `objectType` "ErrorEvent" and `eventType` "error", followed by a warning without fields.
 - `full` also adds the SDK's other arguments as `sdkArgs` (about 4 KB at most per line, errors with their message and stack). These can contain decrypted messages, events and HTTP request and response bodies, so the logs then hold message content and possibly tokens. The bot logs a warning at start-up; use it only for short troubleshooting and switch back to `messages`.
 
-Metrics (see "Metrics"), when turned on, are counts, durations and a few current values, labeled only from small fixed sets such as the message kind, the model slot, the Jira operation and an outcome. They carry no message text, no ticket content and no conversation, user, message or ticket IDs, and nothing that tells conversations or people apart.
+Metrics (see "Metrics"), when turned on, are counts, durations and a few current values, labeled only from small fixed sets such as the message kind, the model slot, the Jira operation and an outcome, and for token counts the configured model names. They carry no message text, no ticket content and no conversation, user, message or ticket IDs, and nothing that tells conversations or people apart.
 
 Sent to the model endpoint:
 
@@ -712,6 +712,8 @@ Every metric name starts with `wire_support_bot_`. The Node runtime metrics of p
 | `wire_support_bot_wire_sdk_problems_total` | counter | `severity`: `warn`, `error` | Warnings and errors the Wire SDK logged, also those below `WIRE_SUPPORT_BOT_SDK_LOG_LEVEL`. |
 | `wire_support_bot_model_calls_total` | counter | `slot`: `classify`, `respond`, `embed`; `outcome`: `ok`, `fallback`, `timeout`, `error` | Model calls. `fallback`: the fallback model answered after the primary was unavailable or timed out; `timeout`: the last attempt timed out. `embed` counts each embeddings request of the document index (a question, or the start-up check), which has no fallback. |
 | `wire_support_bot_model_call_duration_seconds` | histogram | `slot` | Duration of a model call, fallback included; buckets from 0.25 s to 120 s. |
+| `wire_support_bot_model_tokens_total` | counter | `slot`: `classify`, `respond`, `embed`; `model`: the configured name of the model that answered; `direction`: `input`, `output` | Tokens of successful model calls, as the response's `usage` reported them. After a fallback the tokens count under the fallback model's name. `embed` counts only input tokens (`prompt_tokens`, or `total_tokens` for providers that report only that), once per embeddings request. Failed calls count nothing. |
+| `wire_support_bot_model_usage_missing_total` | counter | `slot`: `classify`, `respond`, `embed` | Successful model calls whose response reported no usable token usage (missing, or a count that is not a non-negative whole number); their tokens are not counted. |
 | `wire_support_bot_jira_requests_total` | counter | `operation`: `create_issue`, `get_issue`, `resolve_issue`, `list_customer_replies`, `add_customer_reply`, `list_changed_since`, `add_customer_attachment`, `submit_feedback`; `outcome`: `2xx`, `4xx`, `5xx`, `timeout`, `error` | Jira HTTP requests, by the tracker operation that made them (one operation can make several, such as reading the SLAs or following transitions). `get_service_desk`: the lookup of the customer portal's address for portal links. `error`: no response, such as a DNS or connection failure. |
 | `wire_support_bot_jira_request_duration_seconds` | histogram | `operation` | Duration of a Jira HTTP request; buckets from 25 ms to 15 s. |
 | `wire_support_bot_watch_checks_total` | counter | `outcome`: `ok`, `error` | Watch checks; `error` when the watched requests or Jira's changes could not be read. |
@@ -729,7 +731,9 @@ Every metric name starts with `wire_support_bot_`. The Node runtime metrics of p
 | `wire_support_bot_knowledge_help_answers_total` | counter | `outcome`: `solved`, `ticket`, `ended`, `expired` | How "Did this help?" after an answer from the document index ended: [Solved] or a text answer for it, [Raise a ticket] or a text answer for it (which leads to the raise offer, counted in `wire_support_bot_offers_total`), another message, a file or a newer question ended it without a decision, or it was not answered in time. |
 | `wire_support_bot_knowledge_chunks` | gauge | | Excerpts of the document index loaded for searching, read at each scrape; 0 with the index off. |
 
-The counters with labels start at 0 for every label value, so rates and absence checks work from the start. The metrics carry no content and no IDs (see "What is stored and what is sent where").
+The counters with labels start at 0 for every label value, so rates and absence checks work from the start. The exception is `wire_support_bot_model_tokens_total`: its `model` values come from the configuration, so its series appear with the first counted call. The metrics carry no content and no IDs (see "What is stored and what is sent where").
+
+Token counts are what the provider reports in each response. The thinking tokens of Anthropic's models through its OpenAI compatibility layer are included in the output tokens and not shown separately. Token counts are not invoices: prompt caching, discounts and the provider's billing rules are not visible in them. A provider that reports no usage shows up in `wire_support_bot_model_usage_missing_total`.
 
 Example queries and alert ideas:
 
@@ -740,6 +744,13 @@ sum(rate(wire_support_bot_jira_requests_total{outcome!="2xx"}[15m]))
 
 # 95th percentile of model call duration per slot
 histogram_quantile(0.95, sum by (slot, le) (rate(wire_support_bot_model_call_duration_seconds_bucket[30m])))
+
+# Tokens per minute by slot, model and direction
+sum by (slot, model, direction) (rate(wire_support_bot_model_tokens_total[5m])) * 60
+
+# Share of output tokens in the chat slots over an hour
+sum(increase(wire_support_bot_model_tokens_total{slot!="embed",direction="output"}[1h]))
+  / sum(increase(wire_support_bot_model_tokens_total{slot!="embed"}[1h]))
 
 # Model calls that needed the fallback or failed
 sum by (slot, outcome) (increase(wire_support_bot_model_calls_total{outcome!="ok"}[1h]))
@@ -764,6 +775,7 @@ increase(wire_support_bot_watch_checks_total{outcome="error"}[30m]) > 3
 - Overview: Wire connection, uptime, messages received and requests raised in the selected time range, pending offers, and watchdog actions (above 0 means Wire was unreachable for minutes).
 - Wire: messages by kind, connection events and watchdog actions, SDK warnings and errors.
 - Model: calls by slot and outcome, latency (p50, p95), and the share of failed calls.
+- Tokens: input and output tokens in the selected time range, calls whose response reported no usage, the output share of chat tokens, tokens per minute by slot and model, and tokens per call by slot.
 - Jira: requests by outcome, failures by operation, latency (p95) by operation, watch checks, their duration and the number of watched requests.
 - Support flow: requests raised, replies and resolves, offers and questions, button clicks, ratings, pending offers and the passive-help queue, and the document index (empty while it is off).
 - Runtime: CPU, memory, event loop lag and garbage collection time.

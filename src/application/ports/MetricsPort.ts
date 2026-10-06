@@ -3,8 +3,8 @@ import type { SupportRequestKind } from "../../domain/entities/SupportRequest";
 /**
  * Port for operational metrics. Use cases and adapters record events and durations here without
  * knowing the metrics library; the Prometheus adapter turns them into counters, histograms and
- * gauges. Every label value comes from one of the small fixed sets below: never a conversation,
- * user, ticket or request ID, and never text.
+ * gauges. Every label value comes from one of the small fixed sets below, or for token counts from
+ * the configured model names: never a conversation, user, ticket or request ID, and never text.
  */
 
 /** What arrived from Wire: a text, a photo or document upload, a button click, anything else. */
@@ -36,6 +36,10 @@ export type ModelSlotLabel = (typeof MODEL_SLOTS)[number];
  */
 export const MODEL_CALL_OUTCOMES = ["ok", "fallback", "timeout", "error"] as const;
 export type ModelCallOutcome = (typeof MODEL_CALL_OUTCOMES)[number];
+
+/** Token directions of a model call: `input` (the prompt) and `output` (the completion). */
+export const TOKEN_DIRECTIONS = ["input", "output"] as const;
+export type TokenDirection = (typeof TOKEN_DIRECTIONS)[number];
 
 /** The tracker operations (`IssueTrackerPort` methods) a tracker HTTP request is made for. */
 export const JIRA_OPERATIONS = [
@@ -103,6 +107,14 @@ export interface MetricsPort {
   wireSdkProblem(severity: WireSdkProblem): void;
   /** One model call through a slot, fallback included, with its duration in seconds. */
   modelCall(slot: ModelSlotLabel, outcome: ModelCallOutcome, seconds: number): void;
+  /**
+   * Tokens a successful model call used, as the provider reported them, under the configured name
+   * of the model that answered (the fallback's name after a fallback). `output` is left out for
+   * embeddings. The model name is the only label value that does not come from a fixed set.
+   */
+  modelTokens(slot: ModelSlotLabel, model: string, input: number, output?: number): void;
+  /** A successful model call whose response reported no usable token usage. */
+  modelUsageMissing(slot: ModelSlotLabel): void;
   /** One tracker HTTP request, with its duration in seconds. */
   jiraRequest(operation: JiraOperation, outcome: JiraOutcome, seconds: number): void;
   /** One watch check, with its duration in seconds and, when they were read, the number of requests watched. */
@@ -128,6 +140,8 @@ export const NO_METRICS: MetricsPort = {
   wireWatchdogAction: ignore,
   wireSdkProblem: ignore,
   modelCall: ignore,
+  modelTokens: ignore,
+  modelUsageMissing: ignore,
   jiraRequest: ignore,
   watchCheck: ignore,
   supportRequestRaised: ignore,

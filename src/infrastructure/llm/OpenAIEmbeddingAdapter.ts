@@ -2,13 +2,15 @@
  * EmbeddingPort on an OpenAI-compatible `/embeddings` endpoint (Ollama, vLLM, LiteLLM, a hosted
  * provider), which can differ from the chat endpoint. A list of texts is sent in requests of at
  * most `EMBED_BATCH_SIZE` texts. Each request has the timeout of the config and is recorded in the
- * metrics as a model call of slot `embed`. Failures are thrown as `EmbeddingError` with the reason
+ * metrics as a model call of slot `embed`, and a successful one with its input tokens from `usage`
+ * (or that the usage was missing), once per request. Failures are thrown as `EmbeddingError` with the reason
  * and status only: no text is logged, and the provider's response body is never read into an error.
  */
 
 import type { EmbeddingConfig } from "../../app/config";
 import { EmbeddingError, type EmbeddingPort } from "../../application/ports/EmbeddingPort";
 import { NO_METRICS, secondsSince, type MetricsPort, type ModelCallOutcome } from "../../application/ports/MetricsPort";
+import { embeddingUsage, recordUsage } from "./tokenUsage";
 
 /** Most texts per request; keeps a request well inside the usual provider limits. */
 export const EMBED_BATCH_SIZE = 32;
@@ -81,7 +83,9 @@ export class OpenAIEmbeddingAdapter implements EmbeddingPort {
       } catch (err) {
         throw new EmbeddingError(err instanceof Error && err.name === "AbortError" ? "timeout" : "invalid_response");
       }
-      return parseVectors(data, inputs.length);
+      const vectors = parseVectors(data, inputs.length);
+      recordUsage(this.metrics, "embed", this.model, embeddingUsage(data));
+      return vectors;
     } finally {
       clearTimeout(timer);
     }
