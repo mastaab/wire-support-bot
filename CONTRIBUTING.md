@@ -1,6 +1,6 @@
 # Contributing
 
-A short guide for developers changing this code. The README explains what the bot does, how it is set up and how it is built.
+A short guide for developers changing this code. The README gives the overview; `docs/` describes what the bot does (`usage.md`, `design.md`), its settings (`configuration.md`), deployment and operations, and the code layout (`architecture.md`). Keep these documents in line with the code you change.
 
 ## Layering
 
@@ -22,7 +22,7 @@ The code follows a hexagonal (ports and adapters) layout. Keep the dependency di
 - Wiring: `src/app/container.ts`, and `src/app/cli.ts` when the CLI should have the feature too.
 - Settings: read only in `src/app/config.ts`, validated at start-up, and listed in `.env.example` with a comment. Secrets come from the environment and are never committed.
 - Schema changes: `prisma/schema.prisma` plus a migration in `prisma/migrations/`.
-- Metrics: record through `MetricsPort` (`src/application/ports/MetricsPort.ts`), never prom-client directly, at the narrowest place that sees every event: an adapter for calls to the outside (the Jira adapter, the model client), the use case or store that decides an outcome. A new metric needs a method on the port, its definition in `src/infrastructure/metrics/PrometheusMetrics.ts`, a test with the fake in `tests/metrics/fakeMetrics.ts`, and a row in the README's "Metrics" table; add a panel to `dashboards/grafana/wire-support-bot.json` when operators should watch it. Label values come only from the port's small fixed sets (the token counter's `model` label, which takes the configured model names, is the one exception): never a conversation, user, message, ticket or request ID, and never text.
+- Metrics: record through `MetricsPort` (`src/application/ports/MetricsPort.ts`), never prom-client directly, at the narrowest place that sees every event: an adapter for calls to the outside (the Jira adapter, the model client), the use case or store that decides an outcome. A new metric needs a method on the port, its definition in `src/infrastructure/metrics/PrometheusMetrics.ts`, a test with the fake in `tests/metrics/fakeMetrics.ts`, and a row in the metrics table of `docs/operations.md`; add a panel to `dashboards/grafana/wire-support-bot.json` when operators should watch it. Label values come only from the port's small fixed sets (the token counter's `model` label, which takes the configured model names, is the one exception): never a conversation, user, message, ticket or request ID, and never text.
 
 Keep one concern per module, use explicit types, and match the existing style. Add a dependency only when it is clearly needed.
 
@@ -40,7 +40,7 @@ Keep one concern per module, use explicit types, and match the existing style. A
 - New use cases and non-trivial logic need tests. Unit tests use mocked ports and need no database, network or Wire connection; follow `tests/usecases/` and `tests/pipeline/`.
 - Changes to Wire event routing or outbound mapping need contract tests in `tests/contract/`, including button clicks (the asked member, other members, repeated and late clicks, and clicks together with text answers) and how each question is closed.
 - Repository changes need integration tests in `tests/integration/`, run with `INTEGRATION_TESTS=1` against a throwaway database. Never point tests at a shared or production database.
-- For behavior that depends on the model, try it with the CLI (see the README) against a test project before you rely on it.
+- For behavior that depends on the model, try it with the CLI (see `docs/deployment.md`) against a test project before you rely on it.
 
 ## Gates
 
